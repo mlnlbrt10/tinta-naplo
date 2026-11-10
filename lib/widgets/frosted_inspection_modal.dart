@@ -1,14 +1,18 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
+import 'animation_helpers.dart';
 
-/// Displays a frosted glass soft blur inspection modal (`BackdropFilter` with
-/// `ImageFilter.blur(sigmaX: 10, sigmaY: 10)`).
+/// Displays a 120Hz frosted glass soft blur inspection modal that smoothly
+/// interpolates `BackdropFilter` sigma from 0 to 12 alongside a 0.92 -> 1.0
+/// scale-in (`Curves.easeOutCubic`), reverse-animating cleanly on dismiss
+/// and supporting [heroTag] geometry transitions.
 Future<void> showFrostedModal({
   required BuildContext context,
   required String categoryLabel,
@@ -16,247 +20,280 @@ Future<void> showFrostedModal({
   required Color accentColor,
   required String title,
   String? badgeText,
+  String? heroTag,
   required List<FrostedDetailRow> rows,
   String? topicTitle,
   String? topicBody,
 }) {
-  return showGeneralDialog<void>(
-    context: context,
-    barrierDismissible: true,
-    barrierLabel: 'Bezárás',
-    barrierColor: Colors.black.withValues(alpha: 0.45),
-    transitionDuration: const Duration(milliseconds: 220),
-    pageBuilder: (dialogContext, animation, secondaryAnimation) {
-      final theme = Theme.of(dialogContext);
-      final scheme = theme.colorScheme;
-      final isDark = theme.brightness == Brightness.dark;
-      final cardBg = isDark
-          ? const Color(0xFF141418).withValues(alpha: 0.86)
-          : Colors.white.withValues(alpha: 0.88);
+  HapticFeedback.lightImpact();
 
-      return BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: SafeArea(
+  return Navigator.of(context).push<void>(
+    PageRouteBuilder<void>(
+      opaque: false,
+      barrierDismissible: true,
+      barrierLabel: 'Bezárás',
+      barrierColor: Colors.transparent,
+      transitionDuration: const Duration(milliseconds: 280),
+      reverseTransitionDuration: const Duration(milliseconds: 240),
+      pageBuilder: (dialogContext, animation, secondaryAnimation) {
+        final theme = Theme.of(dialogContext);
+        final scheme = theme.colorScheme;
+        final isDark = theme.brightness == Brightness.dark;
+        final cardBg = isDark
+            ? const Color(0xFF141418).withValues(alpha: 0.88)
+            : Colors.white.withValues(alpha: 0.90);
+
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInOutCubic,
+        );
+
+        Widget badgeOrIcon;
+        if (badgeText != null) {
+          badgeOrIcon = Container(
+            width: 54,
+            height: 54,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: accentColor,
+              borderRadius: OledTheme.badgeRadius,
+            ),
+            child: Material(
+              type: MaterialType.transparency,
+              child: Text(
+                badgeText,
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          );
+        } else {
+          badgeOrIcon = Container(
+            width: 48,
+            height: 48,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: accentColor.withValues(alpha: 0.2),
+              borderRadius: OledTheme.badgeRadius,
+              border: Border.all(
+                color: accentColor.withValues(alpha: 0.6),
+              ),
+            ),
+            child: Icon(
+              categoryIcon,
+              color: accentColor,
+              size: 24,
+            ),
+          );
+        }
+
+        if (heroTag != null) {
+          badgeOrIcon = Hero(
+            tag: heroTag,
+            child: badgeOrIcon,
+          );
+        }
+
+        final modalCard = SafeArea(
           child: Center(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 440),
-                child: Material(
-                  color: Colors.transparent,
-                  child: Container(
-                    padding: const EdgeInsets.all(22),
-                    decoration: BoxDecoration(
-                      color: cardBg,
-                      borderRadius: OledTheme.largeRadius,
-                      border: Border.all(
-                        color: accentColor.withValues(alpha: 0.55),
-                        width: 1.4,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.45),
-                          blurRadius: 28,
-                          offset: const Offset(0, 12),
+                child: GestureDetector(
+                  onTap: () {}, // Prevent tap-through to barrier
+                  child: Material(
+                    color: Colors.transparent,
+                    child: Container(
+                      padding: const EdgeInsets.all(22),
+                      decoration: BoxDecoration(
+                        color: cardBg,
+                        borderRadius: OledTheme.largeRadius,
+                        border: Border.all(
+                          color: accentColor.withValues(alpha: 0.55),
+                          width: 1.4,
                         ),
-                      ],
-                    ),
-                    child: SingleChildScrollView(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Row(
-                            children: [
-                              if (badgeText != null) ...[
-                                Container(
-                                  width: 54,
-                                  height: 54,
-                                  alignment: Alignment.center,
-                                  decoration: BoxDecoration(
-                                    color: accentColor,
-                                    borderRadius: OledTheme.badgeRadius,
-                                  ),
-                                  child: Text(
-                                    badgeText,
-                                    style: theme.textTheme.headlineSmall
-                                        ?.copyWith(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w900,
-                                    ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.45),
+                            blurRadius: 28,
+                            offset: const Offset(0, 12),
+                          ),
+                        ],
+                      ),
+                      child: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              children: [
+                                badgeOrIcon,
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 3,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: accentColor.withValues(
+                                            alpha: 0.18,
+                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(22),
+                                        ),
+                                        child: Text(
+                                          categoryLabel,
+                                          style: theme.textTheme.labelSmall
+                                              ?.copyWith(
+                                            color: accentColor,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        title,
+                                        style: theme.textTheme.titleMedium
+                                            ?.copyWith(
+                                          fontWeight: FontWeight.w900,
+                                          color: scheme.onSurface,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                const SizedBox(width: 14),
-                              ] else ...[
-                                Container(
-                                  width: 48,
-                                  height: 48,
-                                  alignment: Alignment.center,
-                                  decoration: BoxDecoration(
-                                    color: accentColor.withValues(alpha: 0.2),
-                                    borderRadius: OledTheme.badgeRadius,
-                                    border: Border.all(
-                                      color: accentColor.withValues(alpha: 0.6),
-                                    ),
-                                  ),
-                                  child: Icon(
-                                    categoryIcon,
-                                    color: accentColor,
-                                    size: 24,
+                                TactileBounce(
+                                  onTap: () =>
+                                      Navigator.of(dialogContext).pop(),
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(8.0),
+                                    child: Icon(Icons.close_rounded),
                                   ),
                                 ),
-                                const SizedBox(width: 14),
                               ],
-                              Expanded(
+                            ),
+                            const SizedBox(height: 18),
+                            Container(
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: scheme.surfaceContainerHighest
+                                    .withValues(alpha: 0.65),
+                                borderRadius: OledTheme.cardRadius,
+                                border: Border.all(
+                                  color: theme.dividerColor,
+                                ),
+                              ),
+                              child: Column(
+                                children: rows
+                                    .map(
+                                      (r) => Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 6,
+                                        ),
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Icon(
+                                              r.icon,
+                                              size: 17,
+                                              color: accentColor,
+                                            ),
+                                            const SizedBox(width: 10),
+                                            SizedBox(
+                                              width: 118,
+                                              child: Text(
+                                                r.label,
+                                                style: TextStyle(
+                                                  fontSize: 13,
+                                                  color: scheme.onSurface
+                                                      .withValues(alpha: 0.68),
+                                                ),
+                                              ),
+                                            ),
+                                            Expanded(
+                                              child: Text(
+                                                r.value,
+                                                style: TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: scheme.onSurface,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                              ),
+                            ),
+                            if (topicBody != null &&
+                                topicBody.trim().isNotEmpty) ...[
+                              const SizedBox(height: 14),
+                              Container(
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: scheme.surfaceContainerHighest
+                                      .withValues(alpha: 0.5),
+                                  borderRadius: OledTheme.cardRadius,
+                                  border: Border.all(color: theme.dividerColor),
+                                ),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 3,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color:
-                                            accentColor.withValues(alpha: 0.18),
-                                        borderRadius: BorderRadius.circular(22),
-                                      ),
-                                      child: Text(
-                                        categoryLabel,
-                                        style: theme.textTheme.labelSmall
-                                            ?.copyWith(
-                                          color: accentColor,
-                                          fontWeight: FontWeight.w800,
-                                        ),
+                                    Text(
+                                      topicTitle ?? 'Téma / Leírás',
+                                      style: theme.textTheme.labelMedium
+                                          ?.copyWith(
+                                        color: accentColor,
+                                        fontWeight: FontWeight.w800,
                                       ),
                                     ),
                                     const SizedBox(height: 6),
                                     Text(
-                                      title,
-                                      style: theme.textTheme.titleMedium
-                                          ?.copyWith(
-                                        fontWeight: FontWeight.w900,
+                                      topicBody.trim(),
+                                      style:
+                                          theme.textTheme.bodyMedium?.copyWith(
                                         color: scheme.onSurface,
+                                        height: 1.35,
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
-                              IconButton(
-                                tooltip: 'Bezárás',
-                                onPressed: () =>
-                                    Navigator.of(dialogContext).pop(),
-                                icon: const Icon(Icons.close_rounded),
-                              ),
                             ],
-                          ),
-                          const SizedBox(height: 18),
-                          Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: scheme.surfaceContainerHighest
-                                  .withValues(alpha: 0.65),
-                              borderRadius: OledTheme.cardRadius,
-                              border: Border.all(
-                                color: theme.dividerColor,
-                              ),
-                            ),
-                            child: Column(
-                              children: rows
-                                  .map(
-                                    (r) => Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 6,
-                                      ),
-                                      child: Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Icon(
-                                            r.icon,
-                                            size: 17,
-                                            color: accentColor,
-                                          ),
-                                          const SizedBox(width: 10),
-                                          SizedBox(
-                                            width: 118,
-                                            child: Text(
-                                              r.label,
-                                              style: TextStyle(
-                                                fontSize: 13,
-                                                color: scheme.onSurface
-                                                    .withValues(alpha: 0.68),
-                                              ),
-                                            ),
-                                          ),
-                                          Expanded(
-                                            child: Text(
-                                              r.value,
-                                              style: TextStyle(
-                                                fontSize: 13,
-                                                fontWeight: FontWeight.w700,
-                                                color: scheme.onSurface,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  )
-                                  .toList(),
-                            ),
-                          ),
-                          if (topicBody != null &&
-                              topicBody.trim().isNotEmpty) ...[
-                            const SizedBox(height: 14),
-                            Container(
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: scheme.surfaceContainerHighest
-                                    .withValues(alpha: 0.5),
-                                borderRadius: OledTheme.cardRadius,
-                                border: Border.all(color: theme.dividerColor),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    topicTitle ?? 'Téma / Leírás',
-                                    style: theme.textTheme.labelMedium
-                                        ?.copyWith(
-                                      color: accentColor,
-                                      fontWeight: FontWeight.w800,
-                                    ),
+                            const SizedBox(height: 18),
+                            TactileBounce(
+                              onTap: () => Navigator.of(dialogContext).pop(),
+                              child: Container(
+                                alignment: Alignment.center,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                                decoration: BoxDecoration(
+                                  color: accentColor,
+                                  borderRadius: BorderRadius.circular(22),
+                                ),
+                                child: const Text(
+                                  'Bezárás',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
                                   ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    topicBody.trim(),
-                                    style: theme.textTheme.bodyMedium?.copyWith(
-                                      color: scheme.onSurface,
-                                      height: 1.35,
-                                    ),
-                                  ),
-                                ],
+                                ),
                               ),
                             ),
                           ],
-                          const SizedBox(height: 18),
-                          FilledButton(
-                            style: FilledButton.styleFrom(
-                              backgroundColor: accentColor,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(22),
-                              ),
-                            ),
-                            onPressed: () => Navigator.of(dialogContext).pop(),
-                            child: const Text(
-                              'Bezárás',
-                              style: TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -264,22 +301,36 @@ Future<void> showFrostedModal({
               ),
             ),
           ),
-        ),
-      );
-    },
-    transitionBuilder: (context, animation, secondaryAnimation, child) {
-      final curved = CurvedAnimation(
-        parent: animation,
-        curve: Curves.easeOutCubic,
-      );
-      return FadeTransition(
-        opacity: curved,
-        child: ScaleTransition(
-          scale: Tween<double>(begin: 0.94, end: 1.0).animate(curved),
-          child: child,
-        ),
-      );
-    },
+        );
+
+        return AnimatedBuilder(
+          animation: curved,
+          builder: (context, child) {
+            final t = curved.value.clamp(0.0, 1.0);
+            final sigma = 12.0 * t;
+            final scale = 0.92 + (0.08 * t);
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => Navigator.of(dialogContext).pop(),
+              child: ColoredBox(
+                color: Colors.black.withValues(alpha: 0.48 * t),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+                  child: Opacity(
+                    opacity: t,
+                    child: Transform.scale(
+                      scale: scale,
+                      child: child,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+          child: modalCard,
+        );
+      },
+    ),
   );
 }
 
@@ -300,6 +351,7 @@ Future<void> showGradeInspectionModal(
   BuildContext context,
   Grade grade, {
   UserProfilePrefs? prefs,
+  String? heroTag,
 }) {
   final dtFormat = DateFormat('yyyy. MM. dd. HH:mm');
   final color = OledTheme.gradeColor(grade.numericValue, prefs);
@@ -317,6 +369,7 @@ Future<void> showGradeInspectionModal(
     accentColor: color,
     title: grade.subject.name,
     badgeText: badge,
+    heroTag: heroTag,
     rows: [
       FrostedDetailRow(
         icon: Icons.school_rounded,
@@ -469,11 +522,13 @@ Future<void> showTestInspectionModal(
   );
 }
 
-/// Opens the frosted glass inspection modal for a timetable [Lesson].
+/// Opens the frosted glass inspection modal for a timetable [Lesson] with
+/// optional [heroTag] transition.
 Future<void> showLessonInspectionModal(
   BuildContext context,
-  Lesson lesson,
-) {
+  Lesson lesson, {
+  String? heroTag,
+}) {
   final dayFormat = DateFormat('yyyy. MM. dd.');
   final timeFormat = DateFormat('HH:mm');
   final isCancelled = lesson.state.name.toLowerCase().contains('elmarad');
@@ -497,6 +552,7 @@ Future<void> showLessonInspectionModal(
     accentColor: accent,
     title: lesson.subject?.name ?? lesson.name,
     badgeText: lesson.lessonNumber != null ? '${lesson.lessonNumber}.' : null,
+    heroTag: heroTag,
     rows: [
       FrostedDetailRow(
         icon: Icons.access_time_filled_rounded,

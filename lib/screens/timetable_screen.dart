@@ -6,11 +6,13 @@ import 'package:kreta_api/kreta_api.dart';
 import '../services/kreta_client.dart';
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
+import '../utils/uwu_helper.dart';
+import '../widgets/animation_helpers.dart';
 import '../widgets/frosted_inspection_modal.dart';
 
 /// "Órarend" tab providing Daily (Napi) and Landscape Weekly (Heti) views,
 /// "Hétvége mutatása" toggle, strikethrough + bold amber substitution display,
-/// and frosted-glass lesson inspection modals.
+/// staggered entrance animations, Hero lesson badges, and frosted-glass modals.
 class TimetableScreen extends StatefulWidget {
   final StoredSession session;
   final KretaClient kretaClient;
@@ -18,6 +20,7 @@ class TimetableScreen extends StatefulWidget {
   final UserProfilePrefs prefs;
   final ValueChanged<UserProfilePrefs> onPrefsChanged;
   final bool isActiveTab;
+  final int entranceEpoch;
 
   const TimetableScreen({
     super.key,
@@ -27,6 +30,7 @@ class TimetableScreen extends StatefulWidget {
     required this.prefs,
     required this.onPrefsChanged,
     this.isActiveTab = true,
+    this.entranceEpoch = 0,
   });
 
   @override
@@ -59,6 +63,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
   bool _isLoading = false;
   String? _error;
   List<Lesson> _weekLessons = const [];
+  int _daySwitchEpoch = 0;
 
   final DateFormat _timeFormat = DateFormat('HH:mm');
   final DateFormat _dayFormat = DateFormat('MM. dd.');
@@ -70,14 +75,13 @@ class _TimetableScreenState extends State<TimetableScreen> {
     final now = DateTime.now();
     _selectedDate = DateTime(now.year, now.month, now.day);
     _weekLessons = List<Lesson>.from(widget.initialTodaysLessons);
-    _loadCurrentWeek();
+    _loadCurrentWeek(showFullSpinner: true);
   }
 
   @override
   void didUpdateWidget(covariant TimetableScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.isActiveTab && !widget.isActiveTab && _isWeeklyMode) {
-      // Restore portrait orientation when user switches to another bottom tab.
       _applyOrientation(weeklyLandscape: false);
     } else if (!oldWidget.isActiveTab && widget.isActiveTab && _isWeeklyMode) {
       _applyOrientation(weeklyLandscape: true);
@@ -109,16 +113,21 @@ class _TimetableScreenState extends State<TimetableScreen> {
 
   void _setWeeklyMode(bool weekly) {
     if (_isWeeklyMode == weekly) return;
-    setState(() => _isWeeklyMode = weekly);
+    setState(() {
+      _isWeeklyMode = weekly;
+      _daySwitchEpoch++;
+    });
     _applyOrientation(weeklyLandscape: weekly);
   }
 
   void _toggleShowWeekends() {
+    HapticFeedback.lightImpact();
     final nextVal = !widget.prefs.showWeekends;
     widget.onPrefsChanged(widget.prefs.copyWith(showWeekends: nextVal));
     if (!nextVal && _selectedDate.weekday > 5) {
       setState(() {
         _selectedDate = _mondayOf(_selectedDate);
+        _daySwitchEpoch++;
       });
     }
   }
@@ -131,11 +140,11 @@ class _TimetableScreenState extends State<TimetableScreen> {
   bool _isSameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
-  Future<void> _loadCurrentWeek() async {
+  Future<void> _loadCurrentWeek({bool showFullSpinner = false}) async {
     final monday = _mondayOf(_selectedDate);
     final sunday = monday.add(const Duration(days: 6));
 
-    if (mounted) {
+    if (mounted && showFullSpinner) {
       setState(() {
         _isLoading = true;
         _error = null;
@@ -154,6 +163,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
       setState(() {
         _weekLessons = lessons;
         _isLoading = false;
+        _error = null;
       });
     } catch (e) {
       if (!mounted) return;
@@ -165,21 +175,25 @@ class _TimetableScreenState extends State<TimetableScreen> {
   }
 
   void _shiftWeek(int deltaWeeks) {
+    HapticFeedback.lightImpact();
     setState(() {
       _selectedDate = _selectedDate.add(Duration(days: 7 * deltaWeeks));
+      _daySwitchEpoch++;
     });
-    _loadCurrentWeek();
+    _loadCurrentWeek(showFullSpinner: true);
   }
 
   void _jumpToToday() {
+    HapticFeedback.lightImpact();
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final weekChanged = !_isSameDay(_mondayOf(_selectedDate), _mondayOf(today));
     setState(() {
       _selectedDate = today;
+      _daySwitchEpoch++;
     });
     if (weekChanged) {
-      _loadCurrentWeek();
+      _loadCurrentWeek(showFullSpinner: true);
     }
   }
 
@@ -192,7 +206,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
     final endDay = monday.add(Duration(days: visibleDaysCount - 1));
 
     return RefreshIndicator(
-      onRefresh: _loadCurrentWeek,
+      onRefresh: () => _loadCurrentWeek(showFullSpinner: false),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
@@ -298,7 +312,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
                 child: _buildModeButton(
                   scheme: scheme,
                   dividerColor: theme.dividerColor,
-                  label: 'Napi nézet',
+                  label: uwu('Napi nézet'),
                   icon: Icons.calendar_today_rounded,
                   selected: !_isWeeklyMode,
                   onTap: () => _setWeeklyMode(false),
@@ -309,7 +323,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
                 child: _buildModeButton(
                   scheme: scheme,
                   dividerColor: theme.dividerColor,
-                  label: 'Heti nézet (Fekvő)',
+                  label: uwu('Heti nézet (Fekvő)'),
                   icon: Icons.screen_rotation_rounded,
                   selected: _isWeeklyMode,
                   onTap: () => _setWeeklyMode(true),
@@ -330,11 +344,11 @@ class _TimetableScreenState extends State<TimetableScreen> {
     required bool selected,
     required VoidCallback onTap,
   }) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(22),
+    return TactileBounce(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
         decoration: BoxDecoration(
           color: selected
@@ -392,11 +406,14 @@ class _TimetableScreenState extends State<TimetableScreen> {
         return Expanded(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 3),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(22),
-              onTap: () => setState(() => _selectedDate = day),
+            child: TactileBounce(
+              onTap: () => setState(() {
+                _selectedDate = day;
+                _daySwitchEpoch++;
+              }),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 decoration: BoxDecoration(
                   color: selected ? scheme.primary : theme.cardTheme.color,
@@ -457,6 +474,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
       ..sort((a, b) => a.start.compareTo(b.start));
 
     final dayName = _weekdayFullNames[(day.weekday - 1).clamp(0, 6)];
+    final combinedEpoch = '${widget.entranceEpoch}-$_daySwitchEpoch';
 
     return [
       Row(
@@ -494,25 +512,30 @@ class _TimetableScreenState extends State<TimetableScreen> {
       if (dayLessons.isEmpty)
         _buildEmptyLessonsCard(theme, scheme)
       else
-        ...dayLessons.map(
-          (lesson) => buildOledLessonCard(
+        ...List.generate(dayLessons.length, (idx) {
+          final lesson = dayLessons[idx];
+          return buildOledLessonCard(
             context,
             theme,
             lesson,
             _timeFormat,
-          ),
-        ),
+            heroPrefix: 'timetable-daily',
+          ).staggeredEntrance(
+            idx,
+            animationKey: ValueKey('tt-${lesson.uid}-$combinedEpoch'),
+          );
+        }),
     ];
   }
 
-  /// Renders the multi-column Weekly Landscape timetable board so all days
-  /// of the school week can be viewed side-by-side without horizontal truncation.
   Widget _buildWeeklyLandscapeBoard(
     ThemeData theme,
     ColorScheme scheme,
     DateTime monday,
     int visibleDaysCount,
   ) {
+    final combinedEpoch = '${widget.entranceEpoch}-$_daySwitchEpoch';
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: List.generate(visibleDaysCount, (i) {
@@ -590,6 +613,9 @@ class _TimetableScreenState extends State<TimetableScreen> {
                   ),
               ],
             ),
+          ).staggeredEntrance(
+            i,
+            animationKey: ValueKey('wk-col-$i-$combinedEpoch'),
           ),
         );
       }),
@@ -605,12 +631,17 @@ class _TimetableScreenState extends State<TimetableScreen> {
     final isCancelled = lesson.state.name.toLowerCase().contains('elmarad');
     final hasSub = lesson.substituteTeacher != null &&
         lesson.substituteTeacher!.trim().isNotEmpty;
+    final heroTag = 'wk-lesson-hero-${lesson.uid}';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: () => showLessonInspectionModal(context, lesson),
+      child: TactileBounce(
+        pressedScale: 0.96,
+        onTap: () => showLessonInspectionModal(
+          context,
+          lesson,
+          heroTag: heroTag,
+        ),
         child: Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
@@ -630,11 +661,17 @@ class _TimetableScreenState extends State<TimetableScreen> {
               Row(
                 children: [
                   if (lesson.lessonNumber != null)
-                    Text(
-                      '${lesson.lessonNumber}. ',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.primary,
-                        fontWeight: FontWeight.w900,
+                    Hero(
+                      tag: heroTag,
+                      child: Material(
+                        type: MaterialType.transparency,
+                        child: Text(
+                          '${lesson.lessonNumber}. ',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.primary,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
                       ),
                     ),
                   Expanded(
@@ -737,14 +774,16 @@ class _TimetableScreenState extends State<TimetableScreen> {
   }
 }
 
-/// Shared lesson card builder with strikethrough original teacher + bold amber
-/// substitute teacher and tap-to-inspect frosted glass modal.
+/// Shared lesson card builder with Hero badge transition, TactileBounce,
+/// strikethrough original teacher + bold amber substitute teacher, and
+/// frosted glass inspection modal.
 Widget buildOledLessonCard(
   BuildContext context,
   ThemeData theme,
   Lesson lesson,
-  DateFormat timeFormat,
-) {
+  DateFormat timeFormat, {
+  String heroPrefix = 'lesson',
+}) {
   final scheme = theme.colorScheme;
   final isCancelled = lesson.state.name.toLowerCase().contains('elmarad');
   final hasSubstitute = lesson.substituteTeacher != null &&
@@ -761,12 +800,17 @@ Widget buildOledLessonCard(
 
   final badgeTextColor =
       (isCancelled || hasSubstitute) ? Colors.black : scheme.onSurface;
+  final heroTag = '$heroPrefix-hero-${lesson.uid}';
 
   return Padding(
     padding: const EdgeInsets.only(bottom: 12),
-    child: InkWell(
-      borderRadius: OledTheme.cardRadius,
-      onTap: () => showLessonInspectionModal(context, lesson),
+    child: TactileBounce(
+      pressedScale: 0.97,
+      onTap: () => showLessonInspectionModal(
+        context,
+        lesson,
+        heroTag: heroTag,
+      ),
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -783,20 +827,28 @@ Widget buildOledLessonCard(
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 46,
-              height: 46,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: badgeBg,
-                borderRadius: OledTheme.badgeRadius,
-                border: Border.all(color: theme.dividerColor),
-              ),
-              child: Text(
-                lesson.lessonNumber != null ? '${lesson.lessonNumber}.' : '•',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w900,
-                  color: badgeTextColor,
+            Hero(
+              tag: heroTag,
+              child: Container(
+                width: 46,
+                height: 46,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: badgeBg,
+                  borderRadius: OledTheme.badgeRadius,
+                  border: Border.all(color: theme.dividerColor),
+                ),
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: Text(
+                    lesson.lessonNumber != null
+                        ? '${lesson.lessonNumber}.'
+                        : '•',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      color: badgeTextColor,
+                    ),
+                  ),
                 ),
               ),
             ),

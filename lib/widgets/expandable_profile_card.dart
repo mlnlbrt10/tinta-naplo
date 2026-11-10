@@ -7,6 +7,7 @@ import 'package:kreta_api/kreta_api.dart';
 
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
+import 'animation_helpers.dart';
 
 /// Accordion-style expandable Student Profile Card for the Home Screen (Főoldal).
 ///
@@ -149,8 +150,8 @@ class _ExpandableProfileCardState extends State<ExpandableProfileCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          InkWell(
-            borderRadius: OledTheme.largeRadius,
+          TactileBounce(
+            pressedScale: 0.98,
             onTap: () => setState(() => _isExpanded = !_isExpanded),
             child: Padding(
               padding: const EdgeInsets.all(18),
@@ -198,6 +199,7 @@ class _ExpandableProfileCardState extends State<ExpandableProfileCard> {
                   AnimatedRotation(
                     turns: _isExpanded ? 0.5 : 0.0,
                     duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
                     child: Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(

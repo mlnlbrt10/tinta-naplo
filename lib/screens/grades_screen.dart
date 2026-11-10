@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
+import '../utils/uwu_helper.dart';
+import '../widgets/animation_helpers.dart';
 import '../widgets/frosted_inspection_modal.dart';
 
 /// Represents a hypothetical ("ghost") grade added in the Szellemjegy Számoló.
@@ -34,6 +37,8 @@ class SubjectGradeSummary {
     required this.weightedAverage,
     required this.latestGrade,
   });
+
+  String get heroId => subjectUid.isNotEmpty ? subjectUid : subjectName;
 
   /// Computes a weighted average across real [grades] and optional [ghostGrades].
   static double? computeWeightedAverage(
@@ -147,14 +152,15 @@ class SubjectGradeSummary {
   }
 }
 
-/// "Jegyek" tab: displays cumulative weighted average, interactive Overall
-/// Szellemjegy Számoló (Ghost Grade Simulator), per-subject averages with
-/// configurable rounding rules, and opens subject detail views on tap.
+/// "Jegyek" tab: displays cumulative weighted average with animated counter
+/// rollups, Overall Szellemjegy Számoló, staggered subject tiles with Hero
+/// transitions, and opens SubjectGradesDetailScreen via SmoothSharedAxisRoute.
 class GradesScreen extends StatefulWidget {
   final List<Grade> allGrades;
   final UserProfilePrefs prefs;
   final ValueChanged<UserProfilePrefs> onPrefsChanged;
   final Future<void> Function() onRefresh;
+  final int entranceEpoch;
 
   const GradesScreen({
     super.key,
@@ -162,6 +168,7 @@ class GradesScreen extends StatefulWidget {
     required this.prefs,
     required this.onPrefsChanged,
     required this.onRefresh,
+    this.entranceEpoch = 0,
   });
 
   @override
@@ -185,12 +192,14 @@ class _GradesScreenState extends State<GradesScreen> {
   }
 
   void _removeOverallGhostGrade(int index) {
+    HapticFeedback.lightImpact();
     setState(() {
       _overallGhostGrades.removeAt(index);
     });
   }
 
   void _clearOverallGhostGrades() {
+    HapticFeedback.lightImpact();
     setState(() => _overallGhostGrades.clear());
   }
 
@@ -210,24 +219,29 @@ class _GradesScreenState extends State<GradesScreen> {
         widget.allGrades.where((g) => g.numericValue != null).length;
 
     return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () =>
+      floatingActionButton: TactileBounce(
+        onTap: () =>
             setState(() => _showSimulatorPanel = !_showSimulatorPanel),
-        backgroundColor: scheme.primary,
-        foregroundColor: scheme.onPrimary,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-        ),
-        icon: Icon(
-          _showSimulatorPanel
-              ? Icons.expand_less_rounded
-              : Icons.auto_fix_high_rounded,
-        ),
-        label: Text(
-          _overallGhostGrades.isEmpty
-              ? 'Szellemjegy számoló'
-              : 'Szellemjegy (${_overallGhostGrades.length})',
-          style: const TextStyle(fontWeight: FontWeight.w800),
+        child: FloatingActionButton.extended(
+          onPressed: null,
+          backgroundColor: scheme.primary,
+          foregroundColor: scheme.onPrimary,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          icon: Icon(
+            _showSimulatorPanel
+                ? Icons.expand_less_rounded
+                : Icons.auto_fix_high_rounded,
+          ),
+          label: Text(
+            uwu(
+              _overallGhostGrades.isEmpty
+                  ? 'Szellemjegy számoló'
+                  : 'Szellemjegy (${_overallGhostGrades.length})',
+            ),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
         ),
       ),
       body: RefreshIndicator(
@@ -243,6 +257,9 @@ class _GradesScreenState extends State<GradesScreen> {
               simulatedAverage: simulatedOverallAvg,
               subjectCount: subjects.length,
               gradeCount: numericGradeCount,
+            ).staggeredEntrance(
+              0,
+              animationKey: ValueKey('grades-top-${widget.entranceEpoch}'),
             ),
             AnimatedCrossFade(
               firstChild: const SizedBox.shrink(),
@@ -272,7 +289,7 @@ class _GradesScreenState extends State<GradesScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Tantárgyak és kerekített átlagok',
+                    uwu('Tantárgyak és kerekített átlagok'),
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w800,
                     ),
@@ -300,9 +317,16 @@ class _GradesScreenState extends State<GradesScreen> {
             if (subjects.isEmpty)
               _buildEmptyCard(theme, scheme)
             else
-              ...subjects.map(
-                (subj) => _buildSubjectTile(context, theme, scheme, subj),
-              ),
+              ...List.generate(subjects.length, (idx) {
+                final subj = subjects[idx];
+                return _buildSubjectTile(context, theme, scheme, subj)
+                    .staggeredEntrance(
+                  idx + 1,
+                  animationKey: ValueKey(
+                    'subj-${subj.heroId}-${widget.entranceEpoch}',
+                  ),
+                );
+              }),
           ],
         ),
       ),
@@ -319,7 +343,6 @@ class _GradesScreenState extends State<GradesScreen> {
   }) {
     final activeAvg =
         _overallGhostGrades.isNotEmpty ? simulatedAverage : baseAverage;
-    final avgText = activeAvg != null ? activeAvg.toStringAsFixed(2) : '–';
     final avgColor = activeAvg != null
         ? OledTheme.averageColor(activeAvg, widget.prefs)
         : scheme.primary;
@@ -335,6 +358,7 @@ class _GradesScreenState extends State<GradesScreen> {
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: theme.cardTheme.color,
@@ -346,7 +370,8 @@ class _GradesScreenState extends State<GradesScreen> {
       ),
       child: Row(
         children: [
-          Container(
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 240),
             width: 74,
             height: 74,
             alignment: Alignment.center,
@@ -354,13 +379,22 @@ class _GradesScreenState extends State<GradesScreen> {
               color: avgColor,
               borderRadius: OledTheme.badgeRadius,
             ),
-            child: Text(
-              avgText,
-              style: theme.textTheme.headlineSmall?.copyWith(
-                color: Colors.white,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
+            child: activeAvg != null
+                ? AnimatedNumberText(
+                    value: activeAvg,
+                    fractionDigits: 2,
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  )
+                : Text(
+                    '–',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
           ),
           const SizedBox(width: 18),
           Expanded(
@@ -368,9 +402,11 @@ class _GradesScreenState extends State<GradesScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _overallGhostGrades.isNotEmpty
-                      ? 'Szimulált összesített átlag'
-                      : 'Összesített súlyozott átlag',
+                  uwu(
+                    _overallGhostGrades.isNotEmpty
+                        ? 'Szimulált összesített átlag'
+                        : 'Összesített súlyozott átlag',
+                  ),
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w800,
                     color: scheme.onSurface,
@@ -411,8 +447,11 @@ class _GradesScreenState extends State<GradesScreen> {
                               : Colors.redAccent.withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(22),
                         ),
-                        child: Text(
-                          '${delta >= 0 ? "+" : ""}${delta.toStringAsFixed(2)} (alap: ${baseAverage!.toStringAsFixed(2)})',
+                        child: AnimatedNumberText(
+                          value: delta,
+                          fractionDigits: 2,
+                          prefix: delta >= 0 ? '+' : '',
+                          suffix: ' (alap: ${baseAverage!.toStringAsFixed(2)})',
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: delta >= 0
                                 ? Colors.greenAccent
@@ -503,14 +542,17 @@ class _GradesScreenState extends State<GradesScreen> {
                 final selected = _selectedGhostWeight == w;
                 return Padding(
                   padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(
-                    label: Text('$w%'),
-                    selected: selected,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(22),
+                  child: TactileBounce(
+                    onTap: () => setState(() => _selectedGhostWeight = w),
+                    child: ChoiceChip(
+                      label: Text('$w%'),
+                      selected: selected,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(22),
+                      ),
+                      onSelected: (_) =>
+                          setState(() => _selectedGhostWeight = w),
                     ),
-                    onSelected: (_) =>
-                        setState(() => _selectedGhostWeight = w),
                   ),
                 );
               }),
@@ -533,8 +575,7 @@ class _GradesScreenState extends State<GradesScreen> {
               return Expanded(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(22),
+                  child: TactileBounce(
                     onTap: () => _addOverallGhostGrade(val),
                     child: Container(
                       height: 46,
@@ -634,122 +675,151 @@ class _GradesScreenState extends State<GradesScreen> {
         ? widget.prefs.roundingConfig.evaluateRoundedGrade(avg)
         : null;
 
+    final subjectHeroTag = 'subject-hero-${summary.heroId}';
+    final latestGradeHeroTag = 'grade-hero-${latest.uid}';
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
-        borderRadius: OledTheme.cardRadius,
+      child: TactileBounce(
+        pressedScale: 0.97,
         onTap: () {
           Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => SubjectGradesDetailScreen(
+            SmoothSharedAxisRoute(
+              page: SubjectGradesDetailScreen(
                 summary: summary,
                 prefs: widget.prefs,
               ),
             ),
           );
         },
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: theme.cardTheme.color,
-            borderRadius: OledTheme.cardRadius,
-            border: Border.all(color: theme.dividerColor),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      summary.subjectName,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: scheme.onSurface,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
+        child: Hero(
+          tag: subjectHeroTag,
+          child: Material(
+            type: MaterialType.transparency,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: theme.cardTheme.color,
+                borderRadius: OledTheme.cardRadius,
+                border: Border.all(color: theme.dividerColor),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: avgColor.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(22),
-                            border: Border.all(
-                              color: avgColor.withValues(alpha: 0.65),
-                            ),
-                          ),
-                          child: Text(
-                            roundedStanding != null
-                                ? 'Átlag: $avgText ($roundedStanding)'
-                                : 'Átlag: $avgText',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: scheme.onSurface,
-                              fontWeight: FontWeight.w700,
-                            ),
+                        Text(
+                          summary.subjectName,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: scheme.onSurface,
                           ),
                         ),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: avgColor.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(22),
+                                border: Border.all(
+                                  color: avgColor.withValues(alpha: 0.65),
+                                ),
+                              ),
+                              child: avg != null
+                                  ? AnimatedNumberText(
+                                      value: avg,
+                                      fractionDigits: 2,
+                                      prefix: 'Átlag: ',
+                                      suffix: roundedStanding != null
+                                          ? ' ($roundedStanding)'
+                                          : '',
+                                      style:
+                                          theme.textTheme.labelSmall?.copyWith(
+                                        color: scheme.onSurface,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    )
+                                  : Text(
+                                      'Átlag: $avgText',
+                                      style:
+                                          theme.textTheme.labelSmall?.copyWith(
+                                        color: scheme.onSurface,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                            ),
+                            Text(
+                              '${summary.grades.length} db jegy',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: scheme.onSurface.withValues(alpha: 0.6),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  TactileBounce(
+                    onTap: () => showGradeInspectionModal(
+                      context,
+                      latest,
+                      prefs: widget.prefs,
+                      heroTag: latestGradeHeroTag,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
                         Text(
-                          '${summary.grades.length} db jegy',
+                          'Legutóbbi',
                           style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.onSurface.withValues(alpha: 0.6),
+                            color: scheme.onSurface.withValues(alpha: 0.54),
+                            fontSize: 10,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Hero(
+                          tag: latestGradeHeroTag,
+                          child: Container(
+                            width: 44,
+                            height: 44,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: latestColor,
+                              borderRadius: OledTheme.badgeRadius,
+                            ),
+                            child: Material(
+                              type: MaterialType.transparency,
+                              child: Text(
+                                latestBadgeText,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: scheme.onSurface.withValues(alpha: 0.54),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              GestureDetector(
-                onTap: () => showGradeInspectionModal(
-                  context,
-                  latest,
-                  prefs: widget.prefs,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      'Legutóbbi',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurface.withValues(alpha: 0.54),
-                        fontSize: 10,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Container(
-                      width: 44,
-                      height: 44,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: latestColor,
-                        borderRadius: OledTheme.badgeRadius,
-                      ),
-                      child: Text(
-                        latestBadgeText,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Icon(
-                Icons.chevron_right_rounded,
-                color: scheme.onSurface.withValues(alpha: 0.54),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -757,8 +827,8 @@ class _GradesScreenState extends State<GradesScreen> {
   }
 }
 
-/// Detailed view showing all grades for a single selected subject, plus the
-/// Subject-level Szellemjegy Számoló & target average calculator.
+/// Detailed view showing all grades for a single selected subject with matching
+/// Hero header, animated counter rollups, and Subject-level Szellemjegy Számoló.
 class SubjectGradesDetailScreen extends StatefulWidget {
   final SubjectGradeSummary summary;
   final UserProfilePrefs prefs;
@@ -808,7 +878,6 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
       _ghostGrades,
     );
     final activeAvg = _ghostGrades.isNotEmpty ? simAvg : baseAvg;
-    final avgText = activeAvg != null ? activeAvg.toStringAsFixed(2) : '–';
     final avgColor = activeAvg != null
         ? OledTheme.averageColor(activeAvg, widget.prefs)
         : scheme.primary;
@@ -833,6 +902,8 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
       weightPercentage: 200,
     );
 
+    final subjectHeroTag = 'subject-hero-${widget.summary.heroId}';
+
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.summary.subjectName),
@@ -840,68 +911,85 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
         children: [
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: theme.cardTheme.color,
-              borderRadius: OledTheme.largeRadius,
-              border: Border.all(
-                color: avgColor.withValues(alpha: 0.6),
-                width: 1.4,
-              ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 66,
-                  height: 66,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: avgColor,
-                    borderRadius: OledTheme.badgeRadius,
+          Hero(
+            tag: subjectHeroTag,
+            child: Material(
+              type: MaterialType.transparency,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 240),
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: theme.cardTheme.color,
+                  borderRadius: OledTheme.largeRadius,
+                  border: Border.all(
+                    color: avgColor.withValues(alpha: 0.6),
+                    width: 1.4,
                   ),
-                  child: Text(
-                    avgText,
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w900,
+                ),
+                child: Row(
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 240),
+                      width: 66,
+                      height: 66,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: avgColor,
+                        borderRadius: OledTheme.badgeRadius,
+                      ),
+                      child: activeAvg != null
+                          ? AnimatedNumberText(
+                              value: activeAvg,
+                              fractionDigits: 2,
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            )
+                          : Text(
+                              '–',
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.summary.subjectName,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        roundedStanding != null
-                            ? 'Kerekített jegy: $roundedStanding (${widget.summary.grades.length} db jegy)'
-                            : '${widget.summary.grades.length} rögzített értékelés',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurface.withValues(alpha: 0.72),
-                        ),
-                      ),
-                      if (_ghostGrades.isNotEmpty && baseAvg != null) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          'Eredeti átlag: ${baseAvg.toStringAsFixed(2)} • +${_ghostGrades.length} szellemjegy',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.primary,
-                            fontWeight: FontWeight.w700,
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.summary.subjectName,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
-                        ),
-                      ],
-                    ],
-                  ),
+                          const SizedBox(height: 4),
+                          Text(
+                            roundedStanding != null
+                                ? 'Kerekített jegy: $roundedStanding (${widget.summary.grades.length} db jegy)'
+                                : '${widget.summary.grades.length} rögzített értékelés',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurface.withValues(alpha: 0.72),
+                            ),
+                          ),
+                          if (_ghostGrades.isNotEmpty && baseAvg != null) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              'Eredeti átlag: ${baseAvg.toStringAsFixed(2)} • +${_ghostGrades.length} szellemjegy',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: scheme.primary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
           const SizedBox(height: 16),
@@ -911,7 +999,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
             targetThreshold: targetThreshold,
             needed5Count100: needed5Count100,
             needed5Count200: needed5Count200,
-          ),
+          ).staggeredEntrance(0),
           const SizedBox(height: 20),
           Text(
             'Rögzített jegyek (koppints a részletekért)',
@@ -920,9 +1008,11 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
             ),
           ),
           const SizedBox(height: 10),
-          ...widget.summary.grades.map(
-            (grade) => _buildGradeDetailCard(context, theme, scheme, grade),
-          ),
+          ...List.generate(widget.summary.grades.length, (idx) {
+            final grade = widget.summary.grades[idx];
+            return _buildGradeDetailCard(context, theme, scheme, grade)
+                .staggeredEntrance(idx + 1);
+          }),
         ],
       ),
     );
@@ -963,7 +1053,10 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
               ),
               if (_ghostGrades.isNotEmpty)
                 TextButton(
-                  onPressed: () => setState(() => _ghostGrades.clear()),
+                  onPressed: () {
+                    HapticFeedback.lightImpact();
+                    setState(() => _ghostGrades.clear());
+                  },
                   child: const Text('Alaphelyzet'),
                 ),
             ],
@@ -982,13 +1075,16 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                 final selected = _targetGrade == g;
                 return Padding(
                   padding: const EdgeInsets.only(right: 6),
-                  child: ChoiceChip(
-                    label: Text('$g-ös'),
-                    selected: selected,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(22),
+                  child: TactileBounce(
+                    onTap: () => setState(() => _targetGrade = g),
+                    child: ChoiceChip(
+                      label: Text('$g-ös'),
+                      selected: selected,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(22),
+                      ),
+                      onSelected: (_) => setState(() => _targetGrade = g),
                     ),
-                    onSelected: (_) => setState(() => _targetGrade = g),
                   ),
                 );
               }),
@@ -1029,13 +1125,16 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
               ...[50, 100, 200].map((w) {
                 return Padding(
                   padding: const EdgeInsets.only(right: 6),
-                  child: ChoiceChip(
-                    label: Text('$w%'),
-                    selected: _selectedWeight == w,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(22),
+                  child: TactileBounce(
+                    onTap: () => setState(() => _selectedWeight = w),
+                    child: ChoiceChip(
+                      label: Text('$w%'),
+                      selected: _selectedWeight == w,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(22),
+                      ),
+                      onSelected: (_) => setState(() => _selectedWeight = w),
                     ),
-                    onSelected: (_) => setState(() => _selectedWeight = w),
                   ),
                 );
               }),
@@ -1048,8 +1147,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
               return Expanded(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(22),
+                  child: TactileBounce(
                     onTap: () => _addGhost(val),
                     child: Container(
                       height: 42,
@@ -1086,7 +1184,10 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                     borderRadius: BorderRadius.circular(22),
                   ),
                   label: Text('${g.value} (${g.weightPercentage}%)'),
-                  onDeleted: () => setState(() => _ghostGrades.removeAt(idx)),
+                  onDeleted: () {
+                    HapticFeedback.lightImpact();
+                    setState(() => _ghostGrades.removeAt(idx));
+                  },
                 );
               }),
             ),
@@ -1111,13 +1212,18 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
         ? '${grade.weightPercentage}%'
         : '100%';
     final modeText = grade.mode?.description;
+    final detailHeroTag = 'detail-grade-hero-${grade.uid}';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
-        borderRadius: OledTheme.cardRadius,
-        onTap: () =>
-            showGradeInspectionModal(context, grade, prefs: widget.prefs),
+      child: TactileBounce(
+        pressedScale: 0.97,
+        onTap: () => showGradeInspectionModal(
+          context,
+          grade,
+          prefs: widget.prefs,
+          heroTag: detailHeroTag,
+        ),
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -1128,19 +1234,25 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 48,
-                height: 48,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: badgeColor,
-                  borderRadius: OledTheme.badgeRadius,
-                ),
-                child: Text(
-                  badgeText,
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
+              Hero(
+                tag: detailHeroTag,
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: badgeColor,
+                    borderRadius: OledTheme.badgeRadius,
+                  ),
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: Text(
+                      badgeText,
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                   ),
                 ),
               ),

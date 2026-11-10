@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/token_storage_service.dart';
+import '../widgets/animation_helpers.dart';
 
 /// Theme constants, multi-theme builder (OLED Pure Black, Standard Dark, Light),
 /// Material 3 seed color presets, and grade badge colors.
@@ -10,6 +11,8 @@ class OledTheme {
   static const Color surfaceElevated = Color(0xFF181818);
   static const Color borderSubtle = Color(0xFF262626);
   static const Color accentPrimary = Color(0xFF4DA3FF);
+  static const Color uwuPastelPink = Color(0xFFFF94C2);
+  static const Color uwuPastelLavender = Color(0xFFCE93D8);
 
   static const double cardRadiusVal = 24.0;
   static const double largeRadiusVal = 28.0;
@@ -110,10 +113,12 @@ class OledTheme {
     final isLight = prefs.themeStyle == AppThemeStyle.light;
     final isOled = prefs.themeStyle == AppThemeStyle.oledPureBlack;
     final brightness = isLight ? Brightness.light : Brightness.dark;
-    final seedColor = Color(prefs.seedColorValue);
+    final seedColor =
+        prefs.uwuModeEnabled ? uwuPastelPink : Color(prefs.seedColorValue);
 
     ColorScheme baseScheme;
-    if (prefs.useDynamicColor &&
+    if (!prefs.uwuModeEnabled &&
+        prefs.useDynamicColor &&
         dynamicScheme != null &&
         dynamicScheme.brightness == brightness) {
       baseScheme = dynamicScheme;
@@ -131,26 +136,40 @@ class OledTheme {
 
     if (isOled) {
       scaffoldBg = pureBlack;
-      cardBg = surfaceDark;
-      elevatedBg = surfaceElevated;
-      borderColor = borderSubtle;
+      cardBg = prefs.uwuModeEnabled ? const Color(0xFF19121B) : surfaceDark;
+      elevatedBg =
+          prefs.uwuModeEnabled ? const Color(0xFF241928) : surfaceElevated;
+      borderColor = prefs.uwuModeEnabled
+          ? uwuPastelPink.withValues(alpha: 0.42)
+          : borderSubtle;
       baseScheme = baseScheme.copyWith(
         surface: pureBlack,
         onSurface: Colors.white,
+        primary: prefs.uwuModeEnabled ? uwuPastelPink : baseScheme.primary,
+        secondary:
+            prefs.uwuModeEnabled ? uwuPastelLavender : baseScheme.secondary,
         surfaceContainerLowest: pureBlack,
-        surfaceContainerLow: surfaceDark,
-        surfaceContainer: surfaceDark,
-        surfaceContainerHigh: surfaceElevated,
-        surfaceContainerHighest: surfaceElevated,
+        surfaceContainerLow: cardBg,
+        surfaceContainer: cardBg,
+        surfaceContainerHigh: elevatedBg,
+        surfaceContainerHighest: elevatedBg,
       );
     } else if (!isLight) {
       // Standard Material 3 Dark
-      scaffoldBg = const Color(0xFF14161A);
-      cardBg = const Color(0xFF1E2128);
-      elevatedBg = const Color(0xFF282C35);
-      borderColor = const Color(0xFF363B47);
+      scaffoldBg =
+          prefs.uwuModeEnabled ? const Color(0xFF1A141F) : const Color(0xFF14161A);
+      cardBg =
+          prefs.uwuModeEnabled ? const Color(0xFF251C2C) : const Color(0xFF1E2128);
+      elevatedBg =
+          prefs.uwuModeEnabled ? const Color(0xFF31253B) : const Color(0xFF282C35);
+      borderColor = prefs.uwuModeEnabled
+          ? uwuPastelPink.withValues(alpha: 0.45)
+          : const Color(0xFF363B47);
       baseScheme = baseScheme.copyWith(
         surface: scaffoldBg,
+        primary: prefs.uwuModeEnabled ? uwuPastelPink : baseScheme.primary,
+        secondary:
+            prefs.uwuModeEnabled ? uwuPastelLavender : baseScheme.secondary,
         surfaceContainerLow: cardBg,
         surfaceContainer: cardBg,
         surfaceContainerHigh: elevatedBg,
@@ -158,12 +177,20 @@ class OledTheme {
       );
     } else {
       // Material 3 Light
-      scaffoldBg = const Color(0xFFF6F8FC);
+      scaffoldBg =
+          prefs.uwuModeEnabled ? const Color(0xFFFFF5FA) : const Color(0xFFF6F8FC);
       cardBg = Colors.white;
-      elevatedBg = const Color(0xFFEEF2F8);
-      borderColor = const Color(0xFFDCE2EC);
+      elevatedBg =
+          prefs.uwuModeEnabled ? const Color(0xFFFCE8F3) : const Color(0xFFEEF2F8);
+      borderColor = prefs.uwuModeEnabled
+          ? uwuPastelPink.withValues(alpha: 0.55)
+          : const Color(0xFFDCE2EC);
       baseScheme = baseScheme.copyWith(
         surface: scaffoldBg,
+        primary:
+            prefs.uwuModeEnabled ? const Color(0xFFD81B60) : baseScheme.primary,
+        secondary:
+            prefs.uwuModeEnabled ? uwuPastelLavender : baseScheme.secondary,
         surfaceContainerLow: cardBg,
         surfaceContainer: cardBg,
         surfaceContainerHigh: elevatedBg,
@@ -182,6 +209,15 @@ class OledTheme {
       scaffoldBackgroundColor: scaffoldBg,
       canvasColor: scaffoldBg,
       dividerColor: borderColor,
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: SmoothSharedAxisTransitionsBuilder(),
+          TargetPlatform.iOS: SmoothSharedAxisTransitionsBuilder(),
+          TargetPlatform.linux: SmoothSharedAxisTransitionsBuilder(),
+          TargetPlatform.macOS: SmoothSharedAxisTransitionsBuilder(),
+          TargetPlatform.windows: SmoothSharedAxisTransitionsBuilder(),
+        },
+      ),
       appBarTheme: AppBarTheme(
         backgroundColor: scaffoldBg,
         foregroundColor: onSurfaceText,

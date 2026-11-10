@@ -1,13 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
+import '../services/github_updater_service.dart';
 import '../services/kreta_client.dart';
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
 import '../utils/greeting_utils.dart';
+import '../utils/uwu_helper.dart';
+import '../widgets/animation_helpers.dart';
 import '../widgets/expandable_profile_card.dart';
 import '../widgets/frosted_inspection_modal.dart';
 import 'grades_screen.dart';
@@ -46,12 +50,19 @@ class _ActivityItem {
       : sortDate = test.reportDate,
         grade = null,
         homework = null;
+
+  String get uniqueKey {
+    if (grade != null) return 'g-${grade!.uid}';
+    if (homework != null) return 'hw-${homework!.uid}';
+    return 't-${test!.uid}';
+  }
 }
 
 /// Main authenticated shell for reKRETA with:
 /// 1. Dynamic time-based Hungarian greeting in the top AppBar (without refresh button).
-/// 2. 'Következő óra' (Next Lesson) live hero card with countdown & daily progress.
-/// 3. Unified Activity Feed ([Összes, Jegyek, Házik, Számonkérések]) with frosted-glass modals.
+/// 2. 'Következő óra' (Next Lesson) live hero card with animated countdown & Hero badge.
+/// 3. Unified Activity Feed ([Összes, Jegyek, Házik, Számonkérések]) with staggered
+///    120Hz entrance, TactileBounce micro-interactions, and frosted-glass modals.
 /// 4. 4-tab Material 3 Bottom NavigationBar (Főoldal, Jegyek, Órarend, Több).
 class HomeScreen extends StatefulWidget {
   final StoredSession initialSession;
@@ -75,6 +86,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
+  int _tabSwitchEpoch = 0;
   ActivityFeedFilter _feedFilter = ActivityFeedFilter.all;
 
   late StoredSession _session;
@@ -91,6 +103,11 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _session = widget.initialSession;
     _loadDashboard();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        GitHubUpdaterService.checkForUpdates(context, manual: false);
+      }
+    });
     _countdownTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (mounted && _selectedIndex == 0) {
         setState(() {});
@@ -136,6 +153,15 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _selectBottomTab(int idx) {
+    if (_selectedIndex == idx) return;
+    HapticFeedback.lightImpact();
+    setState(() {
+      _selectedIndex = idx;
+      _tabSwitchEpoch++;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -147,7 +173,10 @@ class _HomeScreenState extends State<HomeScreen> {
       fullStudentName: student?.name,
       defaultFirstName: 'Milán',
     );
-    final greetingText = GreetingUtils.buildGreeting(name: resolvedName);
+    final greetingText = GreetingUtils.buildGreeting(
+      name: resolvedName,
+      uwuMode: widget.prefs.uwuModeEnabled,
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -185,6 +214,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   prefs: widget.prefs,
                   onPrefsChanged: widget.onPrefsChanged,
                   onRefresh: _loadDashboard,
+                  entranceEpoch: _tabSwitchEpoch,
                 ),
                 TimetableScreen(
                   session: _session,
@@ -194,6 +224,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   prefs: widget.prefs,
                   onPrefsChanged: widget.onPrefsChanged,
                   isActiveTab: _selectedIndex == 2,
+                  entranceEpoch: _tabSwitchEpoch,
                 ),
                 MoreScreen(
                   session: _session,
@@ -212,27 +243,27 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         child: NavigationBar(
           selectedIndex: _selectedIndex,
-          onDestinationSelected: (idx) => setState(() => _selectedIndex = idx),
-          destinations: const [
+          onDestinationSelected: _selectBottomTab,
+          destinations: [
             NavigationDestination(
-              icon: Icon(Icons.home_outlined),
-              selectedIcon: Icon(Icons.home_rounded),
-              label: 'Főoldal',
+              icon: const Icon(Icons.home_outlined),
+              selectedIcon: const Icon(Icons.home_rounded),
+              label: uwu('Főoldal'),
             ),
             NavigationDestination(
-              icon: Icon(Icons.assignment_rounded),
-              selectedIcon: Icon(Icons.star_rounded),
-              label: 'Jegyek',
+              icon: const Icon(Icons.assignment_rounded),
+              selectedIcon: const Icon(Icons.star_rounded),
+              label: uwu('Jegyek'),
             ),
             NavigationDestination(
-              icon: Icon(Icons.calendar_today_rounded),
-              selectedIcon: Icon(Icons.calendar_month_rounded),
-              label: 'Órarend',
+              icon: const Icon(Icons.calendar_today_rounded),
+              selectedIcon: const Icon(Icons.calendar_month_rounded),
+              label: uwu('Órarend'),
             ),
             NavigationDestination(
-              icon: Icon(Icons.menu_rounded),
-              selectedIcon: Icon(Icons.menu_rounded),
-              label: 'Több',
+              icon: const Icon(Icons.menu_rounded),
+              selectedIcon: const Icon(Icons.menu_rounded),
+              label: uwu('Több'),
             ),
           ],
         ),
@@ -256,20 +287,34 @@ class _HomeScreenState extends State<HomeScreen> {
             session: _session,
             prefs: widget.prefs,
             onPrefsChanged: widget.onPrefsChanged,
+          ).staggeredEntrance(
+            0,
+            animationKey: ValueKey('home-prof-$_tabSwitchEpoch'),
           ),
           if (_error != null) ...[
             const SizedBox(height: 14),
             _buildErrorCard(theme, _error!),
           ],
           const SizedBox(height: 18),
-          _buildNextLessonHeroCard(theme, scheme, lessons),
+          _buildNextLessonHeroCard(theme, scheme, lessons).staggeredEntrance(
+            1,
+            animationKey: ValueKey('home-next-$_tabSwitchEpoch'),
+          ),
           const SizedBox(height: 24),
-          _buildActivityFeedHeader(theme, scheme),
+          _buildActivityFeedHeader(theme, scheme).staggeredEntrance(
+            2,
+            animationKey: ValueKey('home-hdr-$_tabSwitchEpoch'),
+          ),
           const SizedBox(height: 12),
-          _buildFilterChipBar(theme, scheme),
+          _buildFilterChipBar(theme, scheme).staggeredEntrance(
+            3,
+            animationKey: ValueKey('home-chips-$_tabSwitchEpoch'),
+          ),
           const SizedBox(height: 14),
           AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
+            duration: const Duration(milliseconds: 240),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInOutCubic,
             child: feedItems.isEmpty
                 ? _buildEmptyStateCard(
                     theme,
@@ -278,10 +323,19 @@ class _HomeScreenState extends State<HomeScreen> {
                     message: 'Nincs megjeleníthető elem ebben a kategóriában.',
                   )
                 : Column(
-                    key: ValueKey<ActivityFeedFilter>(_feedFilter),
-                    children: feedItems
-                        .map((item) => _buildActivityFeedTile(theme, scheme, item))
-                        .toList(),
+                    key: ValueKey<String>(
+                      'feed-${_feedFilter.name}-$_tabSwitchEpoch',
+                    ),
+                    children: List.generate(feedItems.length, (idx) {
+                      final item = feedItems[idx];
+                      return _buildActivityFeedTile(theme, scheme, item)
+                          .staggeredEntrance(
+                        idx + 2,
+                        animationKey: ValueKey(
+                          'item-${item.uniqueKey}-${_feedFilter.name}-$_tabSwitchEpoch',
+                        ),
+                      );
+                    }),
                   ),
           ),
         ],
@@ -290,7 +344,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Builds the dynamic 'Következő óra' (Next Lesson) hero card with real-time
-  /// countdown and daily lesson progress.
+  /// animated countdown rollup, Hero lesson badge, and daily lesson progress.
   Widget _buildNextLessonHeroCard(
     ThemeData theme,
     ColorScheme scheme,
@@ -326,32 +380,33 @@ class _HomeScreenState extends State<HomeScreen> {
         ? 'Mára vége az óráknak!'
         : 'Ma még $remainingCount / $totalCount óra van hátra';
 
-    String countdownLabel = '';
+    int countdownMinutes = 0;
     if (currentOrNext != null) {
       if (isOngoing) {
-        final minsLeft =
+        countdownMinutes =
             currentOrNext.end.difference(now).inMinutes.clamp(1, 999);
-        countdownLabel = 'Folyamatban • még $minsLeft perc';
       } else {
-        final diffMins =
+        countdownMinutes =
             currentOrNext.start.difference(now).inMinutes.clamp(1, 9999);
-        if (diffMins >= 60) {
-          final h = diffMins ~/ 60;
-          final m = diffMins % 60;
-          countdownLabel = 'Kezdésig: $h óra $m perc';
-        } else {
-          countdownLabel = 'Kezdésig: $diffMins perc';
-        }
       }
     }
 
-    return InkWell(
-      borderRadius: OledTheme.largeRadius,
+    final nextLessonHeroTag = currentOrNext != null
+        ? 'next-lesson-hero-${currentOrNext.uid}'
+        : null;
+
+    return TactileBounce(
+      pressedScale: 0.97,
       onTap: currentOrNext != null
-          ? () => showLessonInspectionModal(context, currentOrNext!)
-          : () => setState(() => _selectedIndex = 2),
+          ? () => showLessonInspectionModal(
+                context,
+                currentOrNext!,
+                heroTag: nextLessonHeroTag,
+              )
+          : () => _selectBottomTab(2),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           color: theme.cardTheme.color,
@@ -389,7 +444,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        isOngoing ? 'Jelenlegi óra' : 'Következő óra',
+                        uwu(isOngoing ? 'Jelenlegi óra' : 'Következő óra'),
                         style: theme.textTheme.labelSmall?.copyWith(
                           color: scheme.primary,
                           fontWeight: FontWeight.w800,
@@ -409,7 +464,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     borderRadius: BorderRadius.circular(22),
                   ),
                   child: Text(
-                    progressText,
+                    uwu(progressText),
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: scheme.onSurface.withValues(alpha: 0.78),
                       fontWeight: FontWeight.w700,
@@ -457,21 +512,27 @@ class _HomeScreenState extends State<HomeScreen> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: scheme.primary,
-                      borderRadius: OledTheme.badgeRadius,
-                    ),
-                    child: Text(
-                      currentOrNext.lessonNumber != null
-                          ? '${currentOrNext.lessonNumber}.'
-                          : '•',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        color: scheme.onPrimary,
-                        fontWeight: FontWeight.w900,
+                  Hero(
+                    tag: nextLessonHeroTag!,
+                    child: Container(
+                      width: 52,
+                      height: 52,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: scheme.primary,
+                        borderRadius: OledTheme.badgeRadius,
+                      ),
+                      child: Material(
+                        type: MaterialType.transparency,
+                        child: Text(
+                          currentOrNext.lessonNumber != null
+                              ? '${currentOrNext.lessonNumber}.'
+                              : '•',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            color: scheme.onPrimary,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -555,8 +616,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: scheme.primary,
                     ),
                     const SizedBox(width: 8),
-                    Text(
-                      countdownLabel,
+                    AnimatedNumberText(
+                      value: countdownMinutes.toDouble(),
+                      fractionDigits: 0,
+                      prefix: isOngoing ? 'Folyamatban • még ' : 'Kezdésig: ',
+                      suffix: ' perc',
                       style: theme.textTheme.labelMedium?.copyWith(
                         color: scheme.primary,
                         fontWeight: FontWeight.w800,
@@ -602,7 +666,7 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            'Aktivitási hírfolyam',
+            uwu('Aktivitási hírfolyam'),
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.w800,
               color: scheme.onSurface,
@@ -610,7 +674,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         Text(
-          'Koppints a részletekért',
+          uwu('Koppints a részletekért'),
           style: theme.textTheme.labelSmall?.copyWith(
             color: scheme.onSurface.withValues(alpha: 0.54),
           ),
@@ -627,11 +691,11 @@ class _HomeScreenState extends State<HomeScreen> {
           final selected = _feedFilter == filter;
           return Padding(
             padding: const EdgeInsets.only(right: 8),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(22),
+            child: TactileBounce(
               onTap: () => setState(() => _feedFilter = filter),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 14,
                   vertical: 9,
@@ -655,7 +719,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      filter.label,
+                      uwu(filter.label),
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight:
@@ -727,15 +791,17 @@ class _HomeScreenState extends State<HomeScreen> {
       if (grade.mode?.description.isNotEmpty == true) grade.mode!.description,
       if (grade.weightPercentage != null) '${grade.weightPercentage}%',
     ];
+    final heroTag = 'feed-grade-hero-${grade.uid}';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
-        borderRadius: OledTheme.cardRadius,
+      child: TactileBounce(
+        pressedScale: 0.97,
         onTap: () => showGradeInspectionModal(
           context,
           grade,
           prefs: widget.prefs,
+          heroTag: heroTag,
         ),
         child: Container(
           padding: const EdgeInsets.all(16),
@@ -747,19 +813,25 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 48,
-                height: 48,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: badgeColor,
-                  borderRadius: OledTheme.badgeRadius,
-                ),
-                child: Text(
-                  badgeText,
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
+              Hero(
+                tag: heroTag,
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: badgeColor,
+                    borderRadius: OledTheme.badgeRadius,
+                  ),
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: Text(
+                      badgeText,
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -839,8 +911,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
-        borderRadius: OledTheme.cardRadius,
+      child: TactileBounce(
+        pressedScale: 0.97,
         onTap: () => showHomeworkInspectionModal(context, homework),
         child: Container(
           padding: const EdgeInsets.all(16),
@@ -929,8 +1001,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
-        borderRadius: OledTheme.cardRadius,
+      child: TactileBounce(
+        pressedScale: 0.97,
         onTap: () => showTestInspectionModal(context, test),
         child: Container(
           padding: const EdgeInsets.all(16),

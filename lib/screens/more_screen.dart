@@ -4,6 +4,9 @@ import 'package:kreta_api/kreta_api.dart';
 
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
+import '../utils/uwu_helper.dart';
+import '../widgets/animation_helpers.dart';
+import 'about_app_screen.dart';
 
 /// "Több" tab: Dedicated 'Testreszabás' (Personalization) settings hub,
 /// Grade Colors Customizer, Rounding Rule Configurator, and Account summary.
@@ -451,18 +454,101 @@ class _MoreScreenState extends State<MoreScreen> {
           ],
         ),
         const SizedBox(height: 16),
+        if (widget.prefs.developerModeUnlocked) ...[
+          _buildSectionCard(
+            theme,
+            scheme,
+            icon: Icons.terminal_rounded,
+            title: uwu('Fejlesztői beállítások'),
+            children: [
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                activeThumbColor: OledTheme.uwuPastelPink,
+                title: Text(
+                  widget.prefs.uwuModeEnabled
+                      ? 'UwU / Kawaii mód aktív nya~ :3'
+                      : 'UwU / Kawaii mód',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                subtitle: Text(
+                  uwu(
+                    'Fonetikus szövegátalakítás (:3, uwu, >w<) és pasztell rózsaszín/levendula téma',
+                  ),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurface.withValues(alpha: 0.68),
+                  ),
+                ),
+                value: widget.prefs.uwuModeEnabled,
+                onChanged: (val) => widget.onPrefsChanged(
+                  widget.prefs.copyWith(uwuModeEnabled: val),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+        ],
         _buildSectionCard(
           theme,
           scheme,
           icon: Icons.info_outline_rounded,
-          title: 'A reKRETA alkalmazásról',
+          title: uwu('Rendszer / Névjegy'),
           children: [
-            _buildRow(scheme, 'Alkalmazás', 'reKRETA v0.3.0'),
-            _buildRow(scheme, 'API csomag', 'kreta_api (v3 OAuth2 PKCE)'),
-            _buildRow(
-              scheme,
-              'Hitelesítés',
-              'In-App WebView + FlutterSecureStorage',
+            _buildRow(scheme, uwu('Alkalmazás'), 'reKRETA v1.0.0-alpha (+1)'),
+            _buildRow(scheme, uwu('GitHub'), 'github.com/mlnlbrt10/reKRETA'),
+            const SizedBox(height: 12),
+            TactileBounce(
+              onTap: () {
+                Navigator.of(context).push(
+                  SmoothSharedAxisRoute(
+                    page: AboutAppScreen(
+                      prefs: widget.prefs,
+                      onPrefsChanged: widget.onPrefsChanged,
+                    ),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  vertical: 14,
+                  horizontal: 16,
+                ),
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(
+                    color: scheme.primary.withValues(alpha: 0.55),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.verified_user_rounded,
+                      size: 18,
+                      color: scheme.primary,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        uwu('Az alkalmazásról & Frissítések megnyitása'),
+                        style: TextStyle(
+                          color: scheme.primary,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: scheme.primary,
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
@@ -478,9 +564,9 @@ class _MoreScreenState extends State<MoreScreen> {
           ),
           onPressed: widget.onLogout,
           icon: const Icon(Icons.logout_rounded),
-          label: const Text(
-            'Kijelentkezés és munkamenet törlése',
-            style: TextStyle(fontWeight: FontWeight.w800),
+          label: Text(
+            uwu('Kijelentkezés és munkamenet törlése'),
+            style: const TextStyle(fontWeight: FontWeight.w800),
           ),
         ),
       ],

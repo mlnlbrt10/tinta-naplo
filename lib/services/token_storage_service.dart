@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:kreta_api/kreta_api.dart';
 
 import '../core/kreta_auth_config.dart';
+import '../utils/uwu_helper.dart';
 
 /// Supported visual theme styles in reKRETA.
 enum AppThemeStyle {
@@ -95,6 +96,8 @@ class UserProfilePrefs {
   final bool showWeekends;
   final Map<int, int> customGradeColors;
   final GradeRoundingConfig roundingConfig;
+  final bool developerModeUnlocked;
+  final bool uwuModeEnabled;
 
   static const Map<int, int> defaultGradeColors = {
     5: 0xFF2E7D32, // Green
@@ -115,6 +118,8 @@ class UserProfilePrefs {
     this.showWeekends = false,
     this.customGradeColors = defaultGradeColors,
     this.roundingConfig = const GradeRoundingConfig(),
+    this.developerModeUnlocked = false,
+    this.uwuModeEnabled = false,
   });
 
   Color colorForGrade(int? numericValue) {
@@ -142,6 +147,8 @@ class UserProfilePrefs {
     bool? showWeekends,
     Map<int, int>? customGradeColors,
     GradeRoundingConfig? roundingConfig,
+    bool? developerModeUnlocked,
+    bool? uwuModeEnabled,
   }) {
     return UserProfilePrefs(
       nickname: clearNickname ? null : (nickname ?? this.nickname),
@@ -155,6 +162,9 @@ class UserProfilePrefs {
       showWeekends: showWeekends ?? this.showWeekends,
       customGradeColors: customGradeColors ?? this.customGradeColors,
       roundingConfig: roundingConfig ?? this.roundingConfig,
+      developerModeUnlocked:
+          developerModeUnlocked ?? this.developerModeUnlocked,
+      uwuModeEnabled: uwuModeEnabled ?? this.uwuModeEnabled,
     );
   }
 }
@@ -247,6 +257,8 @@ class TokenStorageService {
   static const _keyShowWeekends = 'kreta_show_weekends';
   static const _keyCustomGradeColors = 'kreta_custom_grade_colors';
   static const _keyRoundingConfig = 'kreta_rounding_config';
+  static const _keyDeveloperModeUnlocked = 'kreta_dev_mode_unlocked';
+  static const _keyUwuModeEnabled = 'kreta_uwu_mode_enabled';
 
   final FlutterSecureStorage _storage;
 
@@ -329,6 +341,9 @@ class TokenStorageService {
     final seedColor =
         int.tryParse(values[_keySeedColorValue] ?? '') ?? 0xFF4DA3FF;
     final showWeekends = values[_keyShowWeekends] == 'true';
+    final devUnlocked = values[_keyDeveloperModeUnlocked] == 'true';
+    final uwuEnabled = values[_keyUwuModeEnabled] == 'true';
+    UwuHelper.isEnabled = uwuEnabled;
 
     final Map<int, int> gradeColors = Map<int, int>.from(
       UserProfilePrefs.defaultGradeColors,
@@ -368,10 +383,13 @@ class TokenStorageService {
       showWeekends: showWeekends,
       customGradeColors: gradeColors,
       roundingConfig: rounding,
+      developerModeUnlocked: devUnlocked,
+      uwuModeEnabled: uwuEnabled,
     );
   }
 
   Future<void> saveProfilePrefs(UserProfilePrefs prefs) async {
+    UwuHelper.isEnabled = prefs.uwuModeEnabled;
     final trimmedNick = prefs.nickname?.trim() ?? '';
     final trimmedPhoto = prefs.customPhotoPath?.trim() ?? '';
     final serializedColors = jsonEncode(
@@ -411,6 +429,14 @@ class TokenStorageService {
       ),
       _storage.write(key: _keyCustomGradeColors, value: serializedColors),
       _storage.write(key: _keyRoundingConfig, value: serializedRounding),
+      _storage.write(
+        key: _keyDeveloperModeUnlocked,
+        value: prefs.developerModeUnlocked.toString(),
+      ),
+      _storage.write(
+        key: _keyUwuModeEnabled,
+        value: prefs.uwuModeEnabled.toString(),
+      ),
     ]);
   }
 }
