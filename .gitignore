@@ -1,0 +1,26 @@
+# flutter & dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+
+# android
+android/**/gradle-wrapper.jar
+android/.gradle
+android/captures/
+android/local.properties
+android/**/GeneratedPluginRegistrant.java
+
+# ide & os
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# secrets & keys
+*.env
+*.keystore
+*.jks
