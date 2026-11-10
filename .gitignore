@@ -24,3 +24,5 @@ android/**/GeneratedPluginRegistrant.java
 *.env
 *.keystore
 *.jks
+__pycache__/
+*.pyc
