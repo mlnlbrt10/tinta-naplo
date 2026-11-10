@@ -330,7 +330,7 @@ class TokenStorageService {
         int.tryParse(values[_keySeedColorValue] ?? '') ?? 0xFF4DA3FF;
     final showWeekends = values[_keyShowWeekends] == 'true';
 
-    Map<int, int> gradeColors = Map<int, int>.from(
+    final Map<int, int> gradeColors = Map<int, int>.from(
       UserProfilePrefs.defaultGradeColors,
     );
     final rawGradeColors = values[_keyCustomGradeColors];

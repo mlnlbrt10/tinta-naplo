@@ -16,7 +16,7 @@ import 'timetable_screen.dart';
 
 /// Filter categories for the unified Főoldal activity feed.
 enum ActivityFeedFilter {
-  all('Összes', Icons.View_stream_rounded),
+  all('Összes', Icons.view_stream_rounded),
   grades('Jegyek', Icons.star_rounded),
   homeworks('Házik', Icons.menu_book_rounded),
   tests('Számonkérések', Icons.assignment_late_rounded);
@@ -32,17 +32,17 @@ class _ActivityItem {
   final Homework? homework;
   final Test? test;
 
-  const _ActivityItem.grade(Grade this.grade)
+  _ActivityItem.grade(Grade this.grade)
       : sortDate = grade.recordDate,
         homework = null,
         test = null;
 
-  const _ActivityItem.homework(Homework this.homework)
+  _ActivityItem.homework(Homework this.homework)
       : sortDate = homework.creationDate,
         grade = null,
         test = null;
 
-  const _ActivityItem.test(Test this.test)
+  _ActivityItem.test(Test this.test)
       : sortDate = test.reportDate,
         grade = null,
         homework = null;

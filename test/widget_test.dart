@@ -1,15 +1,57 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:rekreta_app/screens/grades_screen.dart';
+import 'package:rekreta_app/services/token_storage_service.dart';
 import 'package:rekreta_app/theme/oled_theme.dart';
 
 void main() {
-  test('OledTheme uses pure black background and color-coded grade badges', () {
-    final theme = OledTheme.buildTheme();
-    expect(theme.scaffoldBackgroundColor, Colors.black);
-    expect(OledTheme.gradeColor(5), const Color(0xFF2E7D32));
-    expect(OledTheme.gradeColor(4), const Color(0xFF1565C0));
-    expect(OledTheme.gradeColor(3), const Color(0xFFF9A825));
-    expect(OledTheme.gradeColor(2), const Color(0xFFEF6C00));
-    expect(OledTheme.gradeColor(1), const Color(0xFFC62828));
+  test('OledTheme supports OLED Pure Black, Standard Dark, and Light modes', () {
+    final oled = OledTheme.buildTheme(
+      prefs: const UserProfilePrefs(themeStyle: AppThemeStyle.oledPureBlack),
+    );
+    final stdDark = OledTheme.buildTheme(
+      prefs: const UserProfilePrefs(themeStyle: AppThemeStyle.standardDark),
+    );
+    final light = OledTheme.buildTheme(
+      prefs: const UserProfilePrefs(themeStyle: AppThemeStyle.light),
+    );
+
+    expect(oled.scaffoldBackgroundColor, Colors.black);
+    expect(stdDark.brightness, Brightness.dark);
+    expect(light.brightness, Brightness.light);
+  });
+
+  test('GradeRoundingConfig evaluates custom rounding thresholds accurately', () {
+    const custom = GradeRoundingConfig(
+      threshold5: 4.60,
+      threshold4: 3.50,
+      threshold3: 2.50,
+      threshold2: 2.00,
+    );
+
+    expect(custom.evaluateRoundedGrade(4.55), 4);
+    expect(custom.evaluateRoundedGrade(4.60), 5);
+    expect(custom.evaluateRoundedGrade(1.85), 1);
+    expect(custom.evaluateRoundedGrade(2.00), 2);
+  });
+
+  test('GhostGrade simulator computes weighted averages and needed grades', () {
+    final avg = SubjectGradeSummary.computeWeightedAverage(
+      const [],
+      const [
+        GhostGrade(value: 4, weightPercentage: 100),
+        GhostGrade(value: 5, weightPercentage: 200),
+      ],
+    );
+    expect(avg, closeTo(14.0 / 3.0, 0.001));
+
+    final neededForFive = SubjectGradeSummary.calculateNeededGradesCount(
+      currentGrades: const [],
+      ghostGrades: const [GhostGrade(value: 4, weightPercentage: 100)],
+      targetThreshold: 4.50,
+      gradeValue: 5,
+      weightPercentage: 100,
+    );
+    expect(neededForFive, 1);
   });
 }
