@@ -315,7 +315,7 @@ open class MainActivity : FlutterActivity() {
                         if (deepIntent.resolveActivity(pm) != null) {
                             startActivity(deepIntent)
                             result.success(true)
-                            return@setMethodCallHandler
+                            return
                         }
                     }
                     val launchIntent = pm.getLaunchIntentForPackage(MENETRENDGO_PACKAGE)
