@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 
 import 'screens/home_screen.dart';
 import 'screens/webview_login_screen.dart';
+import 'services/dynamic_icon_service.dart';
 import 'services/kreta_client.dart';
 import 'services/token_storage_service.dart';
 import 'theme/oled_theme.dart';
+import 'widgets/christmas_snowfall_overlay.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -55,6 +57,7 @@ class _ReKretaAppState extends State<ReKretaApp> {
         _prefs = results[1] as UserProfilePrefs;
         _isRestoringSession = false;
       });
+      await DynamicIconService.syncIconWithPrefs(_prefs);
     } catch (_) {
       if (!mounted) return;
       setState(() => _isRestoringSession = false);
@@ -63,7 +66,10 @@ class _ReKretaAppState extends State<ReKretaApp> {
 
   Future<void> _updatePrefs(UserProfilePrefs nextPrefs) async {
     setState(() => _prefs = nextPrefs);
-    await _tokenStorage.saveProfilePrefs(nextPrefs);
+    await Future.wait([
+      _tokenStorage.saveProfilePrefs(nextPrefs),
+      DynamicIconService.syncIconWithPrefs(nextPrefs),
+    ]);
   }
 
   Future<void> _launchWebViewLogin(BuildContext navContext) async {
@@ -133,96 +139,94 @@ class _ReKretaAppState extends State<ReKretaApp> {
         final scheme = theme.colorScheme;
 
         return Scaffold(
-          body: SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 420),
-                  child: Container(
-                    padding: const EdgeInsets.all(26),
-                    decoration: BoxDecoration(
-                      color: theme.cardTheme.color,
-                      borderRadius: OledTheme.largeRadius,
-                      border: Border.all(color: theme.dividerColor),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Center(
-                          child: Container(
-                            width: 72,
-                            height: 72,
-                            decoration: BoxDecoration(
-                              color: scheme.primary.withValues(alpha: 0.18),
-                              borderRadius: BorderRadius.circular(24),
+          body: ChristmasAndBackgroundOverlay(
+            prefs: _prefs,
+            child: SafeArea(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: ChristmasSnowCap(
+                      enabled: _prefs.christmasModeEnabled,
+                      child: Container(
+                        padding: const EdgeInsets.all(26),
+                        decoration: BoxDecoration(
+                          color: theme.cardTheme.color,
+                          borderRadius: OledTheme.largeRadius,
+                          border: Border.all(color: theme.dividerColor),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Center(
+                              child: AppBrandIconBadge(
+                                prefs: _prefs,
+                                size: 72,
+                              ),
                             ),
-                            child: Icon(
-                              Icons.school_rounded,
-                              size: 40,
-                              color: scheme.primary,
+                            const SizedBox(height: 18),
+                            Text(
+                              'reKRETA',
+                              style: theme.textTheme.headlineMedium?.copyWith(
+                                fontWeight: FontWeight.w900,
+                                color: scheme.onSurface,
+                              ),
+                              textAlign: TextAlign.center,
                             ),
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        Text(
-                          'reKRETA',
-                          style: theme.textTheme.headlineMedium?.copyWith(
-                            fontWeight: FontWeight.w900,
-                            color: scheme.onSurface,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Jelentkezz be a hivatalos E-Kréta IDP felületén '
-                          '(OAuth2 PKCE + interaktív reCAPTCHA WebView).',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: scheme.onSurface.withValues(alpha: 0.7),
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 26),
-                        TextField(
-                          controller: _instituteController,
-                          decoration: const InputDecoration(
-                            labelText:
-                                'Intézményazonosító (opcionális előkitöltés)',
-                            hintText: 'pl. klik035220001',
-                            prefixIcon: Icon(Icons.account_balance_rounded),
-                          ),
-                          textInputAction: TextInputAction.next,
-                        ),
-                        const SizedBox(height: 14),
-                        TextField(
-                          controller: _usernameController,
-                          decoration: const InputDecoration(
-                            labelText:
-                                'Oktatási azonosító (opcionális előkitöltés)',
-                            hintText: 'pl. 71234567890',
-                            prefixIcon: Icon(Icons.badge_rounded),
-                          ),
-                          textInputAction: TextInputAction.done,
-                        ),
-                        const SizedBox(height: 24),
-                        FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                            backgroundColor: scheme.primary,
-                            foregroundColor: scheme.onPrimary,
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(24),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Jelentkezz be a hivatalos E-Kréta IDP felületén '
+                              '(OAuth2 PKCE + interaktív reCAPTCHA WebView).',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: scheme.onSurface.withValues(alpha: 0.7),
+                              ),
+                              textAlign: TextAlign.center,
                             ),
-                          ),
-                          onPressed: () => _launchWebViewLogin(navContext),
-                          icon: const Icon(Icons.login_rounded),
-                          label: const Text(
-                            'Bejelentkezés E-Kréta WebView-val',
-                            style: TextStyle(fontWeight: FontWeight.w800),
-                          ),
+                            const SizedBox(height: 26),
+                            TextField(
+                              controller: _instituteController,
+                              decoration: const InputDecoration(
+                                labelText:
+                                    'Intézményazonosító (opcionális előkitöltés)',
+                                hintText: 'pl. klik035220001',
+                                prefixIcon: Icon(Icons.account_balance_rounded),
+                              ),
+                              textInputAction: TextInputAction.next,
+                            ),
+                            const SizedBox(height: 14),
+                            TextField(
+                              controller: _usernameController,
+                              decoration: const InputDecoration(
+                                labelText:
+                                    'Oktatási azonosító (opcionális előkitöltés)',
+                                hintText: 'pl. 71234567890',
+                                prefixIcon: Icon(Icons.badge_rounded),
+                              ),
+                              textInputAction: TextInputAction.done,
+                            ),
+                            const SizedBox(height: 24),
+                            FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: scheme.primary,
+                                foregroundColor: scheme.onPrimary,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(24),
+                                ),
+                              ),
+                              onPressed: () => _launchWebViewLogin(navContext),
+                              icon: const Icon(Icons.login_rounded),
+                              label: const Text(
+                                'Bejelentkezés E-Kréta WebView-val',
+                                style: TextStyle(fontWeight: FontWeight.w800),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),

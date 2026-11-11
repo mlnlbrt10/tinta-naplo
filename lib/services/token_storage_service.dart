@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:http/http.dart' as http;
 import 'package:kreta_api/kreta_api.dart';
 
 import '../core/kreta_auth_config.dart';
@@ -85,6 +86,7 @@ class GradeRoundingConfig {
 }
 
 /// User customization & personalization preferences persisted in secure storage.
+/// Survives logout/relogin and supports full JSON export/import.
 class UserProfilePrefs {
   final String? nickname;
   final int avatarIconIndex;
@@ -94,10 +96,19 @@ class UserProfilePrefs {
   final bool useDynamicColor;
   final int seedColorValue;
   final bool showWeekends;
+  final bool showCancelledLessons;
   final Map<int, int> customGradeColors;
   final GradeRoundingConfig roundingConfig;
   final bool developerModeUnlocked;
   final bool uwuModeEnabled;
+  final bool tsundereModeEnabled;
+  final bool christmasModeEnabled;
+  final String appIconPreset;
+  final String backgroundPreset;
+  final Map<String, GradeRoundingConfig> subjectRoundingOverrides;
+  final Map<String, int> subjectCustomColors;
+  final Map<String, String> subjectCustomNames;
+  final Map<String, String> teacherCustomNames;
 
   static const Map<int, int> defaultGradeColors = {
     5: 0xFF2E7D32, // Green
@@ -116,10 +127,19 @@ class UserProfilePrefs {
     this.useDynamicColor = false,
     this.seedColorValue = 0xFF4DA3FF,
     this.showWeekends = false,
+    this.showCancelledLessons = true,
     this.customGradeColors = defaultGradeColors,
     this.roundingConfig = const GradeRoundingConfig(),
     this.developerModeUnlocked = false,
     this.uwuModeEnabled = false,
+    this.tsundereModeEnabled = false,
+    this.christmasModeEnabled = false,
+    this.appIconPreset = 'default',
+    this.backgroundPreset = 'pure_oled',
+    this.subjectRoundingOverrides = const {},
+    this.subjectCustomColors = const {},
+    this.subjectCustomNames = const {},
+    this.teacherCustomNames = const {},
   });
 
   Color colorForGrade(int? numericValue) {
@@ -134,6 +154,56 @@ class UserProfilePrefs {
     return colorForGrade(rounded);
   }
 
+  /// Resolves the rounding configuration for a specific subject key (`uid` or `name`),
+  /// falling back to the global [roundingConfig].
+  GradeRoundingConfig roundingForSubject(String subjectKey, [String? altKey]) {
+    if (subjectRoundingOverrides.containsKey(subjectKey)) {
+      return subjectRoundingOverrides[subjectKey]!;
+    }
+    if (altKey != null && subjectRoundingOverrides.containsKey(altKey)) {
+      return subjectRoundingOverrides[altKey]!;
+    }
+    return roundingConfig;
+  }
+
+  /// Evaluates the rounded standing grade (1..5) for a subject using any per-subject override.
+  int evaluateSubjectRoundedGrade(
+    double average,
+    String subjectKey, [
+    String? altKey,
+  ]) {
+    return roundingForSubject(subjectKey, altKey).evaluateRoundedGrade(average);
+  }
+
+  /// Returns a custom accent color for a subject if set, or null.
+  Color? customColorForSubject(String subjectKey, [String? altKey]) {
+    final argb = subjectCustomColors[subjectKey] ??
+        (altKey != null ? subjectCustomColors[altKey] : null);
+    return argb != null ? Color(argb) : null;
+  }
+
+  /// Returns the display name for a subject, honoring local custom renames.
+  String resolveSubjectName(String originalName, [String? subjectUid]) {
+    if (subjectUid != null && subjectUid.isNotEmpty) {
+      final byUid = subjectCustomNames[subjectUid]?.trim();
+      if (byUid != null && byUid.isNotEmpty) return byUid;
+    }
+    final byName = subjectCustomNames[originalName]?.trim();
+    if (byName != null && byName.isNotEmpty) return byName;
+    return originalName;
+  }
+
+  /// Returns the display name for a teacher, honoring local custom renames.
+  String resolveTeacherName(String? originalTeacher) {
+    if (originalTeacher == null || originalTeacher.trim().isEmpty) {
+      return '';
+    }
+    final trimmed = originalTeacher.trim();
+    final custom = teacherCustomNames[trimmed]?.trim();
+    if (custom != null && custom.isNotEmpty) return custom;
+    return trimmed;
+  }
+
   UserProfilePrefs copyWith({
     String? nickname,
     bool clearNickname = false,
@@ -145,10 +215,19 @@ class UserProfilePrefs {
     bool? useDynamicColor,
     int? seedColorValue,
     bool? showWeekends,
+    bool? showCancelledLessons,
     Map<int, int>? customGradeColors,
     GradeRoundingConfig? roundingConfig,
     bool? developerModeUnlocked,
     bool? uwuModeEnabled,
+    bool? tsundereModeEnabled,
+    bool? christmasModeEnabled,
+    String? appIconPreset,
+    String? backgroundPreset,
+    Map<String, GradeRoundingConfig>? subjectRoundingOverrides,
+    Map<String, int>? subjectCustomColors,
+    Map<String, String>? subjectCustomNames,
+    Map<String, String>? teacherCustomNames,
   }) {
     return UserProfilePrefs(
       nickname: clearNickname ? null : (nickname ?? this.nickname),
@@ -160,12 +239,160 @@ class UserProfilePrefs {
       useDynamicColor: useDynamicColor ?? this.useDynamicColor,
       seedColorValue: seedColorValue ?? this.seedColorValue,
       showWeekends: showWeekends ?? this.showWeekends,
+      showCancelledLessons: showCancelledLessons ?? this.showCancelledLessons,
       customGradeColors: customGradeColors ?? this.customGradeColors,
       roundingConfig: roundingConfig ?? this.roundingConfig,
       developerModeUnlocked:
           developerModeUnlocked ?? this.developerModeUnlocked,
       uwuModeEnabled: uwuModeEnabled ?? this.uwuModeEnabled,
+      tsundereModeEnabled: tsundereModeEnabled ?? this.tsundereModeEnabled,
+      christmasModeEnabled: christmasModeEnabled ?? this.christmasModeEnabled,
+      appIconPreset: appIconPreset ?? this.appIconPreset,
+      backgroundPreset: backgroundPreset ?? this.backgroundPreset,
+      subjectRoundingOverrides:
+          subjectRoundingOverrides ?? this.subjectRoundingOverrides,
+      subjectCustomColors: subjectCustomColors ?? this.subjectCustomColors,
+      subjectCustomNames: subjectCustomNames ?? this.subjectCustomNames,
+      teacherCustomNames: teacherCustomNames ?? this.teacherCustomNames,
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'schemaVersion': 2,
+      'nickname': nickname,
+      'avatarIconIndex': avatarIconIndex,
+      'avatarColorIndex': avatarColorIndex,
+      'customPhotoPath': customPhotoPath,
+      'themeStyle': themeStyle.name,
+      'useDynamicColor': useDynamicColor,
+      'seedColorValue': seedColorValue,
+      'showWeekends': showWeekends,
+      'showCancelledLessons': showCancelledLessons,
+      'customGradeColors':
+          customGradeColors.map((k, v) => MapEntry(k.toString(), v)),
+      'roundingConfig': roundingConfig.toJson(),
+      'developerModeUnlocked': developerModeUnlocked,
+      'uwuModeEnabled': uwuModeEnabled,
+      'tsundereModeEnabled': tsundereModeEnabled,
+      'christmasModeEnabled': christmasModeEnabled,
+      'appIconPreset': appIconPreset,
+      'backgroundPreset': backgroundPreset,
+      'subjectRoundingOverrides':
+          subjectRoundingOverrides.map((k, v) => MapEntry(k, v.toJson())),
+      'subjectCustomColors': subjectCustomColors,
+      'subjectCustomNames': subjectCustomNames,
+      'teacherCustomNames': teacherCustomNames,
+    };
+  }
+
+  String toExportJsonString() =>
+      const JsonEncoder.withIndent('  ').convert(toJson());
+
+  factory UserProfilePrefs.fromJson(Map<String, dynamic> json) {
+    final rawNick = (json['nickname'] as String?)?.trim();
+    final photoPath = (json['customPhotoPath'] as String?)?.trim();
+    final themeName = json['themeStyle'] as String?;
+    final themeStyle = AppThemeStyle.values.firstWhere(
+      (e) => e.name == themeName,
+      orElse: () => AppThemeStyle.oledPureBlack,
+    );
+
+    final gradeColors = Map<int, int>.from(defaultGradeColors);
+    final rawGradeColors = json['customGradeColors'];
+    if (rawGradeColors is Map) {
+      for (final entry in rawGradeColors.entries) {
+        final k = int.tryParse(entry.key.toString());
+        final v = entry.value;
+        if (k != null && v is num) {
+          gradeColors[k] = v.toInt();
+        }
+      }
+    }
+
+    GradeRoundingConfig rounding = const GradeRoundingConfig();
+    if (json['roundingConfig'] is Map<String, dynamic>) {
+      rounding = GradeRoundingConfig.fromJson(
+        json['roundingConfig'] as Map<String, dynamic>,
+      );
+    } else if (json['roundingConfig'] is Map) {
+      rounding = GradeRoundingConfig.fromJson(
+        Map<String, dynamic>.from(json['roundingConfig'] as Map),
+      );
+    }
+
+    final subjRounding = <String, GradeRoundingConfig>{};
+    if (json['subjectRoundingOverrides'] is Map) {
+      for (final entry in (json['subjectRoundingOverrides'] as Map).entries) {
+        if (entry.value is Map) {
+          subjRounding[entry.key.toString()] = GradeRoundingConfig.fromJson(
+            Map<String, dynamic>.from(entry.value as Map),
+          );
+        }
+      }
+    }
+
+    final subjColors = <String, int>{};
+    if (json['subjectCustomColors'] is Map) {
+      for (final entry in (json['subjectCustomColors'] as Map).entries) {
+        if (entry.value is num) {
+          subjColors[entry.key.toString()] = (entry.value as num).toInt();
+        }
+      }
+    }
+
+    final subjNames = <String, String>{};
+    if (json['subjectCustomNames'] is Map) {
+      for (final entry in (json['subjectCustomNames'] as Map).entries) {
+        final v = entry.value?.toString().trim() ?? '';
+        if (v.isNotEmpty) {
+          subjNames[entry.key.toString()] = v;
+        }
+      }
+    }
+
+    final teacherNames = <String, String>{};
+    if (json['teacherCustomNames'] is Map) {
+      for (final entry in (json['teacherCustomNames'] as Map).entries) {
+        final v = entry.value?.toString().trim() ?? '';
+        if (v.isNotEmpty) {
+          teacherNames[entry.key.toString()] = v;
+        }
+      }
+    }
+
+    return UserProfilePrefs(
+      nickname: (rawNick != null && rawNick.isNotEmpty) ? rawNick : null,
+      avatarIconIndex: (json['avatarIconIndex'] as num?)?.toInt() ?? 0,
+      avatarColorIndex: (json['avatarColorIndex'] as num?)?.toInt() ?? 0,
+      customPhotoPath:
+          (photoPath != null && photoPath.isNotEmpty) ? photoPath : null,
+      themeStyle: themeStyle,
+      useDynamicColor: json['useDynamicColor'] == true,
+      seedColorValue: (json['seedColorValue'] as num?)?.toInt() ?? 0xFF4DA3FF,
+      showWeekends: json['showWeekends'] == true,
+      showCancelledLessons: json['showCancelledLessons'] != false,
+      customGradeColors: gradeColors,
+      roundingConfig: rounding,
+      developerModeUnlocked: json['developerModeUnlocked'] == true,
+      uwuModeEnabled: json['uwuModeEnabled'] == true,
+      tsundereModeEnabled: json['tsundereModeEnabled'] == true,
+      christmasModeEnabled: json['christmasModeEnabled'] == true,
+      appIconPreset: (json['appIconPreset'] as String?) ?? 'default',
+      backgroundPreset: (json['backgroundPreset'] as String?) ?? 'pure_oled',
+      subjectRoundingOverrides: subjRounding,
+      subjectCustomColors: subjColors,
+      subjectCustomNames: subjNames,
+      teacherCustomNames: teacherNames,
+    );
+  }
+
+  factory UserProfilePrefs.fromExportJsonString(String rawJson) {
+    final decoded = jsonDecode(rawJson);
+    if (decoded is! Map) {
+      throw const FormatException('Érvénytelen JSON beállításfájl.');
+    }
+    return UserProfilePrefs.fromJson(Map<String, dynamic>.from(decoded));
   }
 }
 
@@ -255,10 +482,19 @@ class TokenStorageService {
   static const _keyUseDynamicColor = 'kreta_use_dynamic_color';
   static const _keySeedColorValue = 'kreta_seed_color_val';
   static const _keyShowWeekends = 'kreta_show_weekends';
+  static const _keyShowCancelledLessons = 'kreta_show_cancelled_lessons';
   static const _keyCustomGradeColors = 'kreta_custom_grade_colors';
   static const _keyRoundingConfig = 'kreta_rounding_config';
   static const _keyDeveloperModeUnlocked = 'kreta_dev_mode_unlocked';
   static const _keyUwuModeEnabled = 'kreta_uwu_mode_enabled';
+  static const _keyTsundereModeEnabled = 'kreta_tsundere_mode_enabled';
+  static const _keyChristmasModeEnabled = 'kreta_christmas_mode_enabled';
+  static const _keyAppIconPreset = 'kreta_app_icon_preset';
+  static const _keyBackgroundPreset = 'kreta_background_preset';
+  static const _keySubjectRoundingOverrides = 'kreta_subj_rounding_overrides';
+  static const _keySubjectCustomColors = 'kreta_subj_custom_colors';
+  static const _keySubjectCustomNames = 'kreta_subj_custom_names';
+  static const _keyTeacherCustomNames = 'kreta_teacher_custom_names';
 
   final FlutterSecureStorage _storage;
 
@@ -313,6 +549,59 @@ class TokenStorageService {
     );
   }
 
+  /// Transparently refreshes the OAuth2 access & refresh tokens in the background,
+  /// updates the stored session in [FlutterSecureStorage], and returns the new [StoredSession].
+  Future<StoredSession> refreshToken({
+    StoredSession? session,
+    http.Client? httpClient,
+    String clientId = KretaAuthConfig.clientIdIos,
+  }) async {
+    final active = session ?? await loadSession();
+    if (active == null || active.refreshToken.isEmpty) {
+      throw const TokenExpiredException();
+    }
+
+    final client = httpClient ?? http.Client();
+    final response = await client.post(
+      Uri.parse(KretaAuthConfig.tokenEndpoint),
+      headers: const {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'Accept': '*/*',
+        'User-Agent': KretaAuthConfig.userAgent,
+      },
+      body: {
+        'institute_code': active.instituteCode,
+        'refresh_token': active.refreshToken,
+        'grant_type': 'refresh_token',
+        'client_id': clientId,
+      },
+    );
+
+    if (response.statusCode == 400) {
+      throw const TokenExpiredException();
+    }
+    if (response.statusCode == 401) {
+      throw const InvalidGrantException();
+    }
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Token refresh failed (HTTP ${response.statusCode}): ${response.body}',
+      );
+    }
+
+    final jsonMap =
+        jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+    final grant = TokenGrantResponse.fromJson(jsonMap);
+    final refreshed = StoredSession.fromTokenGrant(
+      grant,
+      fallbackInstituteCode: active.instituteCode,
+    );
+    await saveSession(refreshed);
+    return refreshed;
+  }
+
+  /// Clears only the authentication tokens while preserving all user
+  /// preferences, colors, nicknames, subject renames, and rounding configs.
   Future<void> clearSession() async {
     await Future.wait([
       _storage.delete(key: _keyAccessToken),
@@ -341,9 +630,18 @@ class TokenStorageService {
     final seedColor =
         int.tryParse(values[_keySeedColorValue] ?? '') ?? 0xFF4DA3FF;
     final showWeekends = values[_keyShowWeekends] == 'true';
+    final showCancelledRaw = values[_keyShowCancelledLessons];
+    final showCancelledLessons =
+        showCancelledRaw == null ? true : (showCancelledRaw == 'true');
     final devUnlocked = values[_keyDeveloperModeUnlocked] == 'true';
     final uwuEnabled = values[_keyUwuModeEnabled] == 'true';
+    final tsundereEnabled = values[_keyTsundereModeEnabled] == 'true';
+    final christmasEnabled = values[_keyChristmasModeEnabled] == 'true';
+    final appIconPreset = values[_keyAppIconPreset] ?? 'default';
+    final backgroundPreset = values[_keyBackgroundPreset] ?? 'pure_oled';
+
     UwuHelper.isEnabled = uwuEnabled;
+    UwuHelper.isTsundereEnabled = tsundereEnabled;
 
     final Map<int, int> gradeColors = Map<int, int>.from(
       UserProfilePrefs.defaultGradeColors,
@@ -371,6 +669,62 @@ class TokenStorageService {
       } catch (_) {}
     }
 
+    final Map<String, GradeRoundingConfig> subjRounding = {};
+    final rawSubjRounding = values[_keySubjectRoundingOverrides];
+    if (rawSubjRounding != null && rawSubjRounding.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawSubjRounding) as Map<String, dynamic>;
+        for (final entry in decoded.entries) {
+          if (entry.value is Map<String, dynamic>) {
+            subjRounding[entry.key] = GradeRoundingConfig.fromJson(
+              entry.value as Map<String, dynamic>,
+            );
+          } else if (entry.value is Map) {
+            subjRounding[entry.key] = GradeRoundingConfig.fromJson(
+              Map<String, dynamic>.from(entry.value as Map),
+            );
+          }
+        }
+      } catch (_) {}
+    }
+
+    final Map<String, int> subjColors = {};
+    final rawSubjColors = values[_keySubjectCustomColors];
+    if (rawSubjColors != null && rawSubjColors.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawSubjColors) as Map<String, dynamic>;
+        for (final entry in decoded.entries) {
+          if (entry.value is num) {
+            subjColors[entry.key] = (entry.value as num).toInt();
+          }
+        }
+      } catch (_) {}
+    }
+
+    final Map<String, String> subjNames = {};
+    final rawSubjNames = values[_keySubjectCustomNames];
+    if (rawSubjNames != null && rawSubjNames.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawSubjNames) as Map<String, dynamic>;
+        for (final entry in decoded.entries) {
+          final v = entry.value?.toString().trim() ?? '';
+          if (v.isNotEmpty) subjNames[entry.key] = v;
+        }
+      } catch (_) {}
+    }
+
+    final Map<String, String> teacherNames = {};
+    final rawTeacherNames = values[_keyTeacherCustomNames];
+    if (rawTeacherNames != null && rawTeacherNames.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawTeacherNames) as Map<String, dynamic>;
+        for (final entry in decoded.entries) {
+          final v = entry.value?.toString().trim() ?? '';
+          if (v.isNotEmpty) teacherNames[entry.key] = v;
+        }
+      } catch (_) {}
+    }
+
     return UserProfilePrefs(
       nickname: (rawNick != null && rawNick.isNotEmpty) ? rawNick : null,
       avatarIconIndex: iconIdx,
@@ -381,21 +735,37 @@ class TokenStorageService {
       useDynamicColor: useDynamic,
       seedColorValue: seedColor,
       showWeekends: showWeekends,
+      showCancelledLessons: showCancelledLessons,
       customGradeColors: gradeColors,
       roundingConfig: rounding,
       developerModeUnlocked: devUnlocked,
       uwuModeEnabled: uwuEnabled,
+      tsundereModeEnabled: tsundereEnabled,
+      christmasModeEnabled: christmasEnabled,
+      appIconPreset: appIconPreset,
+      backgroundPreset: backgroundPreset,
+      subjectRoundingOverrides: subjRounding,
+      subjectCustomColors: subjColors,
+      subjectCustomNames: subjNames,
+      teacherCustomNames: teacherNames,
     );
   }
 
   Future<void> saveProfilePrefs(UserProfilePrefs prefs) async {
     UwuHelper.isEnabled = prefs.uwuModeEnabled;
+    UwuHelper.isTsundereEnabled = prefs.tsundereModeEnabled;
     final trimmedNick = prefs.nickname?.trim() ?? '';
     final trimmedPhoto = prefs.customPhotoPath?.trim() ?? '';
     final serializedColors = jsonEncode(
       prefs.customGradeColors.map((k, v) => MapEntry(k.toString(), v)),
     );
     final serializedRounding = jsonEncode(prefs.roundingConfig.toJson());
+    final serializedSubjRounding = jsonEncode(
+      prefs.subjectRoundingOverrides.map((k, v) => MapEntry(k, v.toJson())),
+    );
+    final serializedSubjColors = jsonEncode(prefs.subjectCustomColors);
+    final serializedSubjNames = jsonEncode(prefs.subjectCustomNames);
+    final serializedTeacherNames = jsonEncode(prefs.teacherCustomNames);
 
     await Future.wait([
       if (trimmedNick.isEmpty)
@@ -427,6 +797,10 @@ class TokenStorageService {
         key: _keyShowWeekends,
         value: prefs.showWeekends.toString(),
       ),
+      _storage.write(
+        key: _keyShowCancelledLessons,
+        value: prefs.showCancelledLessons.toString(),
+      ),
       _storage.write(key: _keyCustomGradeColors, value: serializedColors),
       _storage.write(key: _keyRoundingConfig, value: serializedRounding),
       _storage.write(
@@ -436,6 +810,38 @@ class TokenStorageService {
       _storage.write(
         key: _keyUwuModeEnabled,
         value: prefs.uwuModeEnabled.toString(),
+      ),
+      _storage.write(
+        key: _keyTsundereModeEnabled,
+        value: prefs.tsundereModeEnabled.toString(),
+      ),
+      _storage.write(
+        key: _keyChristmasModeEnabled,
+        value: prefs.christmasModeEnabled.toString(),
+      ),
+      _storage.write(
+        key: _keyAppIconPreset,
+        value: prefs.appIconPreset,
+      ),
+      _storage.write(
+        key: _keyBackgroundPreset,
+        value: prefs.backgroundPreset,
+      ),
+      _storage.write(
+        key: _keySubjectRoundingOverrides,
+        value: serializedSubjRounding,
+      ),
+      _storage.write(
+        key: _keySubjectCustomColors,
+        value: serializedSubjColors,
+      ),
+      _storage.write(
+        key: _keySubjectCustomNames,
+        value: serializedSubjNames,
+      ),
+      _storage.write(
+        key: _keyTeacherCustomNames,
+        value: serializedTeacherNames,
       ),
     ]);
   }

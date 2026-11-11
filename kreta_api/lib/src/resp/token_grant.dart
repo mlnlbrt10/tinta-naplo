@@ -17,12 +17,12 @@ class TokenGrantResponse {
 
   factory TokenGrantResponse.fromJson(Map<String, dynamic> json) {
     return TokenGrantResponse(
-      idToken: json['id_token'],
-      accessToken: json['access_token'],
-      expiresIn: json['expires_in'],
-      tokenType: json['token_type'],
-      refreshToken: json['refresh_token'],
-      scope: json['scope'],
+      idToken: (json['id_token'] ?? '').toString(),
+      accessToken: (json['access_token'] ?? '').toString(),
+      expiresIn: (json['expires_in'] as num?)?.toInt() ?? 1800,
+      tokenType: (json['token_type'] ?? 'Bearer').toString(),
+      refreshToken: (json['refresh_token'] ?? '').toString(),
+      scope: (json['scope'] ?? '').toString(),
     );
   }
 

@@ -31,17 +31,30 @@ class Omission extends UidObj {
   });
 
   factory Omission.fromJson(Map<String, dynamic> json) {
+    final rawSubject = json['Tantargy'];
+    final subject = rawSubject is Map<String, dynamic>
+        ? Subject.fromJson(rawSubject)
+        : Subject(
+            uid: '',
+            name: (json['TantargyNev'] ?? 'Tanóra').toString(),
+            category: NameUidDesc(uid: '', name: '', description: ''),
+            sortIndex: 0,
+          );
     return Omission(
-      uid: json['Uid'],
-      subject: Subject.fromJson(json['Tantargy']),
-      lesson: json['Ora'] != null ? OmittedLesson.fromJson(json['Ora']) : null,
-      date: json.localDate('Datum')!,
-      teacher: json['RogzitoTanarNeve'],
+      uid: (json['Uid'] ?? '').toString(),
+      subject: subject,
+      lesson: json['Ora'] is Map<String, dynamic>
+          ? OmittedLesson.fromJson(json['Ora'] as Map<String, dynamic>)
+          : null,
+      date: json.localDate('Datum') ?? DateTime.now(),
+      teacher: (json['RogzitoTanarNeve'] ?? '').toString(),
       type: json.nameUidDesc('Tipus'),
       mode: json.nameUidDesc('Mod'),
-      lateForMin: json['KesesPercben'],
-      createdAt: json.localDate('KeszitesDatuma')!,
-      state: OmissionState.fromString(json['IgazolasAllapota']),
+      lateForMin: (json['KesesPercben'] as num?)?.toInt(),
+      createdAt: json.localDate('KeszitesDatuma') ?? DateTime.now(),
+      state: OmissionState.fromString(
+        (json['IgazolasAllapota'] ?? '').toString(),
+      ),
       proofType: json.nameUidDesc('IgazolasTipusa'),
       classGroup: json.uid('OsztalyCsoport'),
     );
@@ -99,9 +112,9 @@ class OmittedLesson {
 
   factory OmittedLesson.fromJson(Map<String, dynamic> json) {
     return OmittedLesson(
-      start: json.localDate('KezdoDatum')!,
-      end: json.localDate('VegDatum')!,
-      classNo: json['Oraszam'],
+      start: json.localDate('KezdoDatum') ?? DateTime.now(),
+      end: json.localDate('VegDatum') ?? DateTime.now(),
+      classNo: (json['Oraszam'] as num?)?.toInt(),
     );
   }
 

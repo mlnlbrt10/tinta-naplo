@@ -1,7 +1,7 @@
 name: rekreta_app
 description: reKRETA Mobile Flutter client using in-app WebView OAuth2 PKCE and kreta_api.
 publish_to: 'none'
-version: 1.0.1+1
+version: 1.0.2+2
 
 environment:
   sdk: ^3.11.0
@@ -41,3 +41,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icon.png
+    - assets/icons/icon_normal.png
+    - assets/icons/icon_oled.png
+    - assets/icons/icon_christmas.png
+    - assets/icons/icon_christmas_oled.png

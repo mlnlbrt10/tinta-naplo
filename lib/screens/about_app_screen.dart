@@ -7,14 +7,15 @@ import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
+import '../widgets/christmas_snowfall_overlay.dart';
 
 /// Dedicated "Az alkalmazásról" (About App / Rendszer & Névjegy) screen with:
-/// - App icon (`assets/icon.png`), name ('reKRETA'), version ('v1.0.0-alpha'),
-///   build number, and developer credits.
+/// - App icon (`AppBrandIconBadge`), name ('reKRETA'), semantic version ('v1.0.2+2'),
+///   and developer credits.
 /// - Direct link to `https://github.com/mlnlbrt10/reKRETA`.
 /// - Manual "Frissítések keresése" button (GitHub Releases OTA updater).
 /// - 5-tap secret Easter egg on the version text to unlock "Fejlesztői beállítások"
-///   and the Kawaii "UwU mód" toggle.
+///   with "UwU mód" and "Tsundere mód" toggles.
 class AboutAppScreen extends StatefulWidget {
   final UserProfilePrefs prefs;
   final ValueChanged<UserProfilePrefs> onPrefsChanged;
@@ -31,7 +32,7 @@ class AboutAppScreen extends StatefulWidget {
 
 class _AboutAppScreenState extends State<AboutAppScreen> {
   String _version = GitHubUpdaterService.fallbackAppVersion;
-  String _displayTag = 'v${GitHubUpdaterService.fallbackAppVersion}';
+  String _buildNumber = GitHubUpdaterService.fallbackBuildNumber;
   int _versionTapCount = 0;
   DateTime? _lastTapTime;
   bool _isCheckingUpdates = false;
@@ -52,12 +53,11 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
   }
 
   Future<void> _loadPackageVersion() async {
-    final (ver, _) = await GitHubUpdaterService.getAppVersionInfo();
-    final remoteTag = await GitHubUpdaterService.fetchLatestReleaseTag();
+    final (ver, build) = await GitHubUpdaterService.getAppVersionInfo();
     if (!mounted) return;
     setState(() {
       _version = ver;
-      _displayTag = remoteTag.isNotEmpty ? remoteTag : 'v$ver';
+      _buildNumber = build;
     });
   }
 
@@ -147,24 +147,29 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
       appBar: AppBar(
         title: Text(uwu('Az alkalmazásról')),
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 36),
-        children: [
-          _buildHeroIdentityCard(theme, scheme).staggeredEntrance(0),
-          const SizedBox(height: 16),
-          _buildUpdateAndLinksCard(theme, scheme).staggeredEntrance(1),
-          const SizedBox(height: 16),
-          _buildCreditsAndArchitectureCard(theme, scheme).staggeredEntrance(2),
-          if (_currentPrefs.developerModeUnlocked) ...[
+      body: ChristmasAndBackgroundOverlay(
+        prefs: _currentPrefs,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 36),
+          children: [
+            _buildHeroIdentityCard(theme, scheme).staggeredEntrance(0),
             const SizedBox(height: 16),
-            _buildDeveloperOptionsCard(theme, scheme).staggeredEntrance(3),
+            _buildUpdateAndLinksCard(theme, scheme).staggeredEntrance(1),
+            const SizedBox(height: 16),
+            _buildCreditsAndArchitectureCard(theme, scheme)
+                .staggeredEntrance(2),
+            if (_currentPrefs.developerModeUnlocked) ...[
+              const SizedBox(height: 16),
+              _buildDeveloperOptionsCard(theme, scheme).staggeredEntrance(3),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
 
   Widget _buildHeroIdentityCard(ThemeData theme, ColorScheme scheme) {
+    final activeIcon = AppIconPresetInfo.resolve(_currentPrefs);
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -179,38 +184,9 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
       ),
       child: Column(
         children: [
-          Container(
-            width: 88,
-            height: 88,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(26),
-              border: Border.all(
-                color: scheme.primary.withValues(alpha: 0.65),
-                width: 2,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: scheme.primary.withValues(alpha: 0.25),
-                  blurRadius: 20,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(24),
-              child: Image.asset(
-                'assets/icon.png',
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => Container(
-                  color: const Color(0xFF1D3549),
-                  child: Icon(
-                    Icons.school_rounded,
-                    size: 44,
-                    color: scheme.primary,
-                  ),
-                ),
-              ),
-            ),
+          AppBrandIconBadge(
+            prefs: _currentPrefs,
+            size: 88,
           ),
           const SizedBox(height: 16),
           Text(
@@ -218,6 +194,14 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
             style: theme.textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.w900,
               color: scheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            uwu('Aktív ikon: ${activeIcon.label} (${activeIcon.subtitle})'),
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: scheme.onSurface.withValues(alpha: 0.68),
+              fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 14),
@@ -247,7 +231,7 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    uwu('Naprakész ($_displayTag)'),
+                    uwu('Verzió: v$_version+$_buildNumber'),
                     style: theme.textTheme.labelLarge?.copyWith(
                       color: scheme.primary,
                       fontWeight: FontWeight.w800,
@@ -404,8 +388,16 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
           ),
           const SizedBox(height: 12),
           _buildInfoRow(scheme, uwu('Fejlesztő'), 'Milán (mlnlbrt10)'),
-          _buildInfoRow(scheme, uwu('Verzió'), uwu('Naprakész ($_displayTag)')),
-          _buildInfoRow(scheme, uwu('API motor'), 'kreta_api (Kréta v3 OAuth2 PKCE)'),
+          _buildInfoRow(
+            scheme,
+            uwu('Verzió'),
+            uwu('v$_version+$_buildNumber'),
+          ),
+          _buildInfoRow(
+            scheme,
+            uwu('API motor'),
+            'kreta_api (Kréta v3 OAuth2 PKCE)',
+          ),
           _buildInfoRow(
             scheme,
             uwu('Felület'),
@@ -423,6 +415,7 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
 
   Widget _buildDeveloperOptionsCard(ThemeData theme, ColorScheme scheme) {
     final isUwu = _currentPrefs.uwuModeEnabled;
+    final isTsundere = _currentPrefs.tsundereModeEnabled;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 240),
@@ -462,6 +455,7 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
                     _currentPrefs.copyWith(
                       developerModeUnlocked: false,
                       uwuModeEnabled: false,
+                      tsundereModeEnabled: false,
                     ),
                   );
                 },
@@ -482,9 +476,9 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
             child: SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
               activeThumbColor: OledTheme.uwuPastelPink,
-              title: Text(
-                isUwu ? 'UwU / Kawaii mód aktív nya~ :3' : 'UwU / Kawaii mód',
-                style: const TextStyle(
+              title: const Text(
+                'UwU mód',
+                style: TextStyle(
                   fontWeight: FontWeight.w900,
                   fontSize: 15,
                 ),
@@ -505,6 +499,40 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
               },
             ),
           ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF7043).withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: const Color(0xFFFF7043).withValues(alpha: 0.45),
+              ),
+            ),
+            child: SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              activeThumbColor: const Color(0xFFFF7043),
+              title: const Text(
+                'Tsundere mód',
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 15,
+                ),
+              ),
+              subtitle: Text(
+                'Csípős tsundere beszólások és köszöntések („Nem mintha érdekelne a házi feladatod, b-baka!”, „Megint hármas? Nem mintha figyeltem volna...”)',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: scheme.onSurface.withValues(alpha: 0.75),
+                ),
+              ),
+              value: isTsundere,
+              onChanged: (val) {
+                HapticFeedback.mediumImpact();
+                _updatePrefs(_currentPrefs.copyWith(tsundereModeEnabled: val));
+              },
+            ),
+          ),
           const SizedBox(height: 12),
           TactileBounce(
             onTap: () {
@@ -512,12 +540,12 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
                 context,
                 currentVersion: _version,
                 release: const GitHubReleaseInfo(
-                  tagName: 'v1.1.0-kawaii',
+                  tagName: 'v1.1.0',
                   title: 'reKRETA v1.1.0 — OTA Frissítő Előnézet',
                   releaseNotes:
                       '• 120Hz-es fizikai animációk és Hero átmenetek\n'
-                      '• Szellemjegy Számoló és egyedi kerekítési határok\n'
-                      '• Titkos UwU / Kawaii fejlesztői mód :3\n'
+                      '• Szellemjegy Számoló, Ösztöndíj Kalkulátor és egyedi kerekítési határok\n'
+                      '• Titkos UwU mód és Tsundere mód :3\n'
                       '• Közvetlen GitHub Releases APK letöltés és telepítés',
                   htmlUrl: GitHubUpdaterService.repoUrl,
                   apkDownloadUrl:

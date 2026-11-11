@@ -7,23 +7,26 @@ import 'package:kreta_api/kreta_api.dart';
 
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
+import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
 
 /// Displays a 120Hz frosted glass soft blur inspection modal that smoothly
 /// interpolates `BackdropFilter` sigma from 0 to 12 alongside a 0.92 -> 1.0
 /// scale-in (`Curves.easeOutCubic`), reverse-animating cleanly on dismiss
-/// and supporting [heroTag] geometry transitions.
+/// and supporting [heroTag] boomerang geometry transitions.
 Future<void> showFrostedModal({
   required BuildContext context,
   required String categoryLabel,
   required IconData categoryIcon,
   required Color accentColor,
   required String title,
+  String? subtitleTimeSpan,
   String? badgeText,
   String? heroTag,
   required List<FrostedDetailRow> rows,
   String? topicTitle,
   String? topicBody,
+  String? tsundereNote,
 }) {
   HapticFeedback.lightImpact();
 
@@ -33,15 +36,15 @@ Future<void> showFrostedModal({
       barrierDismissible: true,
       barrierLabel: 'Bezárás',
       barrierColor: Colors.transparent,
-      transitionDuration: const Duration(milliseconds: 280),
-      reverseTransitionDuration: const Duration(milliseconds: 240),
+      transitionDuration: const Duration(milliseconds: 300),
+      reverseTransitionDuration: const Duration(milliseconds: 260),
       pageBuilder: (dialogContext, animation, secondaryAnimation) {
         final theme = Theme.of(dialogContext);
         final scheme = theme.colorScheme;
         final isDark = theme.brightness == Brightness.dark;
         final cardBg = isDark
-            ? const Color(0xFF141418).withValues(alpha: 0.88)
-            : Colors.white.withValues(alpha: 0.90);
+            ? const Color(0xFF141418).withValues(alpha: 0.90)
+            : Colors.white.withValues(alpha: 0.92);
 
         final curved = CurvedAnimation(
           parent: animation,
@@ -93,6 +96,18 @@ Future<void> showFrostedModal({
         if (heroTag != null) {
           badgeOrIcon = Hero(
             tag: heroTag,
+            flightShuttleBuilder: (
+              flightContext,
+              flightAnimation,
+              flightDirection,
+              fromHeroContext,
+              toHeroContext,
+            ) {
+              return DefaultTextStyle(
+                style: DefaultTextStyle.of(toHeroContext).style,
+                child: toHeroContext.widget,
+              );
+            },
             child: badgeOrIcon,
           );
         }
@@ -130,6 +145,7 @@ Future<void> showFrostedModal({
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 badgeOrIcon,
                                 const SizedBox(width: 14),
@@ -168,6 +184,31 @@ Future<void> showFrostedModal({
                                           color: scheme.onSurface,
                                         ),
                                       ),
+                                      if (subtitleTimeSpan != null &&
+                                          subtitleTimeSpan.isNotEmpty) ...[
+                                        const SizedBox(height: 6),
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              Icons.access_time_rounded,
+                                              size: 15,
+                                              color: accentColor,
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Expanded(
+                                              child: Text(
+                                                subtitleTimeSpan,
+                                                style: theme
+                                                    .textTheme.labelMedium
+                                                    ?.copyWith(
+                                                  color: accentColor,
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ),
@@ -181,6 +222,33 @@ Future<void> showFrostedModal({
                                 ),
                               ],
                             ),
+                            if (tsundereNote != null &&
+                                tsundereNote.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: OledTheme.uwuPastelPink
+                                      .withValues(alpha: 0.16),
+                                  borderRadius: BorderRadius.circular(18),
+                                  border: Border.all(
+                                    color: OledTheme.uwuPastelPink
+                                        .withValues(alpha: 0.55),
+                                  ),
+                                ),
+                                child: Text(
+                                  tsundereNote,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: OledTheme.uwuPastelPink,
+                                    fontWeight: FontWeight.w800,
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                ),
+                              ),
+                            ],
                             const SizedBox(height: 18),
                             Container(
                               padding: const EdgeInsets.all(14),
@@ -362,19 +430,32 @@ Future<void> showGradeInspectionModal(
       ? '${grade.weightPercentage}%'
       : '100%';
 
+  final subjectDisplay = prefs != null
+      ? prefs.resolveSubjectName(grade.subject.name, grade.subject.uid)
+      : grade.subject.name;
+  final teacherDisplay = prefs != null
+      ? prefs.resolveTeacherName(grade.teacher)
+      : grade.teacher;
+
+  final tsundereNote = (prefs?.tsundereModeEnabled == true ||
+          UwuHelper.isTsundereEnabled)
+      ? UwuHelper.tsundereCommentForGrade(grade.numericValue)
+      : null;
+
   return showFrostedModal(
     context: context,
     categoryLabel: 'Értékelés / Jegy',
     categoryIcon: Icons.star_rounded,
     accentColor: color,
-    title: grade.subject.name,
+    title: subjectDisplay,
     badgeText: badge,
     heroTag: heroTag,
+    tsundereNote: tsundereNote,
     rows: [
       FrostedDetailRow(
         icon: Icons.school_rounded,
         label: 'Tantárgy',
-        value: grade.subject.name,
+        value: subjectDisplay,
       ),
       FrostedDetailRow(
         icon: Icons.grade_rounded,
@@ -398,12 +479,12 @@ Future<void> showGradeInspectionModal(
       FrostedDetailRow(
         icon: Icons.calendar_today_rounded,
         label: 'Rögzítés ideje',
-        value: dtFormat.format(grade.recordDate),
+        value: dtFormat.format(grade.recordDate.toLocal()),
       ),
       FrostedDetailRow(
         icon: Icons.person_rounded,
         label: 'Értékelő tanár',
-        value: grade.teacher,
+        value: teacherDisplay,
       ),
     ],
     topicTitle: 'Pontosan rögzített téma',
@@ -416,39 +497,50 @@ Future<void> showGradeInspectionModal(
 /// Opens the frosted glass inspection modal for a [Homework] item.
 Future<void> showHomeworkInspectionModal(
   BuildContext context,
-  Homework homework,
-) {
+  Homework homework, {
+  UserProfilePrefs? prefs,
+}) {
   final dtFormat = DateFormat('yyyy. MM. dd. HH:mm');
   final cleanedDesc = homework.description
       .replaceAll(RegExp(r'<[^>]*>'), ' ')
       .replaceAll('&nbsp;', ' ')
       .trim();
 
+  final rawSubject = homework.subject.name.isNotEmpty
+      ? homework.subject.name
+      : homework.subjectName;
+  final subjectDisplay = prefs != null
+      ? prefs.resolveSubjectName(rawSubject, homework.subject.uid)
+      : rawSubject;
+  final teacherDisplay = prefs != null
+      ? prefs.resolveTeacherName(homework.teacherName)
+      : homework.teacherName;
+
   return showFrostedModal(
     context: context,
     categoryLabel: 'Házi feladat',
     categoryIcon: Icons.menu_book_rounded,
     accentColor: const Color(0xFF00BFA5),
-    title: homework.subject.name.isNotEmpty
-        ? homework.subject.name
-        : homework.subjectName,
+    title: subjectDisplay,
+    tsundereNote:
+        (prefs?.tsundereModeEnabled == true || UwuHelper.isTsundereEnabled)
+            ? 'Nem mintha érdekelne a házi feladatod, b-baka!'
+            : null,
     rows: [
       FrostedDetailRow(
         icon: Icons.school_rounded,
         label: 'Tantárgy',
-        value: homework.subject.name.isNotEmpty
-            ? homework.subject.name
-            : homework.subjectName,
+        value: subjectDisplay,
       ),
       FrostedDetailRow(
         icon: Icons.event_rounded,
         label: 'Feladás ideje',
-        value: dtFormat.format(homework.startDate),
+        value: dtFormat.format(homework.startDate.toLocal()),
       ),
       FrostedDetailRow(
         icon: Icons.alarm_on_rounded,
         label: 'Határidő',
-        value: dtFormat.format(homework.dueDate),
+        value: dtFormat.format(homework.dueDate.toLocal()),
       ),
       FrostedDetailRow(
         icon: Icons.scale_rounded,
@@ -465,7 +557,7 @@ Future<void> showHomeworkInspectionModal(
       FrostedDetailRow(
         icon: Icons.person_rounded,
         label: 'Rögzítő tanár',
-        value: homework.teacherName,
+        value: teacherDisplay,
       ),
     ],
     topicTitle: 'Házi feladat leírása',
@@ -476,33 +568,41 @@ Future<void> showHomeworkInspectionModal(
 /// Opens the frosted glass inspection modal for an announced [Test] / exam.
 Future<void> showTestInspectionModal(
   BuildContext context,
-  Test test,
-) {
+  Test test, {
+  UserProfilePrefs? prefs,
+}) {
   final dayFormat = DateFormat('yyyy. MM. dd.');
+  final rawSubject =
+      test.subject.name.isNotEmpty ? test.subject.name : test.subjectName;
+  final subjectDisplay = prefs != null
+      ? prefs.resolveSubjectName(rawSubject, test.subject.uid)
+      : rawSubject;
+  final teacherDisplay = prefs != null
+      ? prefs.resolveTeacherName(test.teacherName)
+      : test.teacherName;
 
   return showFrostedModal(
     context: context,
     categoryLabel: 'Bejelentett számonkérés',
     categoryIcon: Icons.assignment_late_rounded,
     accentColor: const Color(0xFFFF7043),
-    title: test.subject.name.isNotEmpty ? test.subject.name : test.subjectName,
+    title: subjectDisplay,
     badgeText: '${test.lessonNumber}.',
     rows: [
       FrostedDetailRow(
         icon: Icons.school_rounded,
         label: 'Tantárgy',
-        value:
-            test.subject.name.isNotEmpty ? test.subject.name : test.subjectName,
+        value: subjectDisplay,
       ),
       FrostedDetailRow(
         icon: Icons.event_rounded,
         label: 'Számonkérés napja',
-        value: '${dayFormat.format(test.date)} (${test.lessonNumber}. óra)',
+        value: '${dayFormat.format(test.date.toLocal())} (${test.lessonNumber}. óra)',
       ),
       FrostedDetailRow(
         icon: Icons.history_edu_rounded,
         label: 'Bejelentés dátuma',
-        value: dayFormat.format(test.reportDate),
+        value: dayFormat.format(test.reportDate.toLocal()),
       ),
       FrostedDetailRow(
         icon: Icons.category_rounded,
@@ -512,7 +612,7 @@ Future<void> showTestInspectionModal(
       FrostedDetailRow(
         icon: Icons.person_rounded,
         label: 'Bejelentő tanár',
-        value: test.teacherName,
+        value: teacherDisplay,
       ),
     ],
     topicTitle: 'Számonkérés témája',
@@ -523,15 +623,24 @@ Future<void> showTestInspectionModal(
 }
 
 /// Opens the frosted glass inspection modal for a timetable [Lesson] with
-/// optional [heroTag] transition.
+/// boomerang [heroTag] transition (`lesson_num_${lesson.uid}`) and dedicated
+/// clean time span row (`08:00 - 08:45`).
 Future<void> showLessonInspectionModal(
   BuildContext context,
   Lesson lesson, {
   String? heroTag,
+  UserProfilePrefs? prefs,
 }) {
   final dayFormat = DateFormat('yyyy. MM. dd.');
   final timeFormat = DateFormat('HH:mm');
-  final isCancelled = lesson.state.name.toLowerCase().contains('elmarad');
+  final startLocal = lesson.start.toLocal();
+  final endLocal = lesson.end.toLocal();
+  final timeSpan =
+      '${timeFormat.format(startLocal)} - ${timeFormat.format(endLocal)}';
+
+  final isCancelled = lesson.state.name.toLowerCase() == 'elmaradt' ||
+      lesson.state.name.toLowerCase().contains('elmarad') ||
+      lesson.state.description.toLowerCase().contains('elmarad');
   final hasSub = lesson.substituteTeacher != null &&
       lesson.substituteTeacher!.trim().isNotEmpty;
 
@@ -540,6 +649,18 @@ Future<void> showLessonInspectionModal(
       : hasSub
           ? const Color(0xFFF9A825)
           : OledTheme.accentPrimary;
+
+  final rawSubject = lesson.subject?.name ?? lesson.name;
+  final subjectDisplay = prefs != null
+      ? prefs.resolveSubjectName(rawSubject, lesson.subject?.uid)
+      : rawSubject;
+  final teacherDisplay = prefs != null && lesson.teacher != null
+      ? prefs.resolveTeacherName(lesson.teacher)
+      : (lesson.teacher ?? 'Nincs megadva');
+  final subTeacherDisplay =
+      prefs != null && lesson.substituteTeacher != null
+          ? prefs.resolveTeacherName(lesson.substituteTeacher)
+          : lesson.substituteTeacher;
 
   return showFrostedModal(
     context: context,
@@ -550,15 +671,20 @@ Future<void> showLessonInspectionModal(
             : 'Tanóra részletei',
     categoryIcon: Icons.schedule_rounded,
     accentColor: accent,
-    title: lesson.subject?.name ?? lesson.name,
-    badgeText: lesson.lessonNumber != null ? '${lesson.lessonNumber}.' : null,
-    heroTag: heroTag,
+    title: subjectDisplay,
+    subtitleTimeSpan: timeSpan,
+    badgeText: lesson.lessonNumber != null ? '${lesson.lessonNumber}.' : '•',
+    heroTag: heroTag ?? 'lesson_num_${lesson.uid}',
     rows: [
       FrostedDetailRow(
         icon: Icons.access_time_filled_rounded,
-        label: 'Időpont',
-        value:
-            '${dayFormat.format(lesson.start)} • ${timeFormat.format(lesson.start)} – ${timeFormat.format(lesson.end)}',
+        label: 'Idősáv',
+        value: timeSpan,
+      ),
+      FrostedDetailRow(
+        icon: Icons.calendar_today_rounded,
+        label: 'Dátum',
+        value: dayFormat.format(startLocal),
       ),
       FrostedDetailRow(
         icon: Icons.meeting_room_rounded,
@@ -570,18 +696,18 @@ Future<void> showLessonInspectionModal(
       FrostedDetailRow(
         icon: Icons.person_rounded,
         label: 'Tanár',
-        value: lesson.teacher ?? 'Nincs megadva',
+        value: teacherDisplay,
       ),
-      if (hasSub)
+      if (hasSub && subTeacherDisplay != null)
         FrostedDetailRow(
           icon: Icons.swap_horiz_rounded,
           label: 'Helyettesítő tanár',
-          value: lesson.substituteTeacher!,
+          value: subTeacherDisplay,
         ),
       FrostedDetailRow(
         icon: Icons.info_outline_rounded,
         label: 'Állapot',
-        value: lesson.state.description,
+        value: isCancelled ? 'Elmarad' : lesson.state.description,
       ),
     ],
     topicTitle: 'Tanár által beírt tananyag / téma',

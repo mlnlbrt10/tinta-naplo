@@ -75,12 +75,12 @@ class GitHubUpdaterService {
   static const String repoUrl = 'https://github.com/mlnlbrt10/reKRETA';
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/mlnlbrt10/reKRETA/releases/latest';
-  static const String fallbackAppVersion = '1.0.1';
-  static const String fallbackBuildNumber = '1';
+  static const String fallbackAppVersion = '1.0.2';
+  static const String fallbackBuildNumber = '2';
 
   static bool _hasCheckedOnStartup = false;
 
-  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.0.1`.
+  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.0.2`.
   static Future<String> fetchLatestReleaseTag({http.Client? httpClient}) async {
     final client = httpClient ?? http.Client();
     try {
@@ -113,8 +113,10 @@ class GitHubUpdaterService {
   static Future<(String, String)> getAppVersionInfo() async {
     try {
       final info = await PackageInfo.fromPlatform();
-      final ver =
-          info.version.trim().isNotEmpty ? info.version.trim() : fallbackAppVersion;
+      final rawVer = info.version.trim();
+      final ver = rawVer.isNotEmpty
+          ? _stripPrefix(rawVer)
+          : fallbackAppVersion;
       final build = info.buildNumber.trim().isNotEmpty
           ? info.buildNumber.trim()
           : fallbackBuildNumber;
@@ -124,8 +126,8 @@ class GitHubUpdaterService {
     }
   }
 
-  /// Returns `true` if [remoteTag] represents a newer semantic version than
-  /// [currentVersion].
+  /// Returns `true` if [remoteTag] represents a strictly newer semantic version
+  /// than [currentVersion].
   static bool isRemoteVersionNewer(String currentVersion, String remoteTag) {
     final cleanCurrent = _stripPrefix(currentVersion);
     final cleanRemote = _stripPrefix(remoteTag);
@@ -149,7 +151,23 @@ class GitHubUpdaterService {
     if (curHasPre && !remHasPre) {
       return true;
     }
+    if (!curHasPre && remHasPre) {
+      return false;
+    }
+
+    // If both have build metadata (+N), compare build numbers strictly
+    final curBuild = _extractBuildNumber(currentVersion);
+    final remBuild = _extractBuildNumber(remoteTag);
+    if (curBuild != null && remBuild != null && remBuild > curBuild) {
+      return true;
+    }
     return false;
+  }
+
+  static int? _extractBuildNumber(String v) {
+    final idx = v.indexOf('+');
+    if (idx == -1 || idx + 1 >= v.length) return null;
+    return int.tryParse(v.substring(idx + 1).trim());
   }
 
   static String _stripPrefix(String v) {

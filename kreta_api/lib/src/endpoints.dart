@@ -64,6 +64,9 @@ class KretaEndpoints {
   static String getTests(String iss, [DateTime? from, DateTime? to]) =>
       "${kreta(iss)}/ellenorzo/v3/sajat/BejelentettSzamonkeresek${dateQuery(from, to)}";
 
+  static String getMessages(String iss) =>
+      "${kreta(iss)}/ellenorzo/v3/sajat/Uzenetek";
+
   static String getDktSubjects(String iss) =>
       "${kreta(iss)}/dktapi/intezmenyek/munkaterek/tanulok";
 }

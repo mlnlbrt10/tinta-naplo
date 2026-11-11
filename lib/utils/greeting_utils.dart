@@ -40,18 +40,31 @@ class GreetingUtils {
   /// * 18:00 – 21:59: `"Szép estét, <name>!"`
   /// * 22:00 – 03:59: `"Jó éjszakát, <name>!"`
   ///
-  /// When [uwuMode] (or `UwuHelper.isEnabled`) is active, transforms greetings
-  /// into cute UwU variants (e.g. `"szép nyapot, <name>! uwu"`, `"jó éccakát, <name>! :3"`).
+  /// Supports both `UwU mód` and `Tsundere mód` dialogue overrides.
   static String buildGreeting({
     required String name,
     DateTime? now,
     bool? uwuMode,
+    bool? tsundereMode,
   }) {
     final isUwu = uwuMode ?? UwuHelper.isEnabled;
+    final isTsundere = tsundereMode ?? UwuHelper.isTsundereEnabled;
     final hour = (now ?? DateTime.now()).hour;
 
+    if (isTsundere && uwuMode != true) {
+      if (hour >= 4 && hour <= 7) {
+        return 'Már megint majdnem elaludtál, $name?! B-baka!';
+      } else if (hour >= 8 && hour <= 17) {
+        return 'Nem mintha érdekelne a házi feladatod, b-baka!';
+      } else if (hour >= 18 && hour <= 21) {
+        return 'Megint hármas? Nem mintha figyeltem volna, $name...';
+      } else {
+        return 'Menj már aludni, $name! Nem mintha aggódnék érted, b-baka!';
+      }
+    }
+
     if (isUwu) {
-      final uwuName = UwuHelper.transform(name, enabled: true)
+      final uwuName = UwuHelper.transform(name, enabled: true, tsundere: false)
           .replaceAll(RegExp(r'\s+(uwu|:3|owo|>w<|nya~)$'), '');
       if (hour >= 4 && hour <= 7) {
         return 'Szép weggewt, $uwuName! nya~';
