@@ -15,6 +15,34 @@ enum AppThemeStyle {
   light,
 }
 
+/// Configurable close button display modes for inspection & detail modals.
+enum ModalCloseButtonMode {
+  onlyX,
+  onlyBottom,
+  both,
+  neither;
+
+  String get label {
+    switch (this) {
+      case ModalCloseButtonMode.onlyX:
+        return "Csak 'X' gomb";
+      case ModalCloseButtonMode.onlyBottom:
+        return 'Csak alsó bezárás gomb';
+      case ModalCloseButtonMode.both:
+        return 'Mindkettő';
+      case ModalCloseButtonMode.neither:
+        return 'Egyik se';
+    }
+  }
+
+  bool get showTopX =>
+      this == ModalCloseButtonMode.onlyX || this == ModalCloseButtonMode.both;
+
+  bool get showBottomButton =>
+      this == ModalCloseButtonMode.onlyBottom ||
+      this == ModalCloseButtonMode.both;
+}
+
 /// Configurable grade rounding thresholds (minimum average required for each grade).
 class GradeRoundingConfig {
   final double threshold5;
@@ -88,6 +116,8 @@ class GradeRoundingConfig {
 /// User customization & personalization preferences persisted in secure storage.
 /// Survives logout/relogin and supports full JSON export/import.
 class UserProfilePrefs {
+  static ModalCloseButtonMode activeModalCloseMode = ModalCloseButtonMode.both;
+
   final String? nickname;
   final int avatarIconIndex;
   final int avatarColorIndex;
@@ -105,6 +135,18 @@ class UserProfilePrefs {
   final bool christmasModeEnabled;
   final String appIconPreset;
   final String backgroundPreset;
+  final ModalCloseButtonMode modalCloseMode;
+  final String transitHomeStation;
+  final String transitSchoolStation;
+  final bool transitAllowCoach;
+  final bool transitAllowTrain;
+  final bool transitAllowLocalBus;
+  final double walkingSpeedKmh;
+  final int walkingDurationMinutes;
+  final int transitAlertBufferMinutes;
+  final bool transitNotificationsEnabled;
+  final String favoriteRoute1stPeriod;
+  final String favoriteRoute2ndPeriod;
   final Map<String, GradeRoundingConfig> subjectRoundingOverrides;
   final Map<String, int> subjectCustomColors;
   final Map<String, String> subjectCustomNames;
@@ -136,6 +178,18 @@ class UserProfilePrefs {
     this.christmasModeEnabled = false,
     this.appIconPreset = 'default',
     this.backgroundPreset = 'pure_oled',
+    this.modalCloseMode = ModalCloseButtonMode.both,
+    this.transitHomeStation = 'Bodajk vasútállomás',
+    this.transitSchoolStation = 'Székesfehérvár',
+    this.transitAllowCoach = true,
+    this.transitAllowTrain = true,
+    this.transitAllowLocalBus = true,
+    this.walkingSpeedKmh = 4.5,
+    this.walkingDurationMinutes = 10,
+    this.transitAlertBufferMinutes = 5,
+    this.transitNotificationsEnabled = true,
+    this.favoriteRoute1stPeriod = '07:09',
+    this.favoriteRoute2ndPeriod = '07:55',
     this.subjectRoundingOverrides = const {},
     this.subjectCustomColors = const {},
     this.subjectCustomNames = const {},
@@ -224,6 +278,18 @@ class UserProfilePrefs {
     bool? christmasModeEnabled,
     String? appIconPreset,
     String? backgroundPreset,
+    ModalCloseButtonMode? modalCloseMode,
+    String? transitHomeStation,
+    String? transitSchoolStation,
+    bool? transitAllowCoach,
+    bool? transitAllowTrain,
+    bool? transitAllowLocalBus,
+    double? walkingSpeedKmh,
+    int? walkingDurationMinutes,
+    int? transitAlertBufferMinutes,
+    bool? transitNotificationsEnabled,
+    String? favoriteRoute1stPeriod,
+    String? favoriteRoute2ndPeriod,
     Map<String, GradeRoundingConfig>? subjectRoundingOverrides,
     Map<String, int>? subjectCustomColors,
     Map<String, String>? subjectCustomNames,
@@ -249,6 +315,23 @@ class UserProfilePrefs {
       christmasModeEnabled: christmasModeEnabled ?? this.christmasModeEnabled,
       appIconPreset: appIconPreset ?? this.appIconPreset,
       backgroundPreset: backgroundPreset ?? this.backgroundPreset,
+      modalCloseMode: modalCloseMode ?? this.modalCloseMode,
+      transitHomeStation: transitHomeStation ?? this.transitHomeStation,
+      transitSchoolStation: transitSchoolStation ?? this.transitSchoolStation,
+      transitAllowCoach: transitAllowCoach ?? this.transitAllowCoach,
+      transitAllowTrain: transitAllowTrain ?? this.transitAllowTrain,
+      transitAllowLocalBus: transitAllowLocalBus ?? this.transitAllowLocalBus,
+      walkingSpeedKmh: walkingSpeedKmh ?? this.walkingSpeedKmh,
+      walkingDurationMinutes:
+          walkingDurationMinutes ?? this.walkingDurationMinutes,
+      transitAlertBufferMinutes:
+          transitAlertBufferMinutes ?? this.transitAlertBufferMinutes,
+      transitNotificationsEnabled:
+          transitNotificationsEnabled ?? this.transitNotificationsEnabled,
+      favoriteRoute1stPeriod:
+          favoriteRoute1stPeriod ?? this.favoriteRoute1stPeriod,
+      favoriteRoute2ndPeriod:
+          favoriteRoute2ndPeriod ?? this.favoriteRoute2ndPeriod,
       subjectRoundingOverrides:
           subjectRoundingOverrides ?? this.subjectRoundingOverrides,
       subjectCustomColors: subjectCustomColors ?? this.subjectCustomColors,
@@ -259,7 +342,7 @@ class UserProfilePrefs {
 
   Map<String, dynamic> toJson() {
     return {
-      'schemaVersion': 2,
+      'schemaVersion': 3,
       'nickname': nickname,
       'avatarIconIndex': avatarIconIndex,
       'avatarColorIndex': avatarColorIndex,
@@ -278,6 +361,18 @@ class UserProfilePrefs {
       'christmasModeEnabled': christmasModeEnabled,
       'appIconPreset': appIconPreset,
       'backgroundPreset': backgroundPreset,
+      'modalCloseMode': modalCloseMode.name,
+      'transitHomeStation': transitHomeStation,
+      'transitSchoolStation': transitSchoolStation,
+      'transitAllowCoach': transitAllowCoach,
+      'transitAllowTrain': transitAllowTrain,
+      'transitAllowLocalBus': transitAllowLocalBus,
+      'walkingSpeedKmh': walkingSpeedKmh,
+      'walkingDurationMinutes': walkingDurationMinutes,
+      'transitAlertBufferMinutes': transitAlertBufferMinutes,
+      'transitNotificationsEnabled': transitNotificationsEnabled,
+      'favoriteRoute1stPeriod': favoriteRoute1stPeriod,
+      'favoriteRoute2ndPeriod': favoriteRoute2ndPeriod,
       'subjectRoundingOverrides':
           subjectRoundingOverrides.map((k, v) => MapEntry(k, v.toJson())),
       'subjectCustomColors': subjectCustomColors,
@@ -296,6 +391,11 @@ class UserProfilePrefs {
     final themeStyle = AppThemeStyle.values.firstWhere(
       (e) => e.name == themeName,
       orElse: () => AppThemeStyle.oledPureBlack,
+    );
+    final modalCloseName = json['modalCloseMode'] as String?;
+    final modalCloseMode = ModalCloseButtonMode.values.firstWhere(
+      (e) => e.name == modalCloseName,
+      orElse: () => ModalCloseButtonMode.both,
     );
 
     final gradeColors = Map<int, int>.from(defaultGradeColors);
@@ -380,6 +480,28 @@ class UserProfilePrefs {
       christmasModeEnabled: json['christmasModeEnabled'] == true,
       appIconPreset: (json['appIconPreset'] as String?) ?? 'default',
       backgroundPreset: (json['backgroundPreset'] as String?) ?? 'pure_oled',
+      modalCloseMode: modalCloseMode,
+      transitHomeStation:
+          (json['transitHomeStation'] as String?)?.trim().isNotEmpty == true
+              ? (json['transitHomeStation'] as String).trim()
+              : 'Bodajk vasútállomás',
+      transitSchoolStation:
+          (json['transitSchoolStation'] as String?)?.trim().isNotEmpty == true
+              ? (json['transitSchoolStation'] as String).trim()
+              : 'Székesfehérvár',
+      transitAllowCoach: json['transitAllowCoach'] != false,
+      transitAllowTrain: json['transitAllowTrain'] != false,
+      transitAllowLocalBus: json['transitAllowLocalBus'] != false,
+      walkingSpeedKmh: (json['walkingSpeedKmh'] as num?)?.toDouble() ?? 4.5,
+      walkingDurationMinutes:
+          (json['walkingDurationMinutes'] as num?)?.toInt() ?? 10,
+      transitAlertBufferMinutes:
+          (json['transitAlertBufferMinutes'] as num?)?.toInt() ?? 5,
+      transitNotificationsEnabled: json['transitNotificationsEnabled'] != false,
+      favoriteRoute1stPeriod:
+          (json['favoriteRoute1stPeriod'] as String?) ?? '07:09',
+      favoriteRoute2ndPeriod:
+          (json['favoriteRoute2ndPeriod'] as String?) ?? '07:55',
       subjectRoundingOverrides: subjRounding,
       subjectCustomColors: subjColors,
       subjectCustomNames: subjNames,
@@ -491,6 +613,18 @@ class TokenStorageService {
   static const _keyChristmasModeEnabled = 'kreta_christmas_mode_enabled';
   static const _keyAppIconPreset = 'kreta_app_icon_preset';
   static const _keyBackgroundPreset = 'kreta_background_preset';
+  static const _keyModalCloseMode = 'kreta_modal_close_mode';
+  static const _keyTransitHomeStation = 'kreta_transit_home_station';
+  static const _keyTransitSchoolStation = 'kreta_transit_school_station';
+  static const _keyTransitAllowCoach = 'kreta_transit_allow_coach';
+  static const _keyTransitAllowTrain = 'kreta_transit_allow_train';
+  static const _keyTransitAllowLocalBus = 'kreta_transit_allow_local_bus';
+  static const _keyWalkingSpeedKmh = 'kreta_walking_speed_kmh';
+  static const _keyWalkingDurationMinutes = 'kreta_walking_duration_min';
+  static const _keyTransitAlertBufferMinutes = 'kreta_transit_alert_buffer_min';
+  static const _keyTransitNotificationsEnabled = 'kreta_transit_notifs_enabled';
+  static const _keyFavoriteRoute1stPeriod = 'kreta_fav_route_1st';
+  static const _keyFavoriteRoute2ndPeriod = 'kreta_fav_route_2nd';
   static const _keySubjectRoundingOverrides = 'kreta_subj_rounding_overrides';
   static const _keySubjectCustomColors = 'kreta_subj_custom_colors';
   static const _keySubjectCustomNames = 'kreta_subj_custom_names';
@@ -639,9 +773,42 @@ class TokenStorageService {
     final christmasEnabled = values[_keyChristmasModeEnabled] == 'true';
     final appIconPreset = values[_keyAppIconPreset] ?? 'default';
     final backgroundPreset = values[_keyBackgroundPreset] ?? 'pure_oled';
+    final modalCloseName = values[_keyModalCloseMode];
+    final modalCloseMode = ModalCloseButtonMode.values.firstWhere(
+      (e) => e.name == modalCloseName,
+      orElse: () => ModalCloseButtonMode.both,
+    );
+    final transitHomeStation =
+        values[_keyTransitHomeStation]?.trim().isNotEmpty == true
+            ? values[_keyTransitHomeStation]!.trim()
+            : 'Bodajk vasútállomás';
+    final transitSchoolStation =
+        values[_keyTransitSchoolStation]?.trim().isNotEmpty == true
+            ? values[_keyTransitSchoolStation]!.trim()
+            : 'Székesfehérvár';
+    final transitAllowCoach =
+        values[_keyTransitAllowCoach] == null || values[_keyTransitAllowCoach] == 'true';
+    final transitAllowTrain =
+        values[_keyTransitAllowTrain] == null || values[_keyTransitAllowTrain] == 'true';
+    final transitAllowLocalBus =
+        values[_keyTransitAllowLocalBus] == null || values[_keyTransitAllowLocalBus] == 'true';
+    final walkingSpeedKmh =
+        double.tryParse(values[_keyWalkingSpeedKmh] ?? '') ?? 4.5;
+    final walkingDurationMinutes =
+        int.tryParse(values[_keyWalkingDurationMinutes] ?? '') ?? 10;
+    final transitAlertBufferMinutes =
+        int.tryParse(values[_keyTransitAlertBufferMinutes] ?? '') ?? 5;
+    final transitNotificationsEnabled =
+        values[_keyTransitNotificationsEnabled] == null ||
+            values[_keyTransitNotificationsEnabled] == 'true';
+    final favoriteRoute1stPeriod =
+        values[_keyFavoriteRoute1stPeriod] ?? '07:09';
+    final favoriteRoute2ndPeriod =
+        values[_keyFavoriteRoute2ndPeriod] ?? '07:55';
 
     UwuHelper.isEnabled = uwuEnabled;
     UwuHelper.isTsundereEnabled = tsundereEnabled;
+    UserProfilePrefs.activeModalCloseMode = modalCloseMode;
 
     final Map<int, int> gradeColors = Map<int, int>.from(
       UserProfilePrefs.defaultGradeColors,
@@ -744,6 +911,18 @@ class TokenStorageService {
       christmasModeEnabled: christmasEnabled,
       appIconPreset: appIconPreset,
       backgroundPreset: backgroundPreset,
+      modalCloseMode: modalCloseMode,
+      transitHomeStation: transitHomeStation,
+      transitSchoolStation: transitSchoolStation,
+      transitAllowCoach: transitAllowCoach,
+      transitAllowTrain: transitAllowTrain,
+      transitAllowLocalBus: transitAllowLocalBus,
+      walkingSpeedKmh: walkingSpeedKmh,
+      walkingDurationMinutes: walkingDurationMinutes,
+      transitAlertBufferMinutes: transitAlertBufferMinutes,
+      transitNotificationsEnabled: transitNotificationsEnabled,
+      favoriteRoute1stPeriod: favoriteRoute1stPeriod,
+      favoriteRoute2ndPeriod: favoriteRoute2ndPeriod,
       subjectRoundingOverrides: subjRounding,
       subjectCustomColors: subjColors,
       subjectCustomNames: subjNames,
@@ -754,6 +933,7 @@ class TokenStorageService {
   Future<void> saveProfilePrefs(UserProfilePrefs prefs) async {
     UwuHelper.isEnabled = prefs.uwuModeEnabled;
     UwuHelper.isTsundereEnabled = prefs.tsundereModeEnabled;
+    UserProfilePrefs.activeModalCloseMode = prefs.modalCloseMode;
     final trimmedNick = prefs.nickname?.trim() ?? '';
     final trimmedPhoto = prefs.customPhotoPath?.trim() ?? '';
     final serializedColors = jsonEncode(
@@ -826,6 +1006,54 @@ class TokenStorageService {
       _storage.write(
         key: _keyBackgroundPreset,
         value: prefs.backgroundPreset,
+      ),
+      _storage.write(
+        key: _keyModalCloseMode,
+        value: prefs.modalCloseMode.name,
+      ),
+      _storage.write(
+        key: _keyTransitHomeStation,
+        value: prefs.transitHomeStation.trim(),
+      ),
+      _storage.write(
+        key: _keyTransitSchoolStation,
+        value: prefs.transitSchoolStation.trim(),
+      ),
+      _storage.write(
+        key: _keyTransitAllowCoach,
+        value: prefs.transitAllowCoach.toString(),
+      ),
+      _storage.write(
+        key: _keyTransitAllowTrain,
+        value: prefs.transitAllowTrain.toString(),
+      ),
+      _storage.write(
+        key: _keyTransitAllowLocalBus,
+        value: prefs.transitAllowLocalBus.toString(),
+      ),
+      _storage.write(
+        key: _keyWalkingSpeedKmh,
+        value: prefs.walkingSpeedKmh.toString(),
+      ),
+      _storage.write(
+        key: _keyWalkingDurationMinutes,
+        value: prefs.walkingDurationMinutes.toString(),
+      ),
+      _storage.write(
+        key: _keyTransitAlertBufferMinutes,
+        value: prefs.transitAlertBufferMinutes.toString(),
+      ),
+      _storage.write(
+        key: _keyTransitNotificationsEnabled,
+        value: prefs.transitNotificationsEnabled.toString(),
+      ),
+      _storage.write(
+        key: _keyFavoriteRoute1stPeriod,
+        value: prefs.favoriteRoute1stPeriod.trim(),
+      ),
+      _storage.write(
+        key: _keyFavoriteRoute2ndPeriod,
+        value: prefs.favoriteRoute2ndPeriod.trim(),
       ),
       _storage.write(
         key: _keySubjectRoundingOverrides,

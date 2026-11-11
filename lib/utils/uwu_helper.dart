@@ -15,30 +15,38 @@ class UwuHelper {
   ];
 
   static const List<String> tsundereAlerts = [
-    'Nem mintha érdekelne a házi feladatod, b-baka!',
-    'Megint hármas? Nem mintha figyeltem volna...',
-    'Csak véletlenül töltöttem be az órarendedet, ne bízd el magad!',
-    'H-hmph! Ne bámulj így a jegyeidre, b-baka!',
-    'Nem miattad frissítettem ám az adatokat... csak unatkoztam!',
+    'N-nem mintha érdekelne a házi feladatod, b-baka~!',
+    'M-megint egy hármas? Nem mintha figyeltem volna rád, h-hülye...~',
+    'N-nehogy azt hidd, hogy miattad töltöttem be az órarendedet, b-baka~!',
+    'H-hmph~! N-ne bámulj így a jegyeidre, b-baka~!',
+    'A-ahh~... nem miattad frissítettem ám az adatokat, csak unatkoztam~!',
   ];
 
-  /// Returns a sassy Tsundere comment for a grade or alert.
+  /// Returns an expressive Tsundere comment for a grade or alert.
   static String tsundereCommentForGrade(int? grade) {
     switch (grade) {
       case 5:
-        return 'Ötös?! N-nem mintha büszke lennék rád vagy ilyesmi, b-baka!';
+        return 'Ö-ötös?! N-nehogy azt hidd, hogy büszke vagyok rád vagy ilyesmi, b-baka~!';
       case 4:
-        return 'Négyes? Pff, tudnál te ennél jobbat is... nem mintha érdekelne!';
+        return 'N-négyes~? Pff, tudnál te ennél jobbat is... n-nem mintha érdekelne, b-baka~!';
       case 3:
-        return 'Megint hármas? Nem mintha figyeltem volna...';
+        return 'M-megint egy hármas? Nem mintha figyeltem volna rád, h-hülye...~';
       case 2:
-        return 'Kettes?! H-hé, tanulj már egy kicsit... nem mintha aggódnék érted, b-baka!';
+        return 'K-kettes?! H-hé, tanulj már egy kicsit... n-nem mintha aggódnék érted, b-baka~!';
       case 1:
-        return 'Egyes?! B-baka! Azonnal ülj le tanulni, de nem azért mondom, mert érdekel!';
+        return 'E-egyes?! B-baka~! A-azonnal ülj le tanulni, de n-nehogy azt hidd, hogy érdekel~!';
       default:
-        return 'Nem mintha érdekelne a házi feladatod, b-baka!';
+        return 'N-nem mintha érdekelne a házi feladatod, b-baka~!';
     }
   }
+
+  /// Convenience alias for [transform].
+  static String apply(
+    String input, {
+    bool? enabled,
+    bool? tsundere,
+  }) =>
+      transform(input, enabled: enabled, tsundere: tsundere);
 
   /// Transforms [input] with cute UwU phonetic replacements or Tsundere sassy
   /// overrides when enabled.
@@ -100,19 +108,32 @@ class UwuHelper {
 
   static String _transformTsundere(String input) {
     if (input.contains('Házik') || input.contains('Házi feladat')) {
-      return '$input (nem mintha érdekelne, b-baka!)';
+      return '$input (n-nem mintha érdekelne, b-baka~!)';
     }
     if (input.contains('Nincs megjeleníthető elem')) {
-      return 'Nincs itt semmi! Nem mintha neked kerestem volna, b-baka!';
+      return 'N-nincs itt semmi~! N-nehogy azt hidd, hogy neked kerestem, b-baka~!';
     }
     if (input.contains('Mára vége az óráknak')) {
-      return 'Mára vége az óráknak! Ne hidd, hogy hiányozni fogsz, b-baka!';
+      return 'M-mára vége az óráknak~! N-nehogy azt hidd, hogy hiányozni fogsz, b-baka~!';
     }
     if (input.contains('A legfrissebb verziót használod')) {
-      return 'Már a legújabb verzión vagy, b-baka! Minek nyomkodod?!';
+      return 'M-már a legújabb verzión vagy, b-baka~! M-minek nyomkodod~?!';
     }
     if (input.contains('Aktivitási hírfolyam')) {
-      return 'Aktivitási hírfolyam (Hmph!)';
+      return 'A-aktivitási hírfolyam (H-hmph~!)';
+    }
+    if (input.contains('Következő óra')) {
+      return 'K-következő óra (N-ne késs el, b-baka~!)';
+    }
+    if (input.contains('Tanulmányi átlag')) {
+      return 'T-tanulmányi átlag (H-hmph~)';
+    }
+    // Add subtle stutter & trailing tilde to longer sentences when Tsundere mode is active
+    if (input.length > 14 && !input.endsWith('~') && !input.endsWith('~!')) {
+      final firstChar = input[0];
+      if (RegExp(r'[A-ZÁÉÍÓÖŐÚÜŰ]').hasMatch(firstChar)) {
+        return '$firstChar-${input.toLowerCase()[0]}${input.substring(1)}~';
+      }
     }
     return input;
   }

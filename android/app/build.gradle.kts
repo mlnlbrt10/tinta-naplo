@@ -38,6 +38,37 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    applicationVariants.all {
+        val variant = this
+        val versionLabel = variant.versionName ?: "1.2.0"
+        val customApkName = "reKRETA-v${versionLabel}.apk"
+        variant.outputs
+            .map { it as com.android.build.gradle.internal.api.BaseVariantOutputImpl }
+            .forEach { output ->
+                if (variant.buildType.name == "release") {
+                    output.outputFileName = customApkName
+                }
+            }
+        if (variant.buildType.name == "release") {
+            variant.assembleProvider.configure {
+                doLast {
+                    val flutterApkDir = rootProject.projectDir.resolve("../build/app/outputs/flutter-apk")
+                    flutterApkDir.mkdirs()
+                    val releaseApkDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
+                    val generatedApk = releaseApkDir.resolve(customApkName)
+                    if (generatedApk.exists()) {
+                        generatedApk.copyTo(flutterApkDir.resolve(customApkName), overwrite = true)
+                    } else {
+                        val fallbackFlutterApk = flutterApkDir.resolve("app-release.apk")
+                        if (fallbackFlutterApk.exists()) {
+                            fallbackFlutterApk.copyTo(flutterApkDir.resolve(customApkName), overwrite = true)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 kotlin {

@@ -40,15 +40,24 @@ class GitHubReleaseInfo {
     String? apkUrl;
     final assets = json['assets'];
     if (assets is List) {
+      final cleanVer = GitHubUpdaterService._stripPrefix(tag).toLowerCase();
+      final expectedVersionedApk = cleanVer.isNotEmpty
+          ? 'rekreta-v$cleanVer.apk'
+          : GitHubUpdaterService.defaultApkFileName.toLowerCase();
       for (final item in assets) {
         if (item is Map<String, dynamic>) {
           final assetName = (item['name'] ?? '').toString().toLowerCase();
           final downloadUrl =
               (item['browser_download_url'] ?? '').toString().trim();
           if (downloadUrl.isEmpty) continue;
-          if (assetName == 'app-release.apk') {
+          if (assetName == expectedVersionedApk ||
+              (assetName.startsWith('rekreta-v') &&
+                  assetName.endsWith('.apk'))) {
             apkUrl = downloadUrl;
             break;
+          }
+          if (assetName == 'app-release.apk') {
+            apkUrl ??= downloadUrl;
           }
           if (assetName.endsWith('.apk')) {
             apkUrl ??= downloadUrl;
@@ -75,12 +84,20 @@ class GitHubUpdaterService {
   static const String repoUrl = 'https://github.com/mlnlbrt10/reKRETA';
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/mlnlbrt10/reKRETA/releases/latest';
-  static const String fallbackAppVersion = '1.1.0';
-  static const String fallbackBuildNumber = '3';
+  static const String fallbackAppVersion = '1.2.0';
+  static const String fallbackBuildNumber = '4';
+  static const String defaultApkFileName = 'reKRETA-v1.2.0.apk';
 
   static bool _hasCheckedOnStartup = false;
 
-  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.1.0`.
+  /// Resolves the target APK file name for a given release tag (`reKRETA-v1.2.0.apk`).
+  static String apkFileNameForTag(String tagName) {
+    final clean = _stripPrefix(tagName);
+    if (clean.isEmpty) return defaultApkFileName;
+    return 'reKRETA-v$clean.apk';
+  }
+
+  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.2.0`.
   static Future<String> fetchLatestReleaseTag({http.Client? httpClient}) async {
     final client = httpClient ?? http.Client();
     try {
@@ -295,10 +312,10 @@ class GitHubUpdaterService {
             animation: curved,
             builder: (context, child) {
               final t = curved.value.clamp(0.0, 1.0);
-              final sigma = 12.0 * t;
+              final sigma = 4.5 * t;
               final scale = 0.92 + (0.08 * t);
               return ColoredBox(
-                color: Colors.black.withValues(alpha: 0.52 * t),
+                color: const Color(0xFF121212).withValues(alpha: 0.82 * t),
                 child: BackdropFilter(
                   filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
                   child: Opacity(
@@ -349,15 +366,18 @@ class _FrostedUpdateDialogContentState
       return;
     }
 
+    final targetApkFileName =
+        GitHubUpdaterService.apkFileNameForTag(widget.release.tagName);
+
     setState(() {
       _isDownloading = true;
       _downloadProgress = 0.0;
-      _statusMessage = uwu('app-release.apk letöltése...');
+      _statusMessage = uwu('$targetApkFileName letöltése...');
     });
 
     try {
       OtaUpdate()
-          .execute(apkUrl, destinationFilename: 'app-release.apk')
+          .execute(apkUrl, destinationFilename: targetApkFileName)
           .listen(
         (OtaEvent event) {
           if (!mounted) return;

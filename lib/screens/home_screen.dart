@@ -8,6 +8,7 @@ import 'package:kreta_api/kreta_api.dart';
 
 import '../services/github_updater_service.dart';
 import '../services/kreta_client.dart';
+import '../services/menetrend_service.dart';
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
 import '../utils/greeting_utils.dart';
@@ -16,6 +17,7 @@ import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 import '../widgets/expandable_profile_card.dart';
 import '../widgets/frosted_inspection_modal.dart';
+import '../widgets/menetrend_hero_card.dart';
 import 'grades_screen.dart';
 import 'more_screen.dart';
 import 'timetable_screen.dart';
@@ -232,6 +234,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
   int _tabSwitchEpoch = 0;
   ActivityFeedFilter _feedFilter = ActivityFeedFilter.all;
+  bool _isImmersiveWeeklyMode = false;
 
   late StoredSession _session;
   DashboardData? _data;
@@ -260,6 +263,21 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   @override
+  void didUpdateWidget(covariant HomeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.prefs != widget.prefs && _data != null) {
+      final eval = MenetrendService.evaluateSmartCommute(
+        todaysLessons: _data!.todaysLessons,
+        prefs: widget.prefs,
+      );
+      MenetrendService.syncNotificationsForEvaluation(
+        evaluation: eval,
+        prefs: widget.prefs,
+      );
+    }
+  }
+
+  @override
   void dispose() {
     _countdownTimer?.cancel();
     super.dispose();
@@ -282,6 +300,14 @@ class _HomeScreenState extends State<HomeScreen> {
         _isLoading = false;
         _error = null;
       });
+      final eval = MenetrendService.evaluateSmartCommute(
+        todaysLessons: result.todaysLessons,
+        prefs: widget.prefs,
+      );
+      MenetrendService.syncNotificationsForEvaluation(
+        evaluation: eval,
+        prefs: widget.prefs,
+      );
     } on TokenExpiredException {
       if (!mounted) return;
       widget.onLogout();
@@ -301,6 +327,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_selectedIndex == idx) return;
     HapticFeedback.lightImpact();
     setState(() {
+      if (_selectedIndex == 2 && idx != 2) {
+        _isImmersiveWeeklyMode = false;
+      }
       _selectedIndex = idx;
       _tabSwitchEpoch++;
     });
@@ -335,6 +364,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final student = _data?.student;
+    final hideChromeForLandscapeTimetable =
+        _isImmersiveWeeklyMode && _selectedIndex == 2;
 
     final resolvedName = GreetingUtils.resolveDisplayName(
       customNickname: widget.prefs.nickname,
@@ -355,39 +386,41 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       },
       child: Scaffold(
-        extendBody: true,
-        appBar: AppBar(
-          toolbarHeight: 68,
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                greetingText,
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w900,
-                  color: scheme.onSurface,
+        extendBody: !hideChromeForLandscapeTimetable,
+        appBar: hideChromeForLandscapeTimetable
+            ? null
+            : AppBar(
+                toolbarHeight: 68,
+                title: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      greetingText,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w900,
+                        color: scheme.onSurface,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      student?.instituteName ?? _session.instituteCode,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: scheme.onSurface.withValues(alpha: 0.62),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                actions: [
+                  ProfileTopBarAvatar(
+                    prefs: widget.prefs,
+                    onTap: _openProfileAndSettingsModal,
+                  ),
+                ],
               ),
-              const SizedBox(height: 2),
-              Text(
-                student?.instituteName ?? _session.instituteCode,
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: scheme.onSurface.withValues(alpha: 0.62),
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-          ),
-          actions: [
-            ProfileTopBarAvatar(
-              prefs: widget.prefs,
-              onTap: _openProfileAndSettingsModal,
-            ),
-          ],
-        ),
         body: ChristmasAndBackgroundOverlay(
           prefs: widget.prefs,
           child: _isLoading && _data == null
@@ -415,7 +448,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
         ),
-        bottomNavigationBar: _buildMinimalistFloatingDock(theme, scheme),
+        bottomNavigationBar: hideChromeForLandscapeTimetable
+            ? null
+            : _buildMinimalistFloatingDock(theme, scheme),
       ),
     );
   }
@@ -443,6 +478,11 @@ class _HomeScreenState extends State<HomeScreen> {
           initialTodaysLessons: _data?.todaysLessons ?? const <Lesson>[],
           prefs: widget.prefs,
           onPrefsChanged: widget.onPrefsChanged,
+          onImmersiveWeeklyModeChanged: (immersive) {
+            if (mounted && _isImmersiveWeeklyMode != immersive) {
+              setState(() => _isImmersiveWeeklyMode = immersive);
+            }
+          },
           isActiveTab: _selectedIndex == 2,
           entranceEpoch: _tabSwitchEpoch,
         );
@@ -452,6 +492,7 @@ class _HomeScreenState extends State<HomeScreen> {
           session: _session,
           student: student,
           kretaClient: widget.kretaClient,
+          dashboardData: _data,
           initialOmissions: _data?.omissions ?? const <Omission>[],
           initialMessages: _data?.messages ?? const <KretaMessage>[],
           prefs: widget.prefs,
@@ -462,12 +503,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Minimalist Icon-Only Floating Dock with fluid sliding pill indicator
-  /// (`Curves.easeOutCubic`), no text labels, star icon for Jegyek, and
-  /// 4th tab 'Továbbiak' (`Icons.grid_view_rounded`).
+  /// (`Curves.easeOutCubic`), no text labels, star icon for Jegyek, uniform
+  /// calendar icon (`Icons.calendar_month_outlined` / `Icons.calendar_month_rounded`),
+  /// and 4th tab 'Továbbiak' (`Icons.grid_view_rounded`).
   Widget _buildMinimalistFloatingDock(ThemeData theme, ColorScheme scheme) {
     final isDark = theme.brightness == Brightness.dark;
     final dockColor = isDark
-        ? const Color(0xFF141414).withValues(alpha: 0.88)
+        ? const Color(0xFF121212).withValues(alpha: 0.90)
         : scheme.surface.withValues(alpha: 0.92);
     final borderColor = isDark
         ? (widget.prefs.uwuModeEnabled
@@ -491,7 +533,7 @@ class _HomeScreenState extends State<HomeScreen> {
         tooltip: 'Jegyek',
       ),
       (
-        icon: Icons.calendar_today_rounded,
+        icon: Icons.calendar_month_outlined,
         selectedIcon: Icons.calendar_month_rounded,
         tooltip: 'Órarend',
       ),
@@ -509,7 +551,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(32),
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+            filter: ImageFilter.blur(sigmaX: 4.5, sigmaY: 4.5),
             child: Container(
               height: 62,
               decoration: BoxDecoration(
@@ -522,8 +564,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: isDark ? 0.55 : 0.14),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
+                    blurRadius: 20,
+                    offset: const Offset(0, 6),
                   ),
                 ],
               ),
@@ -611,6 +653,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildHomeTab(ThemeData theme, ColorScheme scheme) {
     final lessons = _data?.todaysLessons ?? const <Lesson>[];
     final feedItems = _buildFilteredFeedItems();
+    final commuteEval = MenetrendService.evaluateSmartCommute(
+      todaysLessons: lessons,
+      prefs: widget.prefs,
+    );
 
     return RefreshIndicator(
       onRefresh: _loadDashboard,
@@ -622,25 +668,42 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildErrorCard(theme, _error!),
             const SizedBox(height: 14),
           ],
-          _buildNextLessonHeroCard(theme, scheme, lessons).staggeredEntrance(
+          MenetrendHeroCard(
+            evaluation: commuteEval,
+            prefs: widget.prefs,
+          ).staggeredEntrance(
             0,
-            animationKey: ValueKey('home-next-$_tabSwitchEpoch'),
-          ),
-          const SizedBox(height: 24),
-          _buildActivityFeedHeader(theme, scheme).staggeredEntrance(
-            1,
-            animationKey: ValueKey('home-hdr-$_tabSwitchEpoch'),
-          ),
-          const SizedBox(height: 12),
-          _buildFilterChipBar(theme, scheme).staggeredEntrance(
-            2,
-            animationKey: ValueKey('home-chips-$_tabSwitchEpoch'),
+            animationKey: ValueKey('home-transit-$_tabSwitchEpoch'),
           ),
           const SizedBox(height: 14),
+          _buildNextLessonHeroCard(theme, scheme, lessons).staggeredEntrance(
+            1,
+            animationKey: ValueKey('home-next-$_tabSwitchEpoch'),
+          ),
+          const SizedBox(height: 22),
+          _buildActivityFeedHeader(theme, scheme).staggeredEntrance(
+            2,
+            animationKey: ValueKey('home-hdr-$_tabSwitchEpoch'),
+          ),
+          const SizedBox(height: 10),
+          _buildFilterChipBar(theme, scheme).staggeredEntrance(
+            3,
+            animationKey: ValueKey('home-chips-$_tabSwitchEpoch'),
+          ),
+          const SizedBox(height: 12),
           AnimatedSwitcher(
-            duration: const Duration(milliseconds: 240),
+            duration: const Duration(milliseconds: 260),
             switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (child, animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: SizeTransition(
+                  sizeFactor: animation,
+                  child: child,
+                ),
+              );
+            },
             child: feedItems.isEmpty
                 ? _buildEmptyStateCard(
                     theme,
@@ -978,12 +1041,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
-        Text(
-          uwu('Koppints a részletekért'),
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: scheme.onSurface.withValues(alpha: 0.54),
-          ),
-        ),
       ],
     );
   }
@@ -1081,6 +1138,8 @@ class _HomeScreenState extends State<HomeScreen> {
     return _buildTestFeedCard(theme, scheme, item.test!);
   }
 
+  /// Compact, clutter-free grade card on Főoldal (`Part B #13`) with boomerang
+  /// Hero badge transition (`Part B #1`).
   Widget _buildGradeFeedCard(
     ThemeData theme,
     ColorScheme scheme,
@@ -1091,104 +1150,102 @@ class _HomeScreenState extends State<HomeScreen> {
         grade.shortStrValue ??
         (grade.strValue.isNotEmpty ? grade.strValue.substring(0, 1) : '?');
 
-    final subtitleParts = <String>[
-      if (grade.topic != null && grade.topic!.trim().isNotEmpty) grade.topic!,
-      if (grade.mode?.description.isNotEmpty == true) grade.mode!.description,
-      if (grade.weightPercentage != null) '${grade.weightPercentage}%',
-    ];
+    final topicOrMode =
+        (grade.topic != null && grade.topic!.trim().isNotEmpty)
+            ? grade.topic!.trim()
+            : (grade.mode?.description.isNotEmpty == true
+                ? grade.mode!.description
+                : grade.type.description);
 
     final subjectDisplay = widget.prefs.resolveSubjectName(
       grade.subject.name,
       grade.subject.uid,
     );
-    final teacherDisplay = widget.prefs.resolveTeacherName(grade.teacher);
+    final heroTag = 'home_grade_${grade.uid}';
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 8),
       child: TactileBounce(
         pressedScale: 0.97,
         onTap: () => showGradeInspectionModal(
           context,
           grade,
           prefs: widget.prefs,
+          heroTag: heroTag,
         ),
         child: ChristmasSnowCap(
           enabled: widget.prefs.christmasModeEnabled,
           child: Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
             decoration: BoxDecoration(
               color: theme.cardTheme.color,
-              borderRadius: OledTheme.cardRadius,
+              borderRadius: BorderRadius.circular(18),
               border: Border.all(color: theme.dividerColor),
             ),
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: badgeColor,
-                    borderRadius: OledTheme.badgeRadius,
-                  ),
-                  child: Text(
-                    badgeText,
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w900,
+                Hero(
+                  tag: heroTag,
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: badgeColor,
+                        borderRadius: BorderRadius.circular(11),
+                      ),
+                      child: Text(
+                        badgeText,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Row(
                         children: [
                           Expanded(
                             child: Text(
                               subjectDisplay,
-                              style: theme.textTheme.titleSmall?.copyWith(
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13.5,
                                 fontWeight: FontWeight.w800,
-                                color: scheme.onSurface,
                               ),
                             ),
                           ),
+                          const SizedBox(width: 6),
                           Text(
                             _dateFormat.format(grade.recordDate.toLocal()),
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: scheme.onSurface.withValues(alpha: 0.6),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: scheme.onSurface.withValues(alpha: 0.56),
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 2),
                       Text(
-                        '${grade.strValue} • ${grade.type.description}',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.primary,
-                          fontWeight: FontWeight.w600,
+                        topicOrMode,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: scheme.onSurface.withValues(alpha: 0.7),
                         ),
-                      ),
-                      if (subtitleParts.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          subtitleParts.join(' • '),
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurface.withValues(alpha: 0.72),
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                      const SizedBox(height: 4),
-                      Text(
-                        teacherDisplay,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: scheme.onSurface.withValues(alpha: 0.54),
-                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
@@ -1220,20 +1277,22 @@ class _HomeScreenState extends State<HomeScreen> {
         .replaceAll(RegExp(r'<[^>]*>'), ' ')
         .replaceAll('&nbsp;', ' ')
         .trim();
+    final heroTag = 'home_hw_${homework.uid}';
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 10),
       child: TactileBounce(
         pressedScale: 0.97,
         onTap: () => showHomeworkInspectionModal(
           context,
           homework,
           prefs: widget.prefs,
+          heroTag: heroTag,
         ),
         child: ChristmasSnowCap(
           enabled: widget.prefs.christmasModeEnabled,
           child: Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: theme.cardTheme.color,
               borderRadius: OledTheme.cardRadius,
@@ -1242,22 +1301,28 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: hwColor.withValues(alpha: 0.2),
-                    borderRadius: OledTheme.badgeRadius,
-                    border: Border.all(color: hwColor),
-                  ),
-                  child: const Icon(
-                    Icons.menu_book_rounded,
-                    color: hwColor,
-                    size: 24,
+                Hero(
+                  tag: heroTag,
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: hwColor.withValues(alpha: 0.2),
+                        borderRadius: OledTheme.badgeRadius,
+                        border: Border.all(color: hwColor),
+                      ),
+                      child: const Icon(
+                        Icons.menu_book_rounded,
+                        color: hwColor,
+                        size: 22,
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1282,7 +1347,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 3),
                       Text(
                         cleanText,
                         style: theme.textTheme.bodySmall?.copyWith(
@@ -1291,7 +1356,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 3),
                       Text(
                         teacherDisplay,
                         style: theme.textTheme.labelSmall?.copyWith(
@@ -1309,12 +1374,26 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Announced exam / test card with clean line break between weekday and date
+  /// (`Part B #25`) and boomerang Hero transition (`Part B #1`).
   Widget _buildTestFeedCard(
     ThemeData theme,
     ColorScheme scheme,
     Test test,
   ) {
     const testColor = Color(0xFFFF7043);
+    const weekdayNames = [
+      '',
+      'Hétfő',
+      'Kedd',
+      'Szerda',
+      'Csütörtök',
+      'Péntek',
+      'Szombat',
+      'Vasárnap',
+    ];
+    final testLocal = test.date.toLocal();
+    final weekdayName = weekdayNames[testLocal.weekday.clamp(1, 7)];
     final rawSubjectTitle =
         test.subject.name.isNotEmpty ? test.subject.name : test.subjectName;
     final subjectTitle = widget.prefs.resolveSubjectName(
@@ -1322,20 +1401,22 @@ class _HomeScreenState extends State<HomeScreen> {
       test.subject.uid,
     );
     final teacherDisplay = widget.prefs.resolveTeacherName(test.teacherName);
+    final heroTag = 'home_test_${test.uid}';
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 10),
       child: TactileBounce(
         pressedScale: 0.97,
         onTap: () => showTestInspectionModal(
           context,
           test,
           prefs: widget.prefs,
+          heroTag: heroTag,
         ),
         child: ChristmasSnowCap(
           enabled: widget.prefs.christmasModeEnabled,
           child: Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: theme.cardTheme.color,
               borderRadius: OledTheme.cardRadius,
@@ -1344,27 +1425,34 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: testColor.withValues(alpha: 0.2),
-                    borderRadius: OledTheme.badgeRadius,
-                    border: Border.all(color: testColor),
-                  ),
-                  child: const Icon(
-                    Icons.assignment_late_rounded,
-                    color: testColor,
-                    size: 24,
+                Hero(
+                  tag: heroTag,
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: testColor.withValues(alpha: 0.2),
+                        borderRadius: OledTheme.badgeRadius,
+                        border: Border.all(color: testColor),
+                      ),
+                      child: const Icon(
+                        Icons.assignment_late_rounded,
+                        color: testColor,
+                        size: 22,
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Expanded(
                             child: Text(
@@ -1375,11 +1463,14 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                           ),
+                          const SizedBox(width: 8),
                           Text(
-                            _dateFormat.format(test.date.toLocal()),
+                            '$weekdayName\n${_dateFormat.format(testLocal)}',
+                            textAlign: TextAlign.right,
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: testColor,
                               fontWeight: FontWeight.w700,
+                              height: 1.25,
                             ),
                           ),
                         ],

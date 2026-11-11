@@ -245,9 +245,11 @@ class SubjectGradeSummary {
     return counts;
   }
 
-  /// Analyzes all subjects and weight multipliers to recommend the fewest and
-  /// easiest grades (highlighting high-weight subjects) needed to jump into
-  /// [targetAverage].
+  /// Analyzes the student's cumulative overall weighted average (which strictly
+  /// determines the vocational scholarship tier: 2.00-2.99, 3.00-3.99, 4.00-4.49,
+  /// 4.50-5.00 — individual subjects do NOT need to reach 4.00+) and generates
+  /// smart triage recommendations prioritizing high-weight (200%) subjects and
+  /// the fewest/easiest grades required to lift the overall cumulative average.
   static List<ScholarshipRecommendation> buildScholarshipRecommendations({
     required List<Grade> allGrades,
     required List<SubjectGradeSummary> subjects,
@@ -271,7 +273,8 @@ class SubjectGradeSummary {
       return const [];
     }
 
-    // Sort candidate subjects: prioritize high-weight subjects with lower current average
+    // Prioritize high-weight (200%+) subjects first, then subjects where the student
+    // can most easily pick up points toward the cumulative overall average.
     final sortedSubjects = List<SubjectGradeSummary>.from(subjects)
       ..sort((a, b) {
         final wCmp = b.maxWeightPercentage.compareTo(a.maxWeightPercentage);
@@ -288,7 +291,9 @@ class SubjectGradeSummary {
           : subj.subjectName;
       final bestWeight = subj.maxWeightPercentage >= 200 ? 200 : 100;
 
-      final neededAtBestWeight = calculateNeededGradesCount(
+      // Try easiest grade first (4 if targetAverage < 4.0 and achievable within 3 grades, otherwise 5)
+      int chosenGrade = 5;
+      int? neededCount = calculateNeededGradesCount(
         currentGrades: allGrades,
         ghostGrades: const [],
         targetThreshold: targetAverage,
@@ -296,21 +301,37 @@ class SubjectGradeSummary {
         weightPercentage: bestWeight,
       );
 
-      if (neededAtBestWeight != null && neededAtBestWeight > 0) {
-        final projected = (totalWeightedSum +
-                neededAtBestWeight * 5 * bestWeight) /
-            (totalWeight + neededAtBestWeight * bestWeight);
+      if (targetAverage < 3.95) {
+        final neededWith4 = calculateNeededGradesCount(
+          currentGrades: allGrades,
+          ghostGrades: const [],
+          targetThreshold: targetAverage,
+          gradeValue: 4,
+          weightPercentage: bestWeight,
+        );
+        if (neededWith4 != null &&
+            neededWith4 > 0 &&
+            (neededCount == null || neededWith4 <= neededCount + 1)) {
+          chosenGrade = 4;
+          neededCount = neededWith4;
+        }
+      }
+
+      if (neededCount != null && neededCount > 0) {
+        final projected =
+            (totalWeightedSum + neededCount * chosenGrade * bestWeight) /
+                (totalWeight + neededCount * bestWeight);
         final subjAvgStr = subj.weightedAverage?.toStringAsFixed(2) ?? '–';
         recs.add(
           ScholarshipRecommendation(
             subjectName: displayName,
             maxRecordedWeight: subj.maxWeightPercentage,
-            recommendedGrade: 5,
+            recommendedGrade: chosenGrade,
             recommendedWeight: bestWeight,
-            countNeeded: neededAtBestWeight,
+            countNeeded: neededCount,
             resultingOverallAverage: projected,
             explanation:
-                'Jelenlegi tárgyi átlag: $subjAvgStr • $neededAtBestWeight db $bestWeight%-os 5-ös megszerzésével az összesített átlag ${projected.toStringAsFixed(2)}-ra ugrik.',
+                'Kizárólag az összesített átlag számít (jelenlegi tárgyi: $subjAvgStr) • $neededCount db $bestWeight%-os $chosenGrade-es megszerzésével a kumulatív átlag ${projected.toStringAsFixed(2)}-ra emelkedik.',
           ),
         );
       }
@@ -479,26 +500,20 @@ class _GradesScreenState extends State<GradesScreen> {
         child: TactileBounce(
           onTap: () =>
               setState(() => _showSimulatorPanel = !_showSimulatorPanel),
-          child: FloatingActionButton.extended(
+          child: FloatingActionButton(
             heroTag: null,
+            tooltip: 'Szellemjegy számoló',
             onPressed: null,
             backgroundColor: scheme.primary,
             foregroundColor: scheme.onPrimary,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(24),
+              borderRadius: BorderRadius.circular(20),
             ),
-            icon: Icon(
+            child: Icon(
               _showSimulatorPanel
                   ? Icons.expand_less_rounded
                   : Icons.auto_fix_high_rounded,
-            ),
-            label: Text(
-              uwu(
-                _overallGhostGrades.isEmpty
-                    ? 'Szellemjegy számoló'
-                    : 'Szellemjegy (${_overallGhostGrades.length})',
-              ),
-              style: const TextStyle(fontWeight: FontWeight.w800),
+              size: 24,
             ),
           ),
         ),
@@ -769,7 +784,7 @@ class _GradesScreenState extends State<GradesScreen> {
                             borderRadius: BorderRadius.circular(22),
                           ),
                           child: Text(
-                            'Kerekítve: $roundedGrade',
+                            '$roundedGrade',
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: avgColor,
                               fontWeight: FontWeight.w800,
@@ -1129,35 +1144,21 @@ class _GradesScreenState extends State<GradesScreen> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            'Kerekítve',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: scheme.onSurface.withValues(alpha: 0.54),
-                              fontSize: 10,
-                            ),
+                      Container(
+                        width: 44,
+                        height: 44,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: standingColor,
+                          borderRadius: OledTheme.badgeRadius,
+                        ),
+                        child: Text(
+                          standingText,
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
                           ),
-                          const SizedBox(height: 4),
-                          Container(
-                            width: 46,
-                            height: 46,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: standingColor,
-                              borderRadius: OledTheme.badgeRadius,
-                            ),
-                            child: Text(
-                              standingText,
-                              style: theme.textTheme.titleLarge?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                       const SizedBox(width: 8),
                       Icon(
@@ -1417,7 +1418,7 @@ class _ScholarshipAndBreakdownDialogState
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Válassz cél ösztöndíj sávot a legkevesebb szükséges érdemjegy kiszámításához:',
+                  'A szakképzési ösztöndíj kizárólag az összesített súlyozott átlagtól függ (nem szükséges minden tantárgyból külön 4.00 feletti átlagot elérni). Válassz cél sávot:',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: scheme.onSurface.withValues(alpha: 0.68),
                   ),
@@ -2122,7 +2123,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                             const SizedBox(height: 4),
                             Text(
                               roundedStanding != null
-                                  ? 'Kerekítve: $roundedStanding (${widget.summary.grades.length} db jegy)'
+                                  ? '$roundedStanding (${widget.summary.grades.length} db jegy)'
                                   : '${widget.summary.grades.length} rögzített értékelés',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: scheme.onSurface.withValues(alpha: 0.72),

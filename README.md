@@ -104,7 +104,7 @@ flutter build apk --release
 ```
 
 A lefordított telepítőfájl helye:
-`build/app/outputs/flutter-apk/app-release.apk`
+`build/app/outputs/flutter-apk/reKRETA-v1.2.0.apk`
 
 ## Technikai Stack
 

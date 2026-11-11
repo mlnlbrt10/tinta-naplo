@@ -27,8 +27,11 @@ Future<void> showFrostedModal({
   String? topicTitle,
   String? topicBody,
   String? tsundereNote,
+  ModalCloseButtonMode? closeMode,
 }) {
   HapticFeedback.lightImpact();
+  final effectiveCloseMode =
+      closeMode ?? UserProfilePrefs.activeModalCloseMode;
 
   return Navigator.of(context).push<void>(
     PageRouteBuilder<void>(
@@ -36,19 +39,19 @@ Future<void> showFrostedModal({
       barrierDismissible: true,
       barrierLabel: 'Bezárás',
       barrierColor: Colors.transparent,
-      transitionDuration: const Duration(milliseconds: 300),
-      reverseTransitionDuration: const Duration(milliseconds: 260),
+      transitionDuration: const Duration(milliseconds: 280),
+      reverseTransitionDuration: const Duration(milliseconds: 240),
       pageBuilder: (dialogContext, animation, secondaryAnimation) {
         final theme = Theme.of(dialogContext);
         final scheme = theme.colorScheme;
         final isDark = theme.brightness == Brightness.dark;
         final cardBg = isDark
-            ? const Color(0xFF141418).withValues(alpha: 0.90)
-            : Colors.white.withValues(alpha: 0.92);
+            ? const Color(0xFF121212).withValues(alpha: 0.92)
+            : Colors.white.withValues(alpha: 0.94);
 
         final curved = CurvedAnimation(
           parent: animation,
-          curve: Curves.easeOutCubic,
+          curve: Curves.easeOutBack,
           reverseCurve: Curves.easeInOutCubic,
         );
 
@@ -212,14 +215,15 @@ Future<void> showFrostedModal({
                                     ],
                                   ),
                                 ),
-                                TactileBounce(
-                                  onTap: () =>
-                                      Navigator.of(dialogContext).pop(),
-                                  child: const Padding(
-                                    padding: EdgeInsets.all(8.0),
-                                    child: Icon(Icons.close_rounded),
+                                if (effectiveCloseMode.showTopX)
+                                  TactileBounce(
+                                    onTap: () =>
+                                        Navigator.of(dialogContext).pop(),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(8.0),
+                                      child: Icon(Icons.close_rounded),
+                                    ),
                                   ),
-                                ),
                               ],
                             ),
                             if (tsundereNote != null &&
@@ -340,26 +344,28 @@ Future<void> showFrostedModal({
                                 ),
                               ),
                             ],
-                            const SizedBox(height: 18),
-                            TactileBounce(
-                              onTap: () => Navigator.of(dialogContext).pop(),
-                              child: Container(
-                                alignment: Alignment.center,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
-                                decoration: BoxDecoration(
-                                  color: accentColor,
-                                  borderRadius: BorderRadius.circular(22),
-                                ),
-                                child: const Text(
-                                  'Bezárás',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w800,
+                            if (effectiveCloseMode.showBottomButton) ...[
+                              const SizedBox(height: 18),
+                              TactileBounce(
+                                onTap: () => Navigator.of(dialogContext).pop(),
+                                child: Container(
+                                  alignment: Alignment.center,
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 14),
+                                  decoration: BoxDecoration(
+                                    color: accentColor,
+                                    borderRadius: BorderRadius.circular(22),
+                                  ),
+                                  child: const Text(
+                                    'Bezárás',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ),
@@ -374,14 +380,14 @@ Future<void> showFrostedModal({
         return AnimatedBuilder(
           animation: curved,
           builder: (context, child) {
-            final t = curved.value.clamp(0.0, 1.0);
-            final sigma = 12.0 * t;
-            final scale = 0.92 + (0.08 * t);
+            final t = animation.value.clamp(0.0, 1.0);
+            final sigma = 4.5 * t;
+            final scale = 0.90 + (0.10 * curved.value);
             return GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () => Navigator.of(dialogContext).pop(),
               child: ColoredBox(
-                color: Colors.black.withValues(alpha: 0.48 * t),
+                color: const Color(0xFF121212).withValues(alpha: 0.78 * t),
                 child: BackdropFilter(
                   filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
                   child: Opacity(
@@ -451,6 +457,7 @@ Future<void> showGradeInspectionModal(
     badgeText: badge,
     heroTag: heroTag,
     tsundereNote: tsundereNote,
+    closeMode: prefs?.modalCloseMode,
     rows: [
       FrostedDetailRow(
         icon: Icons.school_rounded,
@@ -499,6 +506,7 @@ Future<void> showHomeworkInspectionModal(
   BuildContext context,
   Homework homework, {
   UserProfilePrefs? prefs,
+  String? heroTag,
 }) {
   final dtFormat = DateFormat('yyyy. MM. dd. HH:mm');
   final cleanedDesc = homework.description
@@ -522,9 +530,11 @@ Future<void> showHomeworkInspectionModal(
     categoryIcon: Icons.menu_book_rounded,
     accentColor: const Color(0xFF00BFA5),
     title: subjectDisplay,
+    heroTag: heroTag,
+    closeMode: prefs?.modalCloseMode,
     tsundereNote:
         (prefs?.tsundereModeEnabled == true || UwuHelper.isTsundereEnabled)
-            ? 'Nem mintha érdekelne a házi feladatod, b-baka!'
+            ? 'N-nem mintha érdekelne a házi feladatod, b-baka~!'
             : null,
     rows: [
       FrostedDetailRow(
@@ -570,8 +580,21 @@ Future<void> showTestInspectionModal(
   BuildContext context,
   Test test, {
   UserProfilePrefs? prefs,
+  String? heroTag,
 }) {
   final dayFormat = DateFormat('yyyy. MM. dd.');
+  const weekdayNames = [
+    '',
+    'Hétfő',
+    'Kedd',
+    'Szerda',
+    'Csütörtök',
+    'Péntek',
+    'Szombat',
+    'Vasárnap',
+  ];
+  final testLocal = test.date.toLocal();
+  final weekdayLabel = weekdayNames[testLocal.weekday.clamp(1, 7)];
   final rawSubject =
       test.subject.name.isNotEmpty ? test.subject.name : test.subjectName;
   final subjectDisplay = prefs != null
@@ -588,6 +611,8 @@ Future<void> showTestInspectionModal(
     accentColor: const Color(0xFFFF7043),
     title: subjectDisplay,
     badgeText: '${test.lessonNumber}.',
+    heroTag: heroTag,
+    closeMode: prefs?.modalCloseMode,
     rows: [
       FrostedDetailRow(
         icon: Icons.school_rounded,
@@ -597,7 +622,8 @@ Future<void> showTestInspectionModal(
       FrostedDetailRow(
         icon: Icons.event_rounded,
         label: 'Számonkérés napja',
-        value: '${dayFormat.format(test.date.toLocal())} (${test.lessonNumber}. óra)',
+        value:
+            '$weekdayLabel (${test.lessonNumber}. óra)\n${dayFormat.format(testLocal)}',
       ),
       FrostedDetailRow(
         icon: Icons.history_edu_rounded,
@@ -675,6 +701,7 @@ Future<void> showLessonInspectionModal(
     subtitleTimeSpan: timeSpan,
     badgeText: lesson.lessonNumber != null ? '${lesson.lessonNumber}.' : '•',
     heroTag: heroTag ?? 'lesson_num_${lesson.uid}',
+    closeMode: prefs?.modalCloseMode,
     rows: [
       FrostedDetailRow(
         icon: Icons.access_time_filled_rounded,

@@ -53,13 +53,13 @@ class GreetingUtils {
 
     if (isTsundere && uwuMode != true) {
       if (hour >= 4 && hour <= 7) {
-        return 'Már megint majdnem elaludtál, $name?! B-baka!';
+        return 'M-már megint majdnem elaludtál, $name~?! N-nehogy elkéss nekem, b-baka~!';
       } else if (hour >= 8 && hour <= 17) {
-        return 'Nem mintha érdekelne a házi feladatod, b-baka!';
+        return 'N-nem mintha érdekelne a házi feladatod, b-baka~!';
       } else if (hour >= 18 && hour <= 21) {
-        return 'Megint hármas? Nem mintha figyeltem volna, $name...';
+        return 'M-megint egy hármas? Nem mintha figyeltem volna rád, $name, h-hülye...~';
       } else {
-        return 'Menj már aludni, $name! Nem mintha aggódnék érted, b-baka!';
+        return 'M-menj már aludni, $name~! N-nem mintha aggódnék érted, b-baka~!';
       }
     }
 

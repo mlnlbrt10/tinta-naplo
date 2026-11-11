@@ -10,7 +10,7 @@ import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 
 /// Dedicated "Az alkalmazásról" (About App / Rendszer & Névjegy) screen with:
-/// - App icon (`AppBrandIconBadge`), name ('reKRETA'), semantic version ('v1.1.0+3'),
+/// - App icon (`AppBrandIconBadge`), name ('reKRETA'), semantic version ('v1.2.0+4'),
 ///   and developer credits.
 /// - Direct link to `https://github.com/mlnlbrt10/reKRETA`.
 /// - Manual "Frissítések keresése" button (GitHub Releases OTA updater).
@@ -155,12 +155,9 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
             _buildHeroIdentityCard(theme, scheme).staggeredEntrance(0),
             const SizedBox(height: 16),
             _buildUpdateAndLinksCard(theme, scheme).staggeredEntrance(1),
-            const SizedBox(height: 16),
-            _buildCreditsAndArchitectureCard(theme, scheme)
-                .staggeredEntrance(2),
             if (_currentPrefs.developerModeUnlocked) ...[
               const SizedBox(height: 16),
-              _buildDeveloperOptionsCard(theme, scheme).staggeredEntrance(3),
+              _buildDeveloperOptionsCard(theme, scheme).staggeredEntrance(2),
             ],
           ],
         ),
@@ -360,59 +357,6 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
     );
   }
 
-  Widget _buildCreditsAndArchitectureCard(
-    ThemeData theme,
-    ColorScheme scheme,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: theme.cardTheme.color,
-        borderRadius: OledTheme.largeRadius,
-        border: Border.all(color: theme.dividerColor),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.badge_rounded, size: 20, color: scheme.primary),
-              const SizedBox(width: 8),
-              Text(
-                uwu('Készítők és Rendszerinformáció'),
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _buildInfoRow(scheme, uwu('Fejlesztő'), 'Milán (mlnlbrt10)'),
-          _buildInfoRow(
-            scheme,
-            uwu('Verzió'),
-            uwu('v$_version+$_buildNumber'),
-          ),
-          _buildInfoRow(
-            scheme,
-            uwu('API motor'),
-            'kreta_api (Kréta v3 OAuth2 PKCE)',
-          ),
-          _buildInfoRow(
-            scheme,
-            uwu('Felület'),
-            'Material 3 • 120Hz OLED Pure Black',
-          ),
-          _buildInfoRow(
-            scheme,
-            uwu('Titkosítás'),
-            'FlutterSecureStorage (AES/Keystore)',
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildDeveloperOptionsCard(ThemeData theme, ColorScheme scheme) {
     final isUwu = _currentPrefs.uwuModeEnabled;
     final isTsundere = _currentPrefs.tsundereModeEnabled;
@@ -520,7 +464,7 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
                 ),
               ),
               subtitle: Text(
-                'Csípős tsundere beszólások és köszöntések („Nem mintha érdekelne a házi feladatod, b-baka!”, „Megint hármas? Nem mintha figyeltem volna...”)',
+                'Csípős tsundere beszólások és köszöntések („N-nem mintha érdekelne a házi feladatod, b-baka~!”, „M-megint egy hármas? Nem mintha figyeltem volna rád, h-hülye...~”)',
                 style: TextStyle(
                   fontSize: 12,
                   color: scheme.onSurface.withValues(alpha: 0.75),
@@ -540,16 +484,16 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
                 context,
                 currentVersion: _version,
                 release: const GitHubReleaseInfo(
-                  tagName: 'v1.1.0',
-                  title: 'reKRETA v1.1.0 — OTA Frissítő Előnézet',
+                  tagName: 'v1.2.0',
+                  title: 'reKRETA v1.2.0 — OTA Frissítő Előnézet',
                   releaseNotes:
                       '• 120Hz-es fizikai animációk és Hero átmenetek\n'
                       '• Szellemjegy Számoló, Ösztöndíj Kalkulátor és egyedi kerekítési határok\n'
                       '• Titkos UwU mód és Tsundere mód :3\n'
-                      '• Közvetlen GitHub Releases APK letöltés és telepítés',
+                      '• Közvetlen GitHub Releases APK letöltés és telepítés (reKRETA-v1.2.0.apk)',
                   htmlUrl: GitHubUpdaterService.repoUrl,
                   apkDownloadUrl:
-                      'https://github.com/mlnlbrt10/reKRETA/releases/latest/download/app-release.apk',
+                      'https://github.com/mlnlbrt10/reKRETA/releases/latest/download/reKRETA-v1.2.0.apk',
                 ),
               );
             },
@@ -577,37 +521,6 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
                     ),
                   ),
                 ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(ColorScheme scheme, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 135,
-            child: Text(
-              label,
-              style: TextStyle(
-                color: scheme.onSurface.withValues(alpha: 0.65),
-                fontSize: 13,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: TextStyle(
-                color: scheme.onSurface,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
               ),
             ),
           ),

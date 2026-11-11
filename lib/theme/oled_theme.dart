@@ -10,6 +10,7 @@ class OledTheme {
   static const Color surfaceDark = Color(0xFF121212);
   static const Color surfaceElevated = Color(0xFF181818);
   static const Color borderSubtle = Color(0xFF262626);
+  static const Color textSecondary = Color(0xFFB0B0B0);
   static const Color accentPrimary = Color(0xFF4DA3FF);
   static const Color uwuPastelPink = Color(0xFFFF94C2);
   static const Color uwuPastelLavender = Color(0xFFCE93D8);

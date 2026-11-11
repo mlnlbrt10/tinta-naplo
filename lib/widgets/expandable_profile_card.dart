@@ -6,12 +6,12 @@ import 'package:image_picker/image_picker.dart';
 import 'package:kreta_api/kreta_api.dart';
 
 import '../services/token_storage_service.dart';
-import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
 
 /// Sleek top-right CircleAvatar icon for the HomeScreen AppBar.
-/// Tapping opens the streamlined Profile & Settings modal sheet.
+/// Wrapped in a `Hero('profile_avatar_hero')` so tapping animates the avatar
+/// smoothly into the expanded Profile sheet and boomerangs it back on dismiss.
 class ProfileTopBarAvatar extends StatelessWidget {
   final UserProfilePrefs prefs;
   final VoidCallback onTap;
@@ -31,14 +31,10 @@ class ProfileTopBarAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final iconIdx =
-        prefs.avatarIconIndex.clamp(0, OledTheme.avatarIcons.length - 1);
-    final colorIdx =
-        prefs.avatarColorIndex.clamp(0, OledTheme.avatarColors.length - 1);
-    final avatarIcon = OledTheme.avatarIcons[iconIdx];
-    final avatarColor = prefs.christmasModeEnabled
+    final scheme = Theme.of(context).colorScheme;
+    final avatarAccent = prefs.christmasModeEnabled
         ? const Color(0xFFD32F2F)
-        : OledTheme.avatarColors[colorIdx];
+        : scheme.primary;
     final photoFile = _resolveValidPhotoFile();
 
     return Padding(
@@ -48,27 +44,33 @@ class ProfileTopBarAvatar extends StatelessWidget {
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            Container(
-              padding: const EdgeInsets.all(2),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: avatarColor.withValues(alpha: 0.85),
-                  width: 2,
+            Hero(
+              tag: 'profile_avatar_hero',
+              child: Material(
+                type: MaterialType.transparency,
+                child: Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: avatarAccent.withValues(alpha: 0.9),
+                      width: 2,
+                    ),
+                  ),
+                  child: CircleAvatar(
+                    radius: 19,
+                    backgroundColor: avatarAccent.withValues(alpha: 0.2),
+                    backgroundImage:
+                        photoFile != null ? FileImage(photoFile) : null,
+                    child: photoFile == null
+                        ? Icon(
+                            Icons.person_rounded,
+                            color: avatarAccent,
+                            size: 20,
+                          )
+                        : null,
+                  ),
                 ),
-              ),
-              child: CircleAvatar(
-                radius: 19,
-                backgroundColor: avatarColor.withValues(alpha: 0.22),
-                backgroundImage:
-                    photoFile != null ? FileImage(photoFile) : null,
-                child: photoFile == null
-                    ? Icon(
-                        avatarIcon,
-                        color: avatarColor,
-                        size: 20,
-                      )
-                    : null,
               ),
             ),
             if (prefs.christmasModeEnabled)
@@ -96,9 +98,9 @@ class ProfileTopBarAvatar extends StatelessWidget {
   }
 }
 
-/// Opens the streamlined Profile & Settings modal bottom sheet:
-/// - Minimal student view: shows only the custom user avatar and editable nickname.
-/// - Clean entry point button to open full App Settings.
+/// Opens the streamlined Profile & Settings modal bottom sheet using a
+/// [PageRouteBuilder] so `Hero('profile_avatar_hero')` boomerangs seamlessly
+/// between the top-right AppBar and the expanded profile modal.
 Future<void> showStreamlinedProfileSheet({
   required BuildContext context,
   required Student? student,
@@ -109,23 +111,54 @@ Future<void> showStreamlinedProfileSheet({
 }) {
   HapticFeedback.lightImpact();
 
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    backgroundColor: Colors.transparent,
-    builder: (sheetContext) {
-      return _StreamlinedProfileModalSheet(
-        student: student,
-        session: session,
-        initialPrefs: prefs,
-        onPrefsChanged: onPrefsChanged,
-        onOpenFullSettings: () {
-          Navigator.of(sheetContext).pop();
-          onOpenFullSettings();
-        },
-      );
-    },
+  return Navigator.of(context).push<void>(
+    PageRouteBuilder<void>(
+      opaque: false,
+      barrierDismissible: true,
+      barrierLabel: 'Bezárás',
+      barrierColor: Colors.black.withValues(alpha: 0.65),
+      transitionDuration: const Duration(milliseconds: 320),
+      reverseTransitionDuration: const Duration(milliseconds: 260),
+      pageBuilder: (sheetContext, animation, secondaryAnimation) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        return Scaffold(
+          backgroundColor: Colors.transparent,
+          body: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => Navigator.of(sheetContext).pop(),
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.28),
+                  end: Offset.zero,
+                ).animate(curved),
+                child: FadeTransition(
+                  opacity: animation,
+                  child: GestureDetector(
+                    onTap: () {},
+                    child: _StreamlinedProfileModalSheet(
+                      student: student,
+                      session: session,
+                      initialPrefs: prefs,
+                      onPrefsChanged: onPrefsChanged,
+                      onOpenFullSettings: () {
+                        Navigator.of(sheetContext).pop();
+                        onOpenFullSettings();
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    ),
   );
 }
 
@@ -154,7 +187,6 @@ class _StreamlinedProfileModalSheetState
   late UserProfilePrefs _prefs;
   late final TextEditingController _nicknameController;
   final ImagePicker _imagePicker = ImagePicker();
-  bool _showAvatarCustomizer = false;
 
   @override
   void initState() {
@@ -217,12 +249,9 @@ class _StreamlinedProfileModalSheetState
     final scheme = theme.colorScheme;
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
-    final iconIdx =
-        _prefs.avatarIconIndex.clamp(0, OledTheme.avatarIcons.length - 1);
-    final colorIdx =
-        _prefs.avatarColorIndex.clamp(0, OledTheme.avatarColors.length - 1);
-    final avatarIcon = OledTheme.avatarIcons[iconIdx];
-    final avatarColor = OledTheme.avatarColors[colorIdx];
+    final avatarAccent = _prefs.christmasModeEnabled
+        ? const Color(0xFFD32F2F)
+        : scheme.primary;
     final photoFile = _resolveValidPhotoFile();
 
     final displayNick = (_prefs.nickname != null &&
@@ -257,24 +286,40 @@ class _StreamlinedProfileModalSheetState
               const SizedBox(height: 20),
               Center(
                 child: GestureDetector(
-                  onTap: () => setState(
-                    () => _showAvatarCustomizer = !_showAvatarCustomizer,
-                  ),
+                  onTap: _pickCustomPhoto,
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      CircleAvatar(
-                        radius: 40,
-                        backgroundColor: avatarColor.withValues(alpha: 0.22),
-                        backgroundImage:
-                            photoFile != null ? FileImage(photoFile) : null,
-                        child: photoFile == null
-                            ? Icon(
-                                avatarIcon,
-                                color: avatarColor,
-                                size: 38,
-                              )
-                            : null,
+                      Hero(
+                        tag: 'profile_avatar_hero',
+                        child: Material(
+                          type: MaterialType.transparency,
+                          child: Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: avatarAccent,
+                                width: 2.5,
+                              ),
+                            ),
+                            child: CircleAvatar(
+                              radius: 40,
+                              backgroundColor:
+                                  avatarAccent.withValues(alpha: 0.2),
+                              backgroundImage: photoFile != null
+                                  ? FileImage(photoFile)
+                                  : null,
+                              child: photoFile == null
+                                  ? Icon(
+                                      Icons.person_rounded,
+                                      color: avatarAccent,
+                                      size: 40,
+                                    )
+                                  : null,
+                            ),
+                          ),
+                        ),
                       ),
                       Positioned(
                         bottom: -2,
@@ -290,7 +335,7 @@ class _StreamlinedProfileModalSheetState
                             ),
                           ),
                           child: Icon(
-                            Icons.edit_rounded,
+                            Icons.photo_camera_rounded,
                             size: 14,
                             color: scheme.onPrimary,
                           ),
@@ -309,7 +354,36 @@ class _StreamlinedProfileModalSheetState
                   color: scheme.onSurface,
                 ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 12),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.tonalIcon(
+                    onPressed: _pickCustomPhoto,
+                    icon: const Icon(
+                      Icons.photo_library_rounded,
+                      size: 18,
+                    ),
+                    label: Text(
+                      photoFile != null ? 'Új kép választása' : 'Kép galériából',
+                    ),
+                  ),
+                  if (photoFile != null)
+                    OutlinedButton.icon(
+                      onPressed: () => _applyPrefs(
+                        _prefs.copyWith(clearCustomPhoto: true),
+                      ),
+                      icon: const Icon(
+                        Icons.delete_outline_rounded,
+                        size: 18,
+                      ),
+                      label: const Text('Kép törlése'),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
               Row(
                 children: [
                   Expanded(
@@ -336,8 +410,8 @@ class _StreamlinedProfileModalSheetState
                   const SizedBox(width: 10),
                   FilledButton(
                     style: FilledButton.styleFrom(
-                      backgroundColor: avatarColor,
-                      foregroundColor: Colors.white,
+                      backgroundColor: avatarAccent,
+                      foregroundColor: scheme.onPrimary,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 18,
                         vertical: 15,
@@ -353,126 +427,6 @@ class _StreamlinedProfileModalSheetState
                     ),
                   ),
                 ],
-              ),
-              AnimatedCrossFade(
-                firstChild: const SizedBox.shrink(),
-                secondChild: Padding(
-                  padding: const EdgeInsets.only(top: 16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          FilledButton.tonalIcon(
-                            onPressed: _pickCustomPhoto,
-                            icon: const Icon(
-                              Icons.photo_library_rounded,
-                              size: 18,
-                            ),
-                            label: Text(
-                              photoFile != null ? 'Új kép' : 'Kép galériából',
-                            ),
-                          ),
-                          if (photoFile != null)
-                            OutlinedButton.icon(
-                              onPressed: () => _applyPrefs(
-                                _prefs.copyWith(clearCustomPhoto: true),
-                              ),
-                              icon: const Icon(
-                                Icons.delete_outline_rounded,
-                                size: 18,
-                              ),
-                              label: const Text('Kép törlése'),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: List.generate(
-                          OledTheme.avatarIcons.length,
-                          (idx) {
-                            final selected = idx == _prefs.avatarIconIndex;
-                            return InkWell(
-                              borderRadius: BorderRadius.circular(20),
-                              onTap: () => _applyPrefs(
-                                _prefs.copyWith(avatarIconIndex: idx),
-                              ),
-                              child: Container(
-                                width: 42,
-                                height: 42,
-                                decoration: BoxDecoration(
-                                  color: selected
-                                      ? avatarColor.withValues(alpha: 0.25)
-                                      : scheme.surfaceContainerHigh,
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: selected
-                                        ? avatarColor
-                                        : theme.dividerColor,
-                                  ),
-                                ),
-                                child: Icon(
-                                  OledTheme.avatarIcons[idx],
-                                  color: selected
-                                      ? avatarColor
-                                      : scheme.onSurface.withValues(alpha: 0.7),
-                                  size: 20,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: List.generate(
-                          OledTheme.avatarColors.length,
-                          (idx) {
-                            final c = OledTheme.avatarColors[idx];
-                            final selected = idx == _prefs.avatarColorIndex;
-                            return InkWell(
-                              borderRadius: BorderRadius.circular(20),
-                              onTap: () => _applyPrefs(
-                                _prefs.copyWith(avatarColorIndex: idx),
-                              ),
-                              child: Container(
-                                width: 34,
-                                height: 34,
-                                decoration: BoxDecoration(
-                                  color: c,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: selected
-                                        ? scheme.onSurface
-                                        : Colors.transparent,
-                                    width: 2.2,
-                                  ),
-                                ),
-                                child: selected
-                                    ? const Icon(
-                                        Icons.check_rounded,
-                                        color: Colors.white,
-                                        size: 16,
-                                      )
-                                    : null,
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                crossFadeState: _showAvatarCustomizer
-                    ? CrossFadeState.showSecond
-                    : CrossFadeState.showFirst,
-                duration: const Duration(milliseconds: 220),
               ),
               const SizedBox(height: 20),
               TactileBounce(
