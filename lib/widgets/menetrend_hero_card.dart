@@ -294,8 +294,8 @@ class MenetrendHeroCard extends StatelessWidget {
                           const SizedBox(height: 2),
                           Text(
                             evaluation.isMorningMode
-                                ? 'Séta indulás: $walkStartFormatted (${evaluation.effectiveWalkMinutes} p séta) • ${trip.platformCode ?? "1. vágány"}'
-                                : '$countdownBadgeText • ${trip.platformCode ?? "1. vágány"}',
+                                ? 'Séta indulás: $walkStartFormatted (${evaluation.effectiveWalkMinutes} p séta)${trip.platformCode != null ? " • ${trip.platformCode}" : ""}'
+                                : '$countdownBadgeText${trip.platformCode != null ? " • ${trip.platformCode}" : ""}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -331,6 +331,88 @@ class MenetrendHeroCard extends StatelessWidget {
                     ),
                   ],
                 ),
+                if (trip.legs.length > 1) ...[
+                  const SizedBox(height: 10),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (var i = 0; i < trip.legs.length; i++) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: primary.withValues(alpha: 0.16),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: primary.withValues(alpha: 0.35),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _iconForMode(trip.legs[i].mode),
+                                  size: 13,
+                                  color: primary,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${i + 1}. szakasz: ${trip.legs[i].routeShortName} '
+                                  '(${trip.legs[i].mode == MenetrendTransportMode.rail ? "vonat" : "busz"})',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                    color: primary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (i < trip.legs.length - 1) ...[
+                            const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 4),
+                              child: Icon(
+                                Icons.arrow_forward_rounded,
+                                size: 13,
+                                color: OledTheme.textSecondary,
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3.5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFB300)
+                                    .withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                'Átszállás ${trip.legs[i + 1].departure.difference(trip.legs[i].arrival).inMinutes} p',
+                                style: const TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFFFFB300),
+                                ),
+                              ),
+                            ),
+                            const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 4),
+                              child: Icon(
+                                Icons.arrow_forward_rounded,
+                                size: 13,
+                                color: OledTheme.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -395,7 +477,7 @@ class _MenetrendDetailsModalSheetState
     final closeMode = widget.prefs.modalCloseMode;
     final trip = _selectedTrip;
     final walkLeave = trip.effectiveDeparture
-        .subtract(Duration(minutes: widget.evaluation.effectiveWalkMinutes));
+        .subtract(Duration(minutes: trip.walkToStationMinutes));
     final schoolArrive = trip.effectiveArrival
         .add(Duration(minutes: trip.walkToDestinationMinutes));
 
@@ -605,9 +687,12 @@ class _MenetrendDetailsModalSheetState
                                 time: DateFormat('HH:mm').format(walkLeave),
                                 title: 'Gyaloglás az állomásra',
                                 subtitle:
-                                    '${widget.evaluation.effectiveWalkMinutes} perc séta (${widget.prefs.walkingSpeedKmh.toStringAsFixed(1)} km/h tempó)',
+                                    '${trip.walkToStationMinutes} perc séta (${widget.prefs.walkingSpeedKmh.toStringAsFixed(1)} km/h tempó)',
                                 accentColor: OledTheme.textSecondary,
                               ),
+                              if (trip.legs.length > 1)
+                                ..._buildLegSteps(trip, primary)
+                              else ...[
                               _buildTimelineStep(
                                 icon: trip.mode == MenetrendTransportMode.rail
                                     ? Icons.train_rounded
@@ -615,7 +700,7 @@ class _MenetrendDetailsModalSheetState
                                 time: trip.effectiveDepartureTimeFormatted,
                                 title: 'Felszállás: ${trip.departureStation}',
                                 subtitle:
-                                    '${trip.routeShortName} • ${trip.platformCode ?? "1. vágány"}',
+                                    '${trip.routeShortName}${trip.platformCode != null ? " • ${trip.platformCode}" : ""}',
                                 accentColor: primary,
                               ),
                               if (trip.intermediateStops.isNotEmpty)
@@ -699,15 +784,21 @@ class _MenetrendDetailsModalSheetState
                                     ),
                                   ),
                                 ),
+                              ],
                               _buildTimelineStep(
                                 icon: Icons.location_on_rounded,
                                 time: trip.effectiveArrivalTimeFormatted,
                                 title: 'Érkezés: ${trip.arrivalStation}',
-                                subtitle: trip.arrivalPlatformCode ?? 'Érkező vágány',
+                                subtitle: trip.arrivalPlatformCode ??
+                                    (trip.mode == MenetrendTransportMode.rail
+                                        ? 'Érkező vágány'
+                                        : 'Megálló'),
                                 accentColor: const Color(0xFF66BB6A),
                               ),
                               _buildTimelineStep(
-                                icon: Icons.school_rounded,
+                                icon: widget.evaluation.isMorningMode
+                                    ? Icons.school_rounded
+                                    : Icons.home_rounded,
                                 time: DateFormat('HH:mm').format(schoolArrive),
                                 title: widget.evaluation.isMorningMode
                                     ? 'Séta az iskoláig'
@@ -771,6 +862,41 @@ class _MenetrendDetailsModalSheetState
         ],
       ),
     );
+  }
+
+  /// Explicit sequential segments for transfer trips:
+  /// [Leg 1] -> [Átszállás wait] -> [Leg 2] ...
+  List<Widget> _buildLegSteps(MenetrendTripOption trip, Color primary) {
+    final fmt = DateFormat('HH:mm');
+    final out = <Widget>[];
+    for (var i = 0; i < trip.legs.length; i++) {
+      final leg = trip.legs[i];
+      final rail = leg.mode == MenetrendTransportMode.rail;
+      out.add(
+        _buildTimelineStep(
+          icon: rail ? Icons.train_rounded : Icons.directions_bus_rounded,
+          time: fmt.format(leg.departure),
+          title: '${i + 1}. szakasz: ${leg.routeShortName} • ${leg.fromName}',
+          subtitle:
+              '→ ${leg.toName} (${fmt.format(leg.arrival)})'
+              '${rail && leg.platformCode != null ? ' • ${leg.platformCode}' : ''}',
+          accentColor: primary,
+        ),
+      );
+      if (i < trip.legs.length - 1) {
+        final wait = trip.legs[i + 1].departure.difference(leg.arrival).inMinutes;
+        out.add(
+          _buildTimelineStep(
+            icon: Icons.transfer_within_a_station_rounded,
+            time: fmt.format(leg.arrival),
+            title: 'Átszállás: ${leg.toName}',
+            subtitle: '$wait perc várakozás',
+            accentColor: const Color(0xFFFFB300),
+          ),
+        );
+      }
+    }
+    return out;
   }
 
   Widget _buildTimelineStep({

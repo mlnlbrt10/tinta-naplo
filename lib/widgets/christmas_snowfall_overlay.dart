@@ -132,9 +132,15 @@ class BackgroundPresetInfo {
   static const List<BackgroundPresetInfo> presets = [
     BackgroundPresetInfo(
       id: 'pure_oled',
-      label: 'Tiszta OLED Fekete',
+      label: 'OLED Fekete (Pure Black)',
       icon: Icons.contrast_rounded,
       gradientColors: [Colors.black, Colors.black],
+    ),
+    BackgroundPresetInfo(
+      id: 'brand_navy',
+      label: 'Mély Ciánkék (Brand Cyan/Navy #0B1E28)',
+      icon: Icons.water_drop_rounded,
+      gradientColors: [Color(0xFF0B1E28), Color(0xFF0B1E28)],
     ),
     BackgroundPresetInfo(
       id: 'midnight_aurora',
@@ -306,20 +312,69 @@ class _ChristmasAndBackgroundOverlayState
   @override
   Widget build(BuildContext context) {
     final bgPreset = BackgroundPresetInfo.resolve(widget.prefs);
-    final isLight = Theme.of(context).brightness == Brightness.light;
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     final hasGradient = !isLight && bgPreset.id != 'pure_oled';
 
     Widget content = widget.child;
-    if (hasGradient) {
-      content = DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: bgPreset.gradientColors,
-          ),
-        ),
-        child: content,
+    if (hasGradient || widget.prefs.cardBlurEnabled) {
+      final primary = theme.colorScheme.primary;
+      content = Stack(
+        fit: StackFit.expand,
+        children: [
+          if (hasGradient)
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: bgPreset.gradientColors,
+                ),
+              ),
+              child: const SizedBox.expand(),
+            ),
+          if (widget.prefs.cardBlurEnabled) ...[
+            Positioned(
+              top: -40,
+              right: -30,
+              child: IgnorePointer(
+                child: Container(
+                  width: 220,
+                  height: 220,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        primary.withValues(alpha: 0.22),
+                        primary.withValues(alpha: 0.0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: 80,
+              left: -40,
+              child: IgnorePointer(
+                child: Container(
+                  width: 240,
+                  height: 240,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        primary.withValues(alpha: 0.16),
+                        primary.withValues(alpha: 0.0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+          content,
+        ],
       );
     }
 

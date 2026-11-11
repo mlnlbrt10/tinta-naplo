@@ -1110,7 +1110,7 @@ class _MoreScreenState extends State<MoreScreen> {
                     style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
                   ),
                   Text(
-                    '${(_currentPrefs.cardOpacity * 100).round()}%',
+                    '${(_currentPrefs.cardOpacity.clamp(0.60, 0.85) * 100).round()}%',
                     style: TextStyle(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w900,
@@ -1120,10 +1120,10 @@ class _MoreScreenState extends State<MoreScreen> {
                 ],
               ),
               Slider(
-                value: _currentPrefs.cardOpacity.clamp(0.6, 1.0),
-                min: 0.6,
-                max: 1.0,
-                divisions: 8,
+                value: _currentPrefs.cardOpacity.clamp(0.60, 0.85),
+                min: 0.60,
+                max: 0.85,
+                divisions: 5,
                 onChanged: (v) =>
                     _updatePrefs(_currentPrefs.copyWith(cardOpacity: v)),
               ),
@@ -1611,6 +1611,36 @@ class _MoreScreenState extends State<MoreScreen> {
               ),
             ),
             const Divider(height: 20),
+            Text(
+              'Kalkulátor jegy súlyozása:',
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  showCheckmark: false,
+                  label: const Text('100% alapeset'),
+                  selected: !_currentPrefs.calcAllow200Weight,
+                  onSelected: (_) => _updatePrefs(
+                    _currentPrefs.copyWith(calcAllow200Weight: false),
+                  ),
+                ),
+                ChoiceChip(
+                  showCheckmark: false,
+                  label: const Text('200% témazáró engedélyezése'),
+                  selected: _currentPrefs.calcAllow200Weight,
+                  onSelected: (_) => _updatePrefs(
+                    _currentPrefs.copyWith(calcAllow200Weight: true),
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 20),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1945,7 +1975,7 @@ class _MoreScreenState extends State<MoreScreen> {
           contentPadding: EdgeInsets.zero,
           secondary: const Icon(Icons.directions_bus_filled_rounded, size: 20),
           title: const Text(
-            'Távolsági busz (Volánbusz)',
+            'Helyközi / Távolsági busz (Volánbusz)',
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
           ),
           value: _currentPrefs.transitAllowCoach,
@@ -2074,33 +2104,69 @@ class _MoreScreenState extends State<MoreScreen> {
           },
         ),
         const SizedBox(height: 6),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              'Sétaidő az állomásig (alap):',
-              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-            ),
-            Text(
-              '${_currentPrefs.walkingDurationMinutes} perc',
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w900,
-                color: scheme.primary,
-              ),
-            ),
-          ],
-        ),
-        Slider(
-          value: _currentPrefs.walkingDurationMinutes.clamp(2, 35).toDouble(),
-          min: 2,
-          max: 35,
-          divisions: 33,
-          label: '${_currentPrefs.walkingDurationMinutes} perc',
-          onChanged: (v) => _updatePrefs(
-            _currentPrefs.copyWith(walkingDurationMinutes: v.round()),
+        for (final (label, currentVal, onChanged) in <(
+          String,
+          int,
+          ValueChanged<int>,
+        )>[
+          (
+            'Otthon -> Buszmegálló séta',
+            _currentPrefs.walkHomeToBusMinutes,
+            (v) => _updatePrefs(
+                  _currentPrefs.copyWith(walkHomeToBusMinutes: v),
+                ),
           ),
-        ),
+          (
+            'Otthon -> Vasútállomás séta',
+            _currentPrefs.walkHomeToTrainMinutes,
+            (v) => _updatePrefs(
+                  _currentPrefs.copyWith(walkHomeToTrainMinutes: v),
+                ),
+          ),
+          (
+            'Iskola -> Buszmegálló séta',
+            _currentPrefs.walkSchoolToBusMinutes,
+            (v) => _updatePrefs(
+                  _currentPrefs.copyWith(walkSchoolToBusMinutes: v),
+                ),
+          ),
+          (
+            'Iskola -> Vasútállomás séta',
+            _currentPrefs.walkSchoolToTrainMinutes,
+            (v) => _updatePrefs(
+                  _currentPrefs.copyWith(walkSchoolToTrainMinutes: v),
+                ),
+          ),
+        ]) ...[
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Text(
+                '$currentVal perc',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w900,
+                  color: scheme.primary,
+                ),
+              ),
+            ],
+          ),
+          Slider(
+            value: currentVal.clamp(1, 45).toDouble(),
+            min: 1,
+            max: 45,
+            divisions: 44,
+            label: '$currentVal perc',
+            onChanged: (v) => onChanged(v.round()),
+          ),
+        ],
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [

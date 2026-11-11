@@ -146,6 +146,11 @@ class UserProfilePrefs {
   final int transitAlertBufferMinutes;
   final bool transitNotificationsEnabled;
   final bool transitCardEnabled;
+  final int walkHomeToBusMinutes;
+  final int walkHomeToTrainMinutes;
+  final int walkSchoolToBusMinutes;
+  final int walkSchoolToTrainMinutes;
+  final bool calcAllow200Weight;
   final bool cardBlurEnabled;
   final double cardOpacity;
   final double cardBlurSigma;
@@ -193,6 +198,11 @@ class UserProfilePrefs {
     this.transitAlertBufferMinutes = 5,
     this.transitNotificationsEnabled = true,
     this.transitCardEnabled = false,
+    this.walkHomeToBusMinutes = 8,
+    this.walkHomeToTrainMinutes = 12,
+    this.walkSchoolToBusMinutes = 5,
+    this.walkSchoolToTrainMinutes = 15,
+    this.calcAllow200Weight = false,
     this.cardBlurEnabled = false,
     this.cardOpacity = 0.9,
     this.cardBlurSigma = 4.0,
@@ -302,6 +312,11 @@ class UserProfilePrefs {
     int? transitAlertBufferMinutes,
     bool? transitNotificationsEnabled,
     bool? transitCardEnabled,
+    int? walkHomeToBusMinutes,
+    int? walkHomeToTrainMinutes,
+    int? walkSchoolToBusMinutes,
+    int? walkSchoolToTrainMinutes,
+    bool? calcAllow200Weight,
     bool? cardBlurEnabled,
     double? cardOpacity,
     double? cardBlurSigma,
@@ -346,6 +361,11 @@ class UserProfilePrefs {
       transitNotificationsEnabled:
           transitNotificationsEnabled ?? this.transitNotificationsEnabled,
       transitCardEnabled: transitCardEnabled ?? this.transitCardEnabled,
+      walkHomeToBusMinutes: walkHomeToBusMinutes ?? this.walkHomeToBusMinutes,
+      walkHomeToTrainMinutes: walkHomeToTrainMinutes ?? this.walkHomeToTrainMinutes,
+      walkSchoolToBusMinutes: walkSchoolToBusMinutes ?? this.walkSchoolToBusMinutes,
+      walkSchoolToTrainMinutes: walkSchoolToTrainMinutes ?? this.walkSchoolToTrainMinutes,
+      calcAllow200Weight: calcAllow200Weight ?? this.calcAllow200Weight,
       cardBlurEnabled: cardBlurEnabled ?? this.cardBlurEnabled,
       cardOpacity: cardOpacity ?? this.cardOpacity,
       cardBlurSigma: cardBlurSigma ?? this.cardBlurSigma,
@@ -393,6 +413,11 @@ class UserProfilePrefs {
       'transitAlertBufferMinutes': transitAlertBufferMinutes,
       'transitNotificationsEnabled': transitNotificationsEnabled,
       'transitCardEnabled': transitCardEnabled,
+      'walkHomeToBusMinutes': walkHomeToBusMinutes,
+      'walkHomeToTrainMinutes': walkHomeToTrainMinutes,
+      'walkSchoolToBusMinutes': walkSchoolToBusMinutes,
+      'walkSchoolToTrainMinutes': walkSchoolToTrainMinutes,
+      'calcAllow200Weight': calcAllow200Weight,
       'cardBlurEnabled': cardBlurEnabled,
       'cardOpacity': cardOpacity,
       'cardBlurSigma': cardBlurSigma,
@@ -524,6 +549,11 @@ class UserProfilePrefs {
           (json['transitAlertBufferMinutes'] as num?)?.toInt() ?? 5,
       transitNotificationsEnabled: json['transitNotificationsEnabled'] != false,
       transitCardEnabled: json['transitCardEnabled'] == true,
+      walkHomeToBusMinutes: (json['walkHomeToBusMinutes'] as num?)?.toInt().clamp(0, 60) ?? 8,
+      walkHomeToTrainMinutes: (json['walkHomeToTrainMinutes'] as num?)?.toInt().clamp(0, 60) ?? 12,
+      walkSchoolToBusMinutes: (json['walkSchoolToBusMinutes'] as num?)?.toInt().clamp(0, 60) ?? 5,
+      walkSchoolToTrainMinutes: (json['walkSchoolToTrainMinutes'] as num?)?.toInt().clamp(0, 60) ?? 15,
+      calcAllow200Weight: json['calcAllow200Weight'] == true,
       cardBlurEnabled: json['cardBlurEnabled'] == true,
       cardOpacity: ((json['cardOpacity'] as num?)?.toDouble() ?? 0.9).clamp(0.6, 1.0),
       cardBlurSigma: ((json['cardBlurSigma'] as num?)?.toDouble() ?? 4.0).clamp(2.0, 8.0),
@@ -653,6 +683,11 @@ class TokenStorageService {
   static const _keyTransitAlertBufferMinutes = 'kreta_transit_alert_buffer_min';
   static const _keyTransitNotificationsEnabled = 'kreta_transit_notifs_enabled';
   static const _keyTransitCardEnabled = 'kreta_transit_card_enabled';
+  static const _keyWalkHomeToBusMinutes = 'kreta_walk_home_bus';
+  static const _keyWalkHomeToTrainMinutes = 'kreta_walk_home_train';
+  static const _keyWalkSchoolToBusMinutes = 'kreta_walk_school_bus';
+  static const _keyWalkSchoolToTrainMinutes = 'kreta_walk_school_train';
+  static const _keyCalcAllow200Weight = 'kreta_calc_allow_200';
   static const _keyCardBlurEnabled = 'kreta_card_blur_enabled';
   static const _keyCardOpacity = 'kreta_card_opacity';
   static const _keyCardBlurSigma = 'kreta_card_blur_sigma';
@@ -955,6 +990,11 @@ class TokenStorageService {
       transitAlertBufferMinutes: transitAlertBufferMinutes,
       transitNotificationsEnabled: transitNotificationsEnabled,
       transitCardEnabled: values[_keyTransitCardEnabled] == 'true',
+      walkHomeToBusMinutes: (int.tryParse(values[_keyWalkHomeToBusMinutes] ?? '') ?? 8).clamp(0, 60),
+      walkHomeToTrainMinutes: (int.tryParse(values[_keyWalkHomeToTrainMinutes] ?? '') ?? 12).clamp(0, 60),
+      walkSchoolToBusMinutes: (int.tryParse(values[_keyWalkSchoolToBusMinutes] ?? '') ?? 5).clamp(0, 60),
+      walkSchoolToTrainMinutes: (int.tryParse(values[_keyWalkSchoolToTrainMinutes] ?? '') ?? 15).clamp(0, 60),
+      calcAllow200Weight: values[_keyCalcAllow200Weight] == 'true',
       cardBlurEnabled: values[_keyCardBlurEnabled] == 'true',
       cardOpacity:
           (double.tryParse(values[_keyCardOpacity] ?? '') ?? 0.9).clamp(0.6, 1.0),
@@ -1086,6 +1126,11 @@ class TokenStorageService {
         key: _keyTransitNotificationsEnabled,
         value: prefs.transitNotificationsEnabled.toString(),
       ),
+      _storage.write(key: _keyWalkHomeToBusMinutes, value: prefs.walkHomeToBusMinutes.toString()),
+      _storage.write(key: _keyWalkHomeToTrainMinutes, value: prefs.walkHomeToTrainMinutes.toString()),
+      _storage.write(key: _keyWalkSchoolToBusMinutes, value: prefs.walkSchoolToBusMinutes.toString()),
+      _storage.write(key: _keyWalkSchoolToTrainMinutes, value: prefs.walkSchoolToTrainMinutes.toString()),
+      _storage.write(key: _keyCalcAllow200Weight, value: prefs.calcAllow200Weight.toString()),
       _storage.write(
         key: _keyTransitCardEnabled,
         value: prefs.transitCardEnabled.toString(),

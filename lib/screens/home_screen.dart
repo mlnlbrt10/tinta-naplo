@@ -281,6 +281,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 widget.prefs.transitAllowLocalBus ||
             oldWidget.prefs.walkingDurationMinutes !=
                 widget.prefs.walkingDurationMinutes ||
+            oldWidget.prefs.walkHomeToBusMinutes !=
+                widget.prefs.walkHomeToBusMinutes ||
+            oldWidget.prefs.walkHomeToTrainMinutes !=
+                widget.prefs.walkHomeToTrainMinutes ||
+            oldWidget.prefs.walkSchoolToBusMinutes !=
+                widget.prefs.walkSchoolToBusMinutes ||
+            oldWidget.prefs.walkSchoolToTrainMinutes !=
+                widget.prefs.walkSchoolToTrainMinutes ||
             oldWidget.prefs.walkingSpeedKmh != widget.prefs.walkingSpeedKmh)) {
       _refreshCommute();
     }
@@ -800,19 +808,15 @@ class _HomeScreenState extends State<HomeScreen> {
           : () => _selectBottomTab(2),
       child: ChristmasSnowCap(
         enabled: widget.prefs.christmasModeEnabled,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 240),
-          curve: Curves.easeOutCubic,
+        child: SoftGlassCard(
+          prefs: widget.prefs,
           padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: theme.cardTheme.color,
-            borderRadius: OledTheme.largeRadius,
-            border: Border.all(
-              color: currentOrNext != null
-                  ? scheme.primary.withValues(alpha: 0.65)
-                  : theme.dividerColor,
-              width: currentOrNext != null ? 1.5 : 1.0,
-            ),
+          borderRadius: OledTheme.largeRadius,
+          border: Border.all(
+            color: currentOrNext != null
+                ? scheme.primary.withValues(alpha: 0.65)
+                : theme.dividerColor,
+            width: currentOrNext != null ? 1.5 : 1.0,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1304,13 +1308,10 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         child: ChristmasSnowCap(
           enabled: widget.prefs.christmasModeEnabled,
-          child: Container(
+          child: SoftGlassCard(
+            prefs: widget.prefs,
             padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: theme.cardTheme.color,
-              borderRadius: OledTheme.cardRadius,
-              border: Border.all(color: theme.dividerColor),
-            ),
+            borderRadius: BorderRadius.circular(16),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [

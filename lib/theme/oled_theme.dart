@@ -135,21 +135,25 @@ class OledTheme {
     final Color elevatedBg;
     final Color borderColor;
 
+    final isNavy = isOled && prefs.backgroundPreset == 'brand_navy';
     if (isOled) {
-      scaffoldBg = pureBlack;
-      cardBg = prefs.uwuModeEnabled ? const Color(0xFF19121B) : surfaceDark;
-      elevatedBg =
-          prefs.uwuModeEnabled ? const Color(0xFF241928) : surfaceElevated;
+      scaffoldBg = isNavy ? const Color(0xFF0B1E28) : pureBlack;
+      cardBg = prefs.uwuModeEnabled
+          ? const Color(0xFF19121B)
+          : (isNavy ? const Color(0xFF112A37) : surfaceDark);
+      elevatedBg = prefs.uwuModeEnabled
+          ? const Color(0xFF241928)
+          : (isNavy ? const Color(0xFF173545) : surfaceElevated);
       borderColor = prefs.uwuModeEnabled
           ? uwuPastelPink.withValues(alpha: 0.42)
           : borderSubtle;
       baseScheme = baseScheme.copyWith(
-        surface: pureBlack,
+        surface: scaffoldBg,
         onSurface: Colors.white,
         primary: prefs.uwuModeEnabled ? uwuPastelPink : baseScheme.primary,
         secondary:
             prefs.uwuModeEnabled ? uwuPastelLavender : baseScheme.secondary,
-        surfaceContainerLowest: pureBlack,
+        surfaceContainerLowest: scaffoldBg,
         surfaceContainerLow: cardBg,
         surfaceContainer: cardBg,
         surfaceContainerHigh: elevatedBg,

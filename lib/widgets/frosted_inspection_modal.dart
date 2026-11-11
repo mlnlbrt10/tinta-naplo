@@ -281,10 +281,12 @@ Future<void> showFrostedModal({
                                               color: accentColor,
                                             ),
                                             const SizedBox(width: 10),
+                                            const SizedBox(width: 4),
                                             SizedBox(
-                                              width: 118,
+                                              width: 104,
                                               child: Text(
                                                 r.label,
+                                                softWrap: true,
                                                 style: TextStyle(
                                                   fontSize: 13,
                                                   color: scheme.onSurface
@@ -292,9 +294,11 @@ Future<void> showFrostedModal({
                                                 ),
                                               ),
                                             ),
+                                            const SizedBox(width: 8),
                                             Expanded(
                                               child: Text(
                                                 r.value,
+                                                textAlign: TextAlign.right,
                                                 style: TextStyle(
                                                   fontSize: 13,
                                                   fontWeight: FontWeight.w700,
@@ -621,13 +625,13 @@ Future<void> showTestInspectionModal(
       ),
       FrostedDetailRow(
         icon: Icons.event_rounded,
-        label: 'Számonkérés napja',
+        label: 'Számonkérés\nnapja',
         value:
             '$weekdayLabel (${test.lessonNumber}. óra)\n${dayFormat.format(testLocal)}',
       ),
       FrostedDetailRow(
         icon: Icons.history_edu_rounded,
-        label: 'Bejelentés dátuma',
+        label: 'Bejelentés\ndátuma',
         value: dayFormat.format(test.reportDate.toLocal()),
       ),
       FrostedDetailRow(

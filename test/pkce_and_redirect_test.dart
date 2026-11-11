@@ -336,16 +336,31 @@ void main() {
     );
     expect(recsFor400, isEmpty);
 
-    // Target 4.50 requires lifting cumulative average -> prioritizes 200% subject
-    final recsFor450 = SubjectGradeSummary.buildScholarshipRecommendations(
+    // Default (100% weight) target 4.50 -> calculates using strictly 100% grades
+    final recsFor450Default = SubjectGradeSummary.buildScholarshipRecommendations(
       allGrades: allGrades,
       subjects: subjects,
       targetAverage: 4.50,
     );
-    expect(recsFor450, isNotEmpty);
-    expect(recsFor450.first.steps.first.weight, 200);
-    expect(recsFor450.first.steps.first.subjectName, 'Szakmai tantárgy (200%)');
-    expect(recsFor450.first.resultingOverallAverage, greaterThanOrEqualTo(4.50));
+    expect(recsFor450Default, isNotEmpty);
+    expect(recsFor450Default.first.recommendedWeight, 100);
+    expect(recsFor450Default.first.subjectName, 'Szakmai tantárgy (200%)');
+    expect(recsFor450Default.first.explanation, contains('->'));
+    expect(
+      recsFor450Default.first.resultingOverallAverage,
+      greaterThanOrEqualTo(4.50),
+    );
+
+    // When 200% témazáró is enabled -> uses 200% weight grades
+    final recsFor450With200 = SubjectGradeSummary.buildScholarshipRecommendations(
+      allGrades: allGrades,
+      subjects: subjects,
+      targetAverage: 4.50,
+      allow200Weight: true,
+    );
+    expect(recsFor450With200, isNotEmpty);
+    expect(recsFor450With200.first.recommendedWeight, 200);
+    expect(recsFor450With200.first.subjectName, 'Szakmai tantárgy (200%)');
   });
 
   test('Timetable filterLessonsForDisplay synthesizes inactive 1st period when school starts later', () {

@@ -10,6 +10,7 @@ import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 import '../widgets/frosted_inspection_modal.dart';
+import '../widgets/glass_card.dart';
 
 /// Returns true if [lesson] is marked as cancelled (`Allapot.Nev == "elmaradt"`).
 bool isLessonCancelled(Lesson lesson) {
@@ -849,16 +850,15 @@ class _TimetableScreenState extends State<TimetableScreen> {
         final isToday = _isSameDay(day, DateTime.now());
 
         return Expanded(
-          child: Container(
-            margin: EdgeInsets.only(right: i < visibleDaysCount - 1 ? 6 : 0),
+          child: Padding(
+            padding: EdgeInsets.only(right: i < visibleDaysCount - 1 ? 6 : 0),
+            child: SoftGlassCard(
+            prefs: widget.prefs,
             padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: theme.cardTheme.color,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: isToday ? scheme.primary : theme.dividerColor,
-                width: isToday ? 1.4 : 1.0,
-              ),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isToday ? scheme.primary : theme.dividerColor,
+              width: isToday ? 1.4 : 1.0,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -929,6 +929,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
                   ),
               ],
             ),
+          ),
           ),
         );
       }),
@@ -1133,22 +1134,21 @@ Widget buildOledLessonCard(
       ),
       child: ChristmasSnowCap(
         enabled: prefs?.christmasModeEnabled == true,
-        child: Container(
+        child: SoftGlassCard(
+          prefs: prefs ?? const UserProfilePrefs(),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          decoration: BoxDecoration(
+          color: isPlaceholder
+              ? theme.cardTheme.color?.withValues(alpha: 0.55)
+              : theme.cardTheme.color,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
             color: isPlaceholder
-                ? theme.cardTheme.color?.withValues(alpha: 0.55)
-                : theme.cardTheme.color,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: isPlaceholder
-                  ? theme.dividerColor.withValues(alpha: 0.45)
-                  : isCancelled
-                      ? const Color(0xFFC62828).withValues(alpha: 0.75)
-                      : hasSubstitute
-                          ? const Color(0xFFF9A825).withValues(alpha: 0.65)
-                          : theme.dividerColor,
-            ),
+                ? theme.dividerColor.withValues(alpha: 0.45)
+                : isCancelled
+                    ? const Color(0xFFC62828).withValues(alpha: 0.75)
+                    : hasSubstitute
+                        ? const Color(0xFFF9A825).withValues(alpha: 0.65)
+                        : theme.dividerColor,
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,

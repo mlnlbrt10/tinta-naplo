@@ -20,7 +20,7 @@ class SoftGlassCard extends StatelessWidget {
     required this.prefs,
     required this.child,
     this.padding = EdgeInsets.zero,
-    this.borderRadius = const BorderRadius.all(Radius.circular(18)),
+    this.borderRadius = const BorderRadius.all(Radius.circular(16)),
     this.color,
     this.border,
   });
@@ -28,14 +28,15 @@ class SoftGlassCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final base = color ?? theme.cardTheme.color ?? theme.colorScheme.surface;
+    final surfaceColor =
+        color ?? theme.cardTheme.color ?? theme.colorScheme.surface;
     final borderSide = border ?? Border.all(color: theme.dividerColor);
 
     if (!prefs.cardBlurEnabled) {
       return Container(
         padding: padding,
         decoration: BoxDecoration(
-          color: base,
+          color: surfaceColor,
           borderRadius: borderRadius,
           border: borderSide,
         ),
@@ -43,15 +44,17 @@ class SoftGlassCard extends StatelessWidget {
       );
     }
 
-    final sigma = prefs.cardBlurSigma.clamp(2.0, 8.0);
+    final blurSigma = prefs.cardBlurSigma.clamp(2.0, 8.0);
+    final cardOpacity = prefs.cardOpacity.clamp(0.60, 0.85);
+
     return ClipRRect(
       borderRadius: borderRadius,
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
-            color: base.withValues(alpha: prefs.cardOpacity.clamp(0.6, 1.0)),
+            color: surfaceColor.withValues(alpha: cardOpacity),
             borderRadius: borderRadius,
             border: borderSide,
           ),

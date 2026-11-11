@@ -19,7 +19,7 @@ enum MenetrendTransportMode {
       case MenetrendTransportMode.rail:
         return 'Vonat (MÁV-START)';
       case MenetrendTransportMode.coach:
-        return 'Távolsági busz (Volánbusz)';
+        return 'Helyközi / Távolsági busz (Volánbusz)';
       case MenetrendTransportMode.localBus:
         return 'Helyi járat';
       case MenetrendTransportMode.walk:
@@ -65,6 +65,27 @@ class MenetrendStop {
   });
 }
 
+/// One vehicle segment of a (possibly multi-leg) trip.
+class MenetrendLeg {
+  final String routeShortName;
+  final MenetrendTransportMode mode;
+  final String fromName;
+  final String toName;
+  final DateTime departure;
+  final DateTime arrival;
+  final String? platformCode;
+
+  const MenetrendLeg({
+    required this.routeShortName,
+    required this.mode,
+    required this.fromName,
+    required this.toName,
+    required this.departure,
+    required this.arrival,
+    this.platformCode,
+  });
+}
+
 class MenetrendTripOption {
   final String routeShortName;
   final String routeLongName;
@@ -81,6 +102,7 @@ class MenetrendTripOption {
   final int walkToStationMinutes;
   final int walkToDestinationMinutes;
   final bool isFavorite;
+  final List<MenetrendLeg> legs;
 
   const MenetrendTripOption({
     required this.routeShortName,
@@ -98,6 +120,7 @@ class MenetrendTripOption {
     required this.walkToStationMinutes,
     this.walkToDestinationMinutes = 0,
     this.isFavorite = false,
+    this.legs = const [],
   });
 
   DateTime get effectiveDeparture =>
@@ -146,6 +169,7 @@ class MenetrendTripOption {
       walkToStationMinutes: walkToStationMinutes ?? this.walkToStationMinutes,
       walkToDestinationMinutes: walkToDestinationMinutes,
       isFavorite: isFavorite ?? this.isFavorite,
+      legs: legs,
     );
   }
 }
@@ -285,7 +309,8 @@ class MenetrendService {
           now.isAfter(earliestLeaveTime) ? now : earliestLeaveTime;
       final departingAfter = allTrips.where((t) {
         final walkLeave =
-            t.effectiveDeparture.subtract(Duration(minutes: effectiveWalk));
+            t.effectiveDeparture
+                .subtract(Duration(minutes: t.walkToStationMinutes));
         return !walkLeave
             .isBefore(referenceTime.subtract(const Duration(minutes: 5)));
       }).toList();
@@ -299,7 +324,7 @@ class MenetrendService {
       targetPeriodNumber: firstLesson?.lessonNumber ?? 1,
       recommendedTrip: selectedTrip,
       alternatives: allTrips,
-      effectiveWalkMinutes: effectiveWalk,
+      effectiveWalkMinutes: selectedTrip.walkToStationMinutes,
       alertBufferMinutes: prefs.transitAlertBufferMinutes,
       now: now,
     );
@@ -366,12 +391,8 @@ class MenetrendService {
     if (mode == 'RAIL' || mode == 'SUBWAY' || mode == 'TRAM') {
       return MenetrendTransportMode.rail;
     }
-    final agency =
-        (leg['route']?['agency']?['name'] ?? '').toString().toLowerCase();
-    if (agency.contains('volán') || agency.contains('volan')) {
-      return MenetrendTransportMode.coach;
-    }
-    return MenetrendTransportMode.localBus;
+    // Regional (Volánbusz) buses, e.g. 1215 / 8093, are intercity coaches.
+    return MenetrendTransportMode.coach;
   }
 
   /// Fetches the real commute from the transit service (MÁVPlusz OTP2).
@@ -475,7 +496,9 @@ class MenetrendService {
             const [];
         if (legs.isEmpty) continue;
         final firstLeg = legs.first;
+        final lastLeg = legs.last;
         final mode = _modeFor(firstLeg);
+        final lastMode = _modeFor(lastLeg);
         if (mode == MenetrendTransportMode.rail && !prefs.transitAllowTrain) {
           continue;
         }
@@ -486,11 +509,27 @@ class MenetrendService {
             !prefs.transitAllowLocalBus) {
           continue;
         }
-        final shortNames = legs
-            .map((l) => (l['route']?['shortName'] ??
-                    l['route']?['longName'] ??
-                    '')
-                .toString())
+        String? platformOf(Map leg, String key, MenetrendTransportMode m) =>
+            m == MenetrendTransportMode.rail
+                ? (leg[key]?['stop']?['platformCode'])?.toString()
+                : null;
+        final tripLegs = <MenetrendLeg>[
+          for (final l in legs)
+            MenetrendLeg(
+              routeShortName: (l['route']?['shortName'] ??
+                      l['route']?['longName'] ??
+                      '')
+                  .toString(),
+              mode: _modeFor(l),
+              fromName: (l['from']?['name'] ?? '').toString(),
+              toName: (l['to']?['name'] ?? '').toString(),
+              departure: ms(l['startTime']),
+              arrival: ms(l['endTime']),
+              platformCode: platformOf(l, 'from', _modeFor(l)),
+            ),
+        ];
+        final shortNames = tripLegs
+            .map((l) => l.routeShortName)
             .where((n) => n.isNotEmpty)
             .join(' → ');
         final stops = <MenetrendStop>[
@@ -499,6 +538,26 @@ class MenetrendService {
               MenetrendStop(name: st['name'].toString()),
         ];
         final delaySec = (firstLeg['departureDelay'] as num?)?.toInt() ?? 0;
+        final fromTrain = mode == MenetrendTransportMode.rail;
+        final toTrain = lastMode == MenetrendTransportMode.rail;
+        final walkFromBase = isMorning
+            ? (fromTrain
+                ? prefs.walkHomeToTrainMinutes
+                : prefs.walkHomeToBusMinutes)
+            : (fromTrain
+                ? prefs.walkSchoolToTrainMinutes
+                : prefs.walkSchoolToBusMinutes);
+        final walkToBase = isMorning
+            ? (toTrain
+                ? prefs.walkSchoolToTrainMinutes
+                : prefs.walkSchoolToBusMinutes)
+            : (toTrain
+                ? prefs.walkHomeToTrainMinutes
+                : prefs.walkHomeToBusMinutes);
+        int scaled(int base) => calculateEffectiveWalkingMinutes(
+              baseWalkingMinutes: base,
+              walkingSpeedKmh: prefs.walkingSpeedKmh,
+            );
         trips.add(
           MenetrendTripOption(
             routeShortName: shortNames.isEmpty ? 'Járat' : shortNames,
@@ -511,13 +570,12 @@ class MenetrendService {
             scheduledDeparture: ms(firstLeg['startTime']),
             scheduledArrival: ms(it['endTime']),
             delayMinutes: (delaySec / 60).round().clamp(0, 180),
-            platformCode:
-                firstLeg['from']?['stop']?['platformCode']?.toString(),
-            arrivalPlatformCode:
-                (legs.last['to']?['stop']?['platformCode'])?.toString(),
+            platformCode: platformOf(firstLeg, 'from', mode),
+            arrivalPlatformCode: platformOf(lastLeg, 'to', lastMode),
             intermediateStops: stops,
-            walkToStationMinutes: effectiveWalk,
-            walkToDestinationMinutes: 0,
+            walkToStationMinutes: scaled(walkFromBase),
+            walkToDestinationMinutes: scaled(walkToBase),
+            legs: tripLegs,
           ),
         );
       }
@@ -626,10 +684,36 @@ class MenetrendService {
       final launched = await _transitChannel.invokeMethod<bool>(
         'launchMenetrendGo',
         {
-          'tab': 'search',
-          if (trip != null) 'fromStation': trip.departureStation,
-          if (trip != null) 'toStation': trip.arrivalStation,
-          if (trip != null) 'routeShortName': trip.routeShortName,
+          'tab': trip != null ? 'trip' : 'search',
+          if (trip != null) ...{
+            'from': trip.departureStation,
+            'to': trip.arrivalStation,
+            'origin': trip.departureStation,
+            'destination': trip.arrivalStation,
+            'fromStation': trip.departureStation,
+            'toStation': trip.arrivalStation,
+            'routeShortName': trip.routeShortName,
+            'time': DateFormat('HH:mm').format(trip.scheduledDeparture),
+            'departureTime': DateFormat('HH:mm').format(trip.scheduledDeparture),
+            'date': DateFormat('yyyy-MM-dd').format(trip.scheduledDeparture),
+            'departureDate':
+                DateFormat('yyyy-MM-dd').format(trip.scheduledDeparture),
+            'departureIso': trip.scheduledDeparture.toIso8601String(),
+            'departureEpochMs':
+                trip.scheduledDeparture.millisecondsSinceEpoch.toString(),
+            'autoSearch': 'true',
+            'deepLinkUri': Uri(
+              scheme: 'menetrendgo',
+              host: 'trip',
+              queryParameters: {
+                'from': trip.departureStation,
+                'to': trip.arrivalStation,
+                'time': DateFormat('HH:mm').format(trip.scheduledDeparture),
+                'date': DateFormat('yyyy-MM-dd').format(trip.scheduledDeparture),
+                'route': trip.routeShortName,
+              },
+            ).toString(),
+          },
         },
       );
       if (launched == true) return;

@@ -300,9 +300,26 @@ open class MainActivity : FlutterActivity() {
             "launchMenetrendGo" -> {
                 try {
                     val pm = applicationContext.packageManager
+                    val args = call.arguments as? Map<*, *>
+                    val deepLinkStr = args?.get("deepLinkUri") as? String
+                    if (!deepLinkStr.isNullOrBlank()) {
+                        val deepIntent = Intent(Intent.ACTION_VIEW, Uri.parse(deepLinkStr)).apply {
+                            setPackage(MENETRENDGO_PACKAGE)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            args.forEach { (k, v) ->
+                                if (k is String && v != null) {
+                                    putExtra(k, v.toString())
+                                }
+                            }
+                        }
+                        if (deepIntent.resolveActivity(pm) != null) {
+                            startActivity(deepIntent)
+                            result.success(true)
+                            return@setMethodCallHandler
+                        }
+                    }
                     val launchIntent = pm.getLaunchIntentForPackage(MENETRENDGO_PACKAGE)
                     if (launchIntent != null) {
-                        val args = call.arguments as? Map<*, *>
                         args?.forEach { (k, v) ->
                             if (k is String && v != null) {
                                 launchIntent.putExtra(k, v.toString())
