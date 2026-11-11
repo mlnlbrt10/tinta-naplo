@@ -75,12 +75,12 @@ class GitHubUpdaterService {
   static const String repoUrl = 'https://github.com/mlnlbrt10/reKRETA';
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/mlnlbrt10/reKRETA/releases/latest';
-  static const String fallbackAppVersion = '1.0.2';
-  static const String fallbackBuildNumber = '2';
+  static const String fallbackAppVersion = '1.1.0';
+  static const String fallbackBuildNumber = '3';
 
   static bool _hasCheckedOnStartup = false;
 
-  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.0.2`.
+  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.1.0`.
   static Future<String> fetchLatestReleaseTag({http.Client? httpClient}) async {
     final client = httpClient ?? http.Client();
     try {

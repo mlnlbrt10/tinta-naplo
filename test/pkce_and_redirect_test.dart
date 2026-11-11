@@ -128,12 +128,14 @@ void main() {
   });
 
   test('GitHubUpdaterService compares semantic versions and build tags accurately', () {
+    expect(GitHubUpdaterService.fallbackAppVersion, '1.1.0');
+    expect(GitHubUpdaterService.fallbackBuildNumber, '3');
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.0.2', 'v1.0.3'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.1.0', 'v1.1.1'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.0.2', 'v1.0.2'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.1.0', 'v1.1.0'),
       isFalse,
     );
     expect(

@@ -10,7 +10,7 @@ import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 
 /// Dedicated "Az alkalmazásról" (About App / Rendszer & Névjegy) screen with:
-/// - App icon (`AppBrandIconBadge`), name ('reKRETA'), semantic version ('v1.0.2+2'),
+/// - App icon (`AppBrandIconBadge`), name ('reKRETA'), semantic version ('v1.1.0+3'),
 ///   and developer credits.
 /// - Direct link to `https://github.com/mlnlbrt10/reKRETA`.
 /// - Manual "Frissítések keresése" button (GitHub Releases OTA updater).
