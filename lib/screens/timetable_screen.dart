@@ -165,7 +165,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
   bool _isLoading = false;
   String? _error;
   List<Lesson> _weekLessons = const [];
-  int _daySwitchEpoch = 0;
 
   final DateFormat _timeFormat = DateFormat('HH:mm');
   final DateFormat _dayFormat = DateFormat('MM. dd.');
@@ -229,7 +228,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
     if (_isWeeklyMode == weekly) return;
     setState(() {
       _isWeeklyMode = weekly;
-      _daySwitchEpoch++;
     });
     widget.onImmersiveWeeklyModeChanged?.call(weekly && widget.isActiveTab);
     if (!weekly) {
@@ -251,8 +249,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
     if (!nextVal && _selectedDate.weekday > 5) {
       setState(() {
         _selectedDate = _mondayOf(_selectedDate);
-        _daySwitchEpoch++;
-      });
+        });
       if (_pageController.hasClients) {
         _pageController.jumpToPage(0);
       }
@@ -311,7 +308,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
     HapticFeedback.lightImpact();
     setState(() {
       _selectedDate = _selectedDate.add(Duration(days: 7 * deltaWeeks));
-      _daySwitchEpoch++;
     });
     _loadCurrentWeek(showFullSpinner: true);
   }
@@ -339,7 +335,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
 
     setState(() {
       _selectedDate = target;
-      _daySwitchEpoch++;
     });
     if (_pageController.hasClients) {
       _pageController.animateToPage(
@@ -364,7 +359,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
     final pageIdx = (today.weekday - 1).clamp(0, _visibleDaysCount - 1);
     setState(() {
       _selectedDate = today;
-      _daySwitchEpoch++;
     });
     if (_pageController.hasClients) {
       _pageController.animateToPage(
@@ -384,7 +378,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
     HapticFeedback.selectionClick();
     setState(() {
       _selectedDate = targetDay;
-      _daySwitchEpoch++;
     });
     if (_pageController.hasClients) {
       _isAnimatingPage = true;
@@ -404,7 +397,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
     HapticFeedback.selectionClick();
     setState(() {
       _selectedDate = swipedDay;
-      _daySwitchEpoch++;
     });
   }
 
@@ -485,6 +477,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
                     )
                   : PageView.builder(
                       controller: _pageController,
+                      physics: const PageScrollPhysics(),
                       itemCount: visibleDaysCount,
                       onPageChanged: (idx) => _onPageSwiped(idx, monday),
                       itemBuilder: (context, pageIdx) {
@@ -500,6 +493,9 @@ class _TimetableScreenState extends State<TimetableScreen> {
                           ),
                         );
                       },
+                    ).staggeredEntrance(
+                      0,
+                      animationKey: ValueKey('tt-tab-${widget.entranceEpoch}'),
                     ),
         ),
       ],
@@ -772,7 +768,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
     );
 
     final dayName = _weekdayFullNames[(day.weekday - 1).clamp(0, 6)];
-    final combinedEpoch = '${widget.entranceEpoch}-$_daySwitchEpoch-${day.day}';
 
     return [
       Padding(
@@ -821,9 +816,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
             lesson,
             _timeFormat,
             prefs: widget.prefs,
-          ).staggeredEntrance(
-            idx,
-            animationKey: ValueKey('tt-${lesson.uid}-$combinedEpoch'),
           );
         }),
     ];

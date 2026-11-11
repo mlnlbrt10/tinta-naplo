@@ -553,12 +553,12 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildMinimalistFloatingDock(ThemeData theme, ColorScheme scheme) {
     final isDark = theme.brightness == Brightness.dark;
     final dockColor = isDark
-        ? const Color(0xFF121212).withValues(alpha: 0.90)
-        : scheme.surface.withValues(alpha: 0.92);
+        ? const Color(0xFF14181E).withValues(alpha: 0.46)
+        : scheme.surface.withValues(alpha: 0.52);
     final borderColor = isDark
         ? (widget.prefs.uwuModeEnabled
             ? OledTheme.uwuPastelPink.withValues(alpha: 0.45)
-            : const Color(0xFF262626))
+            : Colors.white.withValues(alpha: 0.15))
         : theme.dividerColor;
 
     const tabs = <({
@@ -595,7 +595,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(32),
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 4.5, sigmaY: 4.5),
+            filter: ImageFilter.blur(sigmaX: 11.5, sigmaY: 11.5),
             child: Container(
               height: 62,
               decoration: BoxDecoration(

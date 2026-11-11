@@ -151,7 +151,7 @@ class MenetrendHeroCard extends StatelessWidget {
           type: MaterialType.transparency,
           child: Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: [
@@ -254,44 +254,48 @@ class MenetrendHeroCard extends StatelessWidget {
                     ),
                   ),
                 ],
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: primary.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        trip.routeShortName,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w900,
-                          color: primary,
+                    if (trip.legs.length <= 1) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: primary.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          trip.routeShortName,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w900,
+                            color: primary,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
+                      const SizedBox(width: 10),
+                    ],
                     Expanded(
+                      flex: 5,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             '${trip.departureStation} → ${trip.arrivalStation}',
-                            maxLines: 1,
+                            maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              fontSize: 15,
+                              fontSize: 14.5,
+                              height: 1.2,
                               fontWeight: FontWeight.w800,
                               color: Colors.white,
                             ),
                           ),
-                          const SizedBox(height: 2),
+                          const SizedBox(height: 3),
                           Text(
                             evaluation.isMorningMode
                                 ? 'Séta indulás: $walkStartFormatted (${evaluation.effectiveWalkMinutes} p séta)${trip.platformCode != null ? " • ${trip.platformCode}" : ""}'
@@ -307,7 +311,7 @@ class MenetrendHeroCard extends StatelessWidget {
                         ],
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 10),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
@@ -335,17 +339,18 @@ class MenetrendHeroCard extends StatelessWidget {
                   const SizedBox(height: 10),
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
+                    physics: const BouncingScrollPhysics(),
                     child: Row(
                       children: [
                         for (var i = 0; i < trip.legs.length; i++) ...[
                           Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
+                              horizontal: 9,
+                              vertical: 5,
                             ),
                             decoration: BoxDecoration(
                               color: primary.withValues(alpha: 0.16),
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(10),
                               border: Border.all(
                                 color: primary.withValues(alpha: 0.35),
                               ),
@@ -358,12 +363,12 @@ class MenetrendHeroCard extends StatelessWidget {
                                   size: 13,
                                   color: primary,
                                 ),
-                                const SizedBox(width: 4),
+                                const SizedBox(width: 5),
                                 Text(
                                   '${i + 1}. szakasz: ${trip.legs[i].routeShortName} '
                                   '(${trip.legs[i].mode == MenetrendTransportMode.rail ? "vonat" : "busz"})',
                                   style: TextStyle(
-                                    fontSize: 11,
+                                    fontSize: 11.5,
                                     fontWeight: FontWeight.w800,
                                     color: primary,
                                   ),
@@ -373,7 +378,7 @@ class MenetrendHeroCard extends StatelessWidget {
                           ),
                           if (i < trip.legs.length - 1) ...[
                             const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 4),
+                              padding: EdgeInsets.symmetric(horizontal: 5),
                               child: Icon(
                                 Icons.arrow_forward_rounded,
                                 size: 13,
@@ -382,25 +387,29 @@ class MenetrendHeroCard extends StatelessWidget {
                             ),
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 3.5,
+                                horizontal: 8,
+                                vertical: 4,
                               ),
                               decoration: BoxDecoration(
                                 color: const Color(0xFFFFB300)
-                                    .withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(8),
+                                    .withValues(alpha: 0.16),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: const Color(0xFFFFB300)
+                                      .withValues(alpha: 0.38),
+                                ),
                               ),
                               child: Text(
                                 'Átszállás ${trip.legs[i + 1].departure.difference(trip.legs[i].arrival).inMinutes} p',
                                 style: const TextStyle(
-                                  fontSize: 10.5,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.w800,
                                   color: Color(0xFFFFB300),
                                 ),
                               ),
                             ),
                             const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 4),
+                              padding: EdgeInsets.symmetric(horizontal: 5),
                               child: Icon(
                                 Icons.arrow_forward_rounded,
                                 size: 13,
