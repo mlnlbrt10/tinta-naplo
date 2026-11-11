@@ -39,6 +39,8 @@ class SubjectGradeSummary {
   });
 
   String get heroId => subjectUid.isNotEmpty ? subjectUid : subjectName;
+  String get uniqueHeroTag =>
+      'subject_hero_${subjectUid.isNotEmpty ? subjectUid : subjectName}';
 
   /// Computes a weighted average across real [grades] and optional [ghostGrades].
   static double? computeWeightedAverage(
@@ -219,28 +221,32 @@ class _GradesScreenState extends State<GradesScreen> {
         widget.allGrades.where((g) => g.numericValue != null).length;
 
     return Scaffold(
-      floatingActionButton: TactileBounce(
-        onTap: () =>
-            setState(() => _showSimulatorPanel = !_showSimulatorPanel),
-        child: FloatingActionButton.extended(
-          onPressed: null,
-          backgroundColor: scheme.primary,
-          foregroundColor: scheme.onPrimary,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          icon: Icon(
-            _showSimulatorPanel
-                ? Icons.expand_less_rounded
-                : Icons.auto_fix_high_rounded,
-          ),
-          label: Text(
-            uwu(
-              _overallGhostGrades.isEmpty
-                  ? 'Szellemjegy számoló'
-                  : 'Szellemjegy (${_overallGhostGrades.length})',
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 84),
+        child: TactileBounce(
+          onTap: () =>
+              setState(() => _showSimulatorPanel = !_showSimulatorPanel),
+          child: FloatingActionButton.extended(
+            heroTag: null,
+            onPressed: null,
+            backgroundColor: scheme.primary,
+            foregroundColor: scheme.onPrimary,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
             ),
-            style: const TextStyle(fontWeight: FontWeight.w800),
+            icon: Icon(
+              _showSimulatorPanel
+                  ? Icons.expand_less_rounded
+                  : Icons.auto_fix_high_rounded,
+            ),
+            label: Text(
+              uwu(
+                _overallGhostGrades.isEmpty
+                    ? 'Szellemjegy számoló'
+                    : 'Szellemjegy (${_overallGhostGrades.length})',
+              ),
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
           ),
         ),
       ),
@@ -248,7 +254,7 @@ class _GradesScreenState extends State<GradesScreen> {
         onRefresh: widget.onRefresh,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 160),
           children: [
             _buildCumulativeAverageCard(
               theme,
@@ -675,8 +681,7 @@ class _GradesScreenState extends State<GradesScreen> {
         ? widget.prefs.roundingConfig.evaluateRoundedGrade(avg)
         : null;
 
-    final subjectHeroTag = 'subject-hero-${summary.heroId}';
-    final latestGradeHeroTag = 'grade-hero-${latest.uid}';
+    final subjectHeroTag = summary.uniqueHeroTag;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -774,7 +779,6 @@ class _GradesScreenState extends State<GradesScreen> {
                       context,
                       latest,
                       prefs: widget.prefs,
-                      heroTag: latestGradeHeroTag,
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
@@ -787,25 +791,19 @@ class _GradesScreenState extends State<GradesScreen> {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Hero(
-                          tag: latestGradeHeroTag,
-                          child: Container(
-                            width: 44,
-                            height: 44,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: latestColor,
-                              borderRadius: OledTheme.badgeRadius,
-                            ),
-                            child: Material(
-                              type: MaterialType.transparency,
-                              child: Text(
-                                latestBadgeText,
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
+                        Container(
+                          width: 44,
+                          height: 44,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: latestColor,
+                            borderRadius: OledTheme.badgeRadius,
+                          ),
+                          child: Text(
+                            latestBadgeText,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
                             ),
                           ),
                         ),
@@ -902,7 +900,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
       weightPercentage: 200,
     );
 
-    final subjectHeroTag = 'subject-hero-${widget.summary.heroId}';
+    final subjectHeroTag = widget.summary.uniqueHeroTag;
 
     return Scaffold(
       appBar: AppBar(
@@ -1212,7 +1210,6 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
         ? '${grade.weightPercentage}%'
         : '100%';
     final modeText = grade.mode?.description;
-    final detailHeroTag = 'detail-grade-hero-${grade.uid}';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -1222,7 +1219,6 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
           context,
           grade,
           prefs: widget.prefs,
-          heroTag: detailHeroTag,
         ),
         child: Container(
           padding: const EdgeInsets.all(16),
@@ -1234,25 +1230,19 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Hero(
-                tag: detailHeroTag,
-                child: Container(
-                  width: 48,
-                  height: 48,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: badgeColor,
-                    borderRadius: OledTheme.badgeRadius,
-                  ),
-                  child: Material(
-                    type: MaterialType.transparency,
-                    child: Text(
-                      badgeText,
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
+              Container(
+                width: 48,
+                height: 48,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: badgeColor,
+                  borderRadius: OledTheme.badgeRadius,
+                ),
+                child: Text(
+                  badgeText,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
               ),

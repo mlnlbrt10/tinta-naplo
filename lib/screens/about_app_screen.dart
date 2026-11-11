@@ -31,7 +31,7 @@ class AboutAppScreen extends StatefulWidget {
 
 class _AboutAppScreenState extends State<AboutAppScreen> {
   String _version = GitHubUpdaterService.fallbackAppVersion;
-  String _buildNumber = GitHubUpdaterService.fallbackBuildNumber;
+  String _displayTag = 'v${GitHubUpdaterService.fallbackAppVersion}';
   int _versionTapCount = 0;
   DateTime? _lastTapTime;
   bool _isCheckingUpdates = false;
@@ -52,11 +52,12 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
   }
 
   Future<void> _loadPackageVersion() async {
-    final (ver, build) = await GitHubUpdaterService.getAppVersionInfo();
+    final (ver, _) = await GitHubUpdaterService.getAppVersionInfo();
+    final remoteTag = await GitHubUpdaterService.fetchLatestReleaseTag();
     if (!mounted) return;
     setState(() {
       _version = ver;
-      _buildNumber = build;
+      _displayTag = remoteTag.isNotEmpty ? remoteTag : 'v$ver';
     });
   }
 
@@ -219,15 +220,7 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
               color: scheme.onSurface,
             ),
           ),
-          const SizedBox(height: 6),
-          Text(
-            uwu('Modern, 120Hz-es OLED E-Kréta kliens'),
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: scheme.onSurface.withValues(alpha: 0.68),
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           TactileBounce(
             onTap: _handleVersionTap,
             child: Container(
@@ -254,7 +247,7 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    'Verzió: v$_version (build $_buildNumber)',
+                    uwu('Naprakész ($_displayTag)'),
                     style: theme.textTheme.labelLarge?.copyWith(
                       color: scheme.primary,
                       fontWeight: FontWeight.w800,
@@ -411,7 +404,7 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
           ),
           const SizedBox(height: 12),
           _buildInfoRow(scheme, uwu('Fejlesztő'), 'Milán (mlnlbrt10)'),
-          _buildInfoRow(scheme, uwu('Verzió'), 'v$_version (+$_buildNumber)'),
+          _buildInfoRow(scheme, uwu('Verzió'), uwu('Naprakész ($_displayTag)')),
           _buildInfoRow(scheme, uwu('API motor'), 'kreta_api (Kréta v3 OAuth2 PKCE)'),
           _buildInfoRow(
             scheme,

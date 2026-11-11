@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -179,6 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     return Scaffold(
+      extendBody: true,
       appBar: AppBar(
         toolbarHeight: 68,
         title: Column(
@@ -205,67 +207,137 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: _isLoading && _data == null
           ? const Center(child: CircularProgressIndicator())
-          : IndexedStack(
-              index: _selectedIndex,
-              children: [
-                _buildHomeTab(theme, scheme),
-                GradesScreen(
-                  allGrades: _data?.allGrades ?? const <Grade>[],
-                  prefs: widget.prefs,
-                  onPrefsChanged: widget.onPrefsChanged,
-                  onRefresh: _loadDashboard,
-                  entranceEpoch: _tabSwitchEpoch,
-                ),
-                TimetableScreen(
-                  session: _session,
-                  kretaClient: widget.kretaClient,
-                  initialTodaysLessons:
-                      _data?.todaysLessons ?? const <Lesson>[],
-                  prefs: widget.prefs,
-                  onPrefsChanged: widget.onPrefsChanged,
-                  isActiveTab: _selectedIndex == 2,
-                  entranceEpoch: _tabSwitchEpoch,
-                ),
-                MoreScreen(
-                  session: _session,
-                  student: student,
-                  prefs: widget.prefs,
-                  onPrefsChanged: widget.onPrefsChanged,
-                  onLogout: widget.onLogout,
-                ),
-              ],
+          : AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, animation) {
+                final slide = Tween<Offset>(
+                  begin: const Offset(0.0, 0.025),
+                  end: Offset.zero,
+                ).animate(animation);
+                return FadeTransition(
+                  opacity: animation,
+                  child: SlideTransition(
+                    position: slide,
+                    child: child,
+                  ),
+                );
+              },
+              child: KeyedSubtree(
+                key: ValueKey<int>(_selectedIndex),
+                child: _buildActiveTabBody(theme, scheme, student),
+              ),
             ),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          border: Border(
-            top: BorderSide(color: theme.dividerColor, width: 1),
+      bottomNavigationBar: _buildFloatingDockNavBar(theme, scheme),
+    );
+  }
+
+  Widget _buildActiveTabBody(
+    ThemeData theme,
+    ColorScheme scheme,
+    Student? student,
+  ) {
+    switch (_selectedIndex) {
+      case 0:
+        return _buildHomeTab(theme, scheme);
+      case 1:
+        return GradesScreen(
+          allGrades: _data?.allGrades ?? const <Grade>[],
+          prefs: widget.prefs,
+          onPrefsChanged: widget.onPrefsChanged,
+          onRefresh: _loadDashboard,
+          entranceEpoch: _tabSwitchEpoch,
+        );
+      case 2:
+        return TimetableScreen(
+          session: _session,
+          kretaClient: widget.kretaClient,
+          initialTodaysLessons: _data?.todaysLessons ?? const <Lesson>[],
+          prefs: widget.prefs,
+          onPrefsChanged: widget.onPrefsChanged,
+          isActiveTab: _selectedIndex == 2,
+          entranceEpoch: _tabSwitchEpoch,
+        );
+      case 3:
+      default:
+        return MoreScreen(
+          session: _session,
+          student: student,
+          prefs: widget.prefs,
+          onPrefsChanged: widget.onPrefsChanged,
+          onLogout: widget.onLogout,
+        );
+    }
+  }
+
+  Widget _buildFloatingDockNavBar(ThemeData theme, ColorScheme scheme) {
+    final isDark = theme.brightness == Brightness.dark;
+    final dockColor = isDark
+        ? const Color(0xFF141414).withValues(alpha: 0.88)
+        : scheme.surface.withValues(alpha: 0.92);
+    final borderColor = isDark
+        ? (widget.prefs.uwuModeEnabled
+            ? OledTheme.uwuPastelPink.withValues(alpha: 0.45)
+            : const Color(0xFF262626))
+        : theme.dividerColor;
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(32),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+            child: Container(
+              decoration: BoxDecoration(
+                color: dockColor,
+                borderRadius: BorderRadius.circular(32),
+                border: Border.all(
+                  color: borderColor,
+                  width: 1.2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: isDark ? 0.55 : 0.14),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: NavigationBar(
+                height: 66,
+                backgroundColor: Colors.transparent,
+                surfaceTintColor: Colors.transparent,
+                elevation: 0,
+                selectedIndex: _selectedIndex,
+                onDestinationSelected: _selectBottomTab,
+                destinations: [
+                  NavigationDestination(
+                    icon: const Icon(Icons.home_outlined),
+                    selectedIcon: const Icon(Icons.home_rounded),
+                    label: uwu('Főoldal'),
+                  ),
+                  NavigationDestination(
+                    icon: const Icon(Icons.assignment_rounded),
+                    selectedIcon: const Icon(Icons.star_rounded),
+                    label: uwu('Jegyek'),
+                  ),
+                  NavigationDestination(
+                    icon: const Icon(Icons.calendar_today_rounded),
+                    selectedIcon: const Icon(Icons.calendar_month_rounded),
+                    label: uwu('Órarend'),
+                  ),
+                  NavigationDestination(
+                    icon: const Icon(Icons.menu_rounded),
+                    selectedIcon: const Icon(Icons.menu_rounded),
+                    label: uwu('Több'),
+                  ),
+                ],
+              ),
+            ),
           ),
-        ),
-        child: NavigationBar(
-          selectedIndex: _selectedIndex,
-          onDestinationSelected: _selectBottomTab,
-          destinations: [
-            NavigationDestination(
-              icon: const Icon(Icons.home_outlined),
-              selectedIcon: const Icon(Icons.home_rounded),
-              label: uwu('Főoldal'),
-            ),
-            NavigationDestination(
-              icon: const Icon(Icons.assignment_rounded),
-              selectedIcon: const Icon(Icons.star_rounded),
-              label: uwu('Jegyek'),
-            ),
-            NavigationDestination(
-              icon: const Icon(Icons.calendar_today_rounded),
-              selectedIcon: const Icon(Icons.calendar_month_rounded),
-              label: uwu('Órarend'),
-            ),
-            NavigationDestination(
-              icon: const Icon(Icons.menu_rounded),
-              selectedIcon: const Icon(Icons.menu_rounded),
-              label: uwu('Több'),
-            ),
-          ],
         ),
       ),
     );
@@ -280,7 +352,7 @@ class _HomeScreenState extends State<HomeScreen> {
       onRefresh: _loadDashboard,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
         children: [
           ExpandableProfileCard(
             student: student,
@@ -391,17 +463,12 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    final nextLessonHeroTag = currentOrNext != null
-        ? 'next-lesson-hero-${currentOrNext.uid}'
-        : null;
-
     return TactileBounce(
       pressedScale: 0.97,
       onTap: currentOrNext != null
           ? () => showLessonInspectionModal(
                 context,
                 currentOrNext!,
-                heroTag: nextLessonHeroTag,
               )
           : () => _selectBottomTab(2),
       child: AnimatedContainer(
@@ -512,27 +579,21 @@ class _HomeScreenState extends State<HomeScreen> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Hero(
-                    tag: nextLessonHeroTag!,
-                    child: Container(
-                      width: 52,
-                      height: 52,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: scheme.primary,
-                        borderRadius: OledTheme.badgeRadius,
-                      ),
-                      child: Material(
-                        type: MaterialType.transparency,
-                        child: Text(
-                          currentOrNext.lessonNumber != null
-                              ? '${currentOrNext.lessonNumber}.'
-                              : '•',
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            color: scheme.onPrimary,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
+                  Container(
+                    width: 52,
+                    height: 52,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: scheme.primary,
+                      borderRadius: OledTheme.badgeRadius,
+                    ),
+                    child: Text(
+                      currentOrNext.lessonNumber != null
+                          ? '${currentOrNext.lessonNumber}.'
+                          : '•',
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        color: scheme.onPrimary,
+                        fontWeight: FontWeight.w900,
                       ),
                     ),
                   ),
@@ -791,7 +852,6 @@ class _HomeScreenState extends State<HomeScreen> {
       if (grade.mode?.description.isNotEmpty == true) grade.mode!.description,
       if (grade.weightPercentage != null) '${grade.weightPercentage}%',
     ];
-    final heroTag = 'feed-grade-hero-${grade.uid}';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -801,7 +861,6 @@ class _HomeScreenState extends State<HomeScreen> {
           context,
           grade,
           prefs: widget.prefs,
-          heroTag: heroTag,
         ),
         child: Container(
           padding: const EdgeInsets.all(16),
@@ -813,25 +872,19 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Hero(
-                tag: heroTag,
-                child: Container(
-                  width: 48,
-                  height: 48,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: badgeColor,
-                    borderRadius: OledTheme.badgeRadius,
-                  ),
-                  child: Material(
-                    type: MaterialType.transparency,
-                    child: Text(
-                      badgeText,
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
+              Container(
+                width: 48,
+                height: 48,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: badgeColor,
+                  borderRadius: OledTheme.badgeRadius,
+                ),
+                child: Text(
+                  badgeText,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
               ),

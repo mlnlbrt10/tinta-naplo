@@ -209,14 +209,14 @@ class _TimetableScreenState extends State<TimetableScreen> {
       onRefresh: () => _loadCurrentWeek(showFullSpinner: false),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 112),
         children: [
           _buildTopControlsCard(theme, scheme, monday, endDay),
           if (!_isWeeklyMode) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             _buildWeekdaySelector(theme, scheme, monday, visibleDaysCount),
           ],
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
           if (_isLoading)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 48),
@@ -240,105 +240,131 @@ class _TimetableScreenState extends State<TimetableScreen> {
     DateTime endDay,
   ) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
         color: theme.cardTheme.color,
-        borderRadius: OledTheme.largeRadius,
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: theme.dividerColor),
       ),
-      child: Column(
+      child: Row(
         children: [
-          Row(
-            children: [
-              IconButton(
-                tooltip: 'Előző hét',
-                onPressed: () => _shiftWeek(-1),
-                icon: const Icon(Icons.chevron_left_rounded),
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: IconButton(
+              padding: EdgeInsets.zero,
+              iconSize: 20,
+              tooltip: 'Előző hét',
+              onPressed: () => _shiftWeek(-1),
+              icon: const Icon(Icons.chevron_left_rounded),
+            ),
+          ),
+          TactileBounce(
+            onTap: _jumpToToday,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(14),
               ),
-              Expanded(
-                child: Column(
-                  children: [
-                    Text(
-                      '${_dayFormat.format(monday)} – ${_dayFormat.format(endDay)}',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: scheme.onSurface,
-                      ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.date_range_rounded,
+                    size: 13,
+                    color: scheme.primary,
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    '${_dayFormat.format(monday)}–${_dayFormat.format(endDay)}',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                      color: scheme.onSurface,
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _fullDateFormat.format(_selectedDate),
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurface.withValues(alpha: 0.65),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              TextButton(
-                onPressed: _jumpToToday,
-                child: const Text('Ma'),
-              ),
-              IconButton(
-                tooltip: 'Következő hét',
-                onPressed: () => _shiftWeek(1),
-                icon: const Icon(Icons.chevron_right_rounded),
-              ),
-              PopupMenuButton<String>(
-                tooltip: 'Órarend beállítások',
-                icon: const Icon(Icons.tune_rounded),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                onSelected: (val) {
-                  if (val == 'toggle_weekends') {
-                    _toggleShowWeekends();
-                  }
-                },
-                itemBuilder: (context) => [
-                  CheckedPopupMenuItem<String>(
-                    value: 'toggle_weekends',
-                    checked: widget.prefs.showWeekends,
-                    child: const Text('Hétvége mutatása'),
                   ),
                 ],
               ),
-            ],
+            ),
           ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: _buildModeButton(
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: IconButton(
+              padding: EdgeInsets.zero,
+              iconSize: 20,
+              tooltip: 'Következő hét',
+              onPressed: () => _shiftWeek(1),
+              icon: const Icon(Icons.chevron_right_rounded),
+            ),
+          ),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: theme.dividerColor),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildCompactModeSegment(
                   scheme: scheme,
-                  dividerColor: theme.dividerColor,
-                  label: uwu('Napi nézet'),
+                  label: uwu('Napi'),
                   icon: Icons.calendar_today_rounded,
                   selected: !_isWeeklyMode,
                   onTap: () => _setWeeklyMode(false),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _buildModeButton(
+                _buildCompactModeSegment(
                   scheme: scheme,
-                  dividerColor: theme.dividerColor,
-                  label: uwu('Heti nézet (Fekvő)'),
+                  label: uwu('Heti'),
                   icon: Icons.screen_rotation_rounded,
                   selected: _isWeeklyMode,
                   onTap: () => _setWeeklyMode(true),
                 ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 2),
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: PopupMenuButton<String>(
+              padding: EdgeInsets.zero,
+              tooltip: 'Órarend beállítások',
+              icon: const Icon(Icons.tune_rounded, size: 18),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
               ),
-            ],
+              onSelected: (val) {
+                if (val == 'toggle_weekends') {
+                  _toggleShowWeekends();
+                } else if (val == 'jump_today') {
+                  _jumpToToday();
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem<String>(
+                  value: 'jump_today',
+                  child: Text('Ugrás a mai napra (Ma)'),
+                ),
+                CheckedPopupMenuItem<String>(
+                  value: 'toggle_weekends',
+                  checked: widget.prefs.showWeekends,
+                  child: const Text('Hétvége mutatása'),
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildModeButton({
+  Widget _buildCompactModeSegment({
     required ColorScheme scheme,
-    required Color dividerColor,
     required String label,
     required IconData icon,
     required bool selected,
@@ -347,41 +373,32 @@ class _TimetableScreenState extends State<TimetableScreen> {
     return TactileBounce(
       onTap: onTap,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+        duration: const Duration(milliseconds: 180),
         curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+        padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 9),
         decoration: BoxDecoration(
-          color: selected
-              ? scheme.primary.withValues(alpha: 0.22)
-              : scheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(
-            color: selected ? scheme.primary : dividerColor,
-            width: selected ? 1.5 : 1,
-          ),
+          color: selected ? scheme.primary : Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
               icon,
-              size: 18,
+              size: 13,
               color: selected
-                  ? scheme.primary
+                  ? scheme.onPrimary
                   : scheme.onSurface.withValues(alpha: 0.72),
             ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
-                  color: selected
-                      ? scheme.primary
-                      : scheme.onSurface.withValues(alpha: 0.72),
-                ),
-                overflow: TextOverflow.ellipsis,
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                color: selected
+                    ? scheme.onPrimary
+                    : scheme.onSurface.withValues(alpha: 0.78),
               ),
             ),
           ],
@@ -405,7 +422,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
 
         return Expanded(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 2.5),
             child: TactileBounce(
               onTap: () => setState(() {
                 _selectedDate = day;
@@ -414,38 +431,47 @@ class _TimetableScreenState extends State<TimetableScreen> {
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
                 curve: Curves.easeOutCubic,
-                padding: const EdgeInsets.symmetric(vertical: 10),
+                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
                 decoration: BoxDecoration(
                   color: selected ? scheme.primary : theme.cardTheme.color,
-                  borderRadius: BorderRadius.circular(22),
+                  borderRadius: BorderRadius.circular(14),
                   border: Border.all(
                     color: selected ? scheme.primary : theme.dividerColor,
                   ),
                 ),
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      _weekdayShortNames[idx],
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: selected ? scheme.onPrimary : scheme.onSurface,
-                      ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _weekdayShortNames[idx],
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color:
+                                selected ? scheme.onPrimary : scheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          '${day.day}.',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: selected
+                                ? scheme.onPrimary.withValues(alpha: 0.85)
+                                : scheme.onSurface.withValues(alpha: 0.65),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${day.day}.',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: selected
-                            ? scheme.onPrimary.withValues(alpha: 0.85)
-                            : scheme.onSurface.withValues(alpha: 0.65),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 3),
                     Container(
-                      width: 6,
-                      height: 6,
+                      width: 4,
+                      height: 4,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: dayLessonsCount > 0
@@ -631,7 +657,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
     final isCancelled = lesson.state.name.toLowerCase().contains('elmarad');
     final hasSub = lesson.substituteTeacher != null &&
         lesson.substituteTeacher!.trim().isNotEmpty;
-    final heroTag = 'wk-lesson-hero-${lesson.uid}';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -640,7 +665,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
         onTap: () => showLessonInspectionModal(
           context,
           lesson,
-          heroTag: heroTag,
         ),
         child: Container(
           padding: const EdgeInsets.all(10),
@@ -661,17 +685,11 @@ class _TimetableScreenState extends State<TimetableScreen> {
               Row(
                 children: [
                   if (lesson.lessonNumber != null)
-                    Hero(
-                      tag: heroTag,
-                      child: Material(
-                        type: MaterialType.transparency,
-                        child: Text(
-                          '${lesson.lessonNumber}. ',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.primary,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
+                    Text(
+                      '${lesson.lessonNumber}. ',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.primary,
+                        fontWeight: FontWeight.w900,
                       ),
                     ),
                   Expanded(
@@ -800,7 +818,6 @@ Widget buildOledLessonCard(
 
   final badgeTextColor =
       (isCancelled || hasSubstitute) ? Colors.black : scheme.onSurface;
-  final heroTag = '$heroPrefix-hero-${lesson.uid}';
 
   return Padding(
     padding: const EdgeInsets.only(bottom: 12),
@@ -809,7 +826,6 @@ Widget buildOledLessonCard(
       onTap: () => showLessonInspectionModal(
         context,
         lesson,
-        heroTag: heroTag,
       ),
       child: Container(
         padding: const EdgeInsets.all(16),
@@ -827,28 +843,22 @@ Widget buildOledLessonCard(
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Hero(
-              tag: heroTag,
-              child: Container(
-                width: 46,
-                height: 46,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: badgeBg,
-                  borderRadius: OledTheme.badgeRadius,
-                  border: Border.all(color: theme.dividerColor),
-                ),
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: Text(
-                    lesson.lessonNumber != null
-                        ? '${lesson.lessonNumber}.'
-                        : '•',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      color: badgeTextColor,
-                    ),
-                  ),
+            Container(
+              width: 46,
+              height: 46,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: badgeBg,
+                borderRadius: OledTheme.badgeRadius,
+                border: Border.all(color: theme.dividerColor),
+              ),
+              child: Text(
+                lesson.lessonNumber != null
+                    ? '${lesson.lessonNumber}.'
+                    : '•',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w900,
+                  color: badgeTextColor,
                 ),
               ),
             ),

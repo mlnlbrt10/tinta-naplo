@@ -129,7 +129,7 @@ class _MoreScreenState extends State<MoreScreen> {
     final rounding = widget.prefs.roundingConfig;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 36),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
       children: [
         _buildSectionCard(
           theme,
@@ -497,7 +497,7 @@ class _MoreScreenState extends State<MoreScreen> {
           icon: Icons.info_outline_rounded,
           title: uwu('Rendszer / Névjegy'),
           children: [
-            _buildRow(scheme, uwu('Alkalmazás'), 'reKRETA v1.0.0-alpha (+1)'),
+            _buildRow(scheme, uwu('Alkalmazás'), uwu('reKRETA • Naprakész (v1.0.1)')),
             _buildRow(scheme, uwu('GitHub'), 'github.com/mlnlbrt10/reKRETA'),
             const SizedBox(height: 12),
             TactileBounce(
