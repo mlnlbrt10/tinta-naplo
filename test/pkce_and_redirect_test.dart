@@ -242,7 +242,7 @@ void main() {
     );
   });
 
-  test('MenetrendService evaluates morning and afternoon commute with favorite route badge', () {
+  test('MenetrendService builds evaluation from real trips only', () {
     final day = DateTime(2026, 11, 11);
     final lessons = <Lesson>[
       _makeLesson(
@@ -250,45 +250,45 @@ void main() {
         start: DateTime(2026, 11, 11, 7, 50),
         end: DateTime(2026, 11, 11, 8, 35),
       ),
-      _makeLesson(
-        lessonNumber: 6,
-        start: DateTime(2026, 11, 11, 12, 45),
-        end: DateTime(2026, 11, 11, 13, 30),
-      ),
     ];
-    const prefs = UserProfilePrefs(
-      transitHomeStation: 'Bodajk vasútállomás',
-      transitSchoolStation: 'Székesfehérvár',
-      walkingDurationMinutes: 10,
-      transitAlertBufferMinutes: 5,
-      favoriteRoute1stPeriod: '07:09',
-    );
+    const prefs = UserProfilePrefs(walkingDurationMinutes: 10);
+    expect(prefs.transitConfigured, isFalse);
+    expect(prefs.transitCardEnabled, isFalse);
 
-    final morningEval = MenetrendService.evaluateSmartCommute(
-      todaysLessons: lessons,
-      prefs: prefs,
-      nowOverride: DateTime(day.year, day.month, day.day, 6, 30),
-    );
-    expect(morningEval.isMorningMode, isTrue);
-    expect(morningEval.recommendedTrip.departureTimeFormatted, '07:09');
-    expect(morningEval.recommendedTrip.isFavorite, isTrue);
-    expect(
-      morningEval.departureNotificationBody,
-      'A 07:09-es vonathoz legkésőbb 06:55-kor indulnod kell (10 perc séta). Ne késs el a suliból!',
-    );
+    MenetrendTripOption trip(int h, int m) => MenetrendTripOption(
+          routeShortName: 'X',
+          routeLongName: 'Y',
+          mode: MenetrendTransportMode.rail,
+          departureStation: 'A',
+          arrivalStation: 'B',
+          scheduledDeparture: DateTime(day.year, day.month, day.day, h, m),
+          scheduledArrival: DateTime(day.year, day.month, day.day, h, m + 30),
+          walkToStationMinutes: 10,
+        );
 
-    final afternoonEval = MenetrendService.evaluateSmartCommute(
-      todaysLessons: lessons,
-      prefs: prefs,
-      nowOverride: DateTime(day.year, day.month, day.day, 13, 15),
-    );
-    expect(afternoonEval.isMorningMode, isFalse);
     expect(
-      afternoonEval.recommendedTrip.scheduledDeparture.isAfter(
-        DateTime(day.year, day.month, day.day, 13, 30),
+      MenetrendService.buildEvaluation(
+        trips: const [],
+        isMorning: true,
+        firstLesson: lessons.first,
+        lastLesson: lessons.first,
+        prefs: prefs,
+        effectiveWalk: 10,
+        now: DateTime(2026, 11, 11, 6, 30),
       ),
-      isTrue,
+      isNull,
     );
+
+    final eval = MenetrendService.buildEvaluation(
+      trips: [trip(6, 0), trip(7, 9), trip(7, 40)],
+      isMorning: true,
+      firstLesson: lessons.first,
+      lastLesson: lessons.first,
+      prefs: prefs,
+      effectiveWalk: 10,
+      now: DateTime(2026, 11, 11, 6, 30),
+    )!;
+    expect(eval.recommendedTrip.departureTimeFormatted, '07:09');
   });
 
   test('Scholarship recommendations target cumulative weighted average without requiring every subject >= 4.00', () {
@@ -343,8 +343,9 @@ void main() {
       targetAverage: 4.50,
     );
     expect(recsFor450, isNotEmpty);
-    expect(recsFor450.first.subjectName, 'Szakmai tantárgy (200%)');
-    expect(recsFor450.first.recommendedWeight, 200);
+    expect(recsFor450.first.steps.first.weight, 200);
+    expect(recsFor450.first.steps.first.subjectName, 'Szakmai tantárgy (200%)');
+    expect(recsFor450.first.resultingOverallAverage, greaterThanOrEqualTo(4.50));
   });
 
   test('Timetable filterLessonsForDisplay synthesizes inactive 1st period when school starts later', () {

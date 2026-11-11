@@ -17,6 +17,7 @@ import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 import '../widgets/expandable_profile_card.dart';
 import '../widgets/frosted_inspection_modal.dart';
+import '../widgets/glass_card.dart';
 import '../widgets/menetrend_hero_card.dart';
 import 'grades_screen.dart';
 import 'more_screen.dart';
@@ -265,15 +266,23 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void didUpdateWidget(covariant HomeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.prefs != widget.prefs && _data != null) {
-      final eval = MenetrendService.evaluateSmartCommute(
-        todaysLessons: _data!.todaysLessons,
-        prefs: widget.prefs,
-      );
-      MenetrendService.syncNotificationsForEvaluation(
-        evaluation: eval,
-        prefs: widget.prefs,
-      );
+    if (oldWidget.prefs != widget.prefs &&
+        _data != null &&
+        (oldWidget.prefs.transitCardEnabled != widget.prefs.transitCardEnabled ||
+            oldWidget.prefs.transitHomeStation !=
+                widget.prefs.transitHomeStation ||
+            oldWidget.prefs.transitSchoolStation !=
+                widget.prefs.transitSchoolStation ||
+            oldWidget.prefs.transitAllowTrain !=
+                widget.prefs.transitAllowTrain ||
+            oldWidget.prefs.transitAllowCoach !=
+                widget.prefs.transitAllowCoach ||
+            oldWidget.prefs.transitAllowLocalBus !=
+                widget.prefs.transitAllowLocalBus ||
+            oldWidget.prefs.walkingDurationMinutes !=
+                widget.prefs.walkingDurationMinutes ||
+            oldWidget.prefs.walkingSpeedKmh != widget.prefs.walkingSpeedKmh)) {
+      _refreshCommute();
     }
   }
 
@@ -281,6 +290,40 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _countdownTimer?.cancel();
     super.dispose();
+  }
+
+  CommuteEvaluation? _commuteEval;
+  bool _commuteLoading = false;
+  final MenetrendService _menetrendService = MenetrendService();
+
+  Future<void> _refreshCommute() async {
+    final prefs = widget.prefs;
+    if (!prefs.transitCardEnabled || !prefs.transitConfigured) {
+      if (_commuteEval != null || _commuteLoading) {
+        setState(() {
+          _commuteEval = null;
+          _commuteLoading = false;
+        });
+      }
+      MenetrendService.cancelAlarms();
+      return;
+    }
+    setState(() => _commuteLoading = true);
+    final eval = await _menetrendService.fetchLiveCommuteEvaluation(
+      todaysLessons: _data?.todaysLessons ?? const <Lesson>[],
+      prefs: prefs,
+    );
+    if (!mounted) return;
+    setState(() {
+      _commuteEval = eval;
+      _commuteLoading = false;
+    });
+    if (eval != null) {
+      MenetrendService.syncNotificationsForEvaluation(
+        evaluation: eval,
+        prefs: prefs,
+      );
+    }
   }
 
   Future<void> _loadDashboard() async {
@@ -300,14 +343,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _isLoading = false;
         _error = null;
       });
-      final eval = MenetrendService.evaluateSmartCommute(
-        todaysLessons: result.todaysLessons,
-        prefs: widget.prefs,
-      );
-      MenetrendService.syncNotificationsForEvaluation(
-        evaluation: eval,
-        prefs: widget.prefs,
-      );
+      _refreshCommute();
     } on TokenExpiredException {
       if (!mounted) return;
       widget.onLogout();
@@ -653,10 +689,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildHomeTab(ThemeData theme, ColorScheme scheme) {
     final lessons = _data?.todaysLessons ?? const <Lesson>[];
     final feedItems = _buildFilteredFeedItems();
-    final commuteEval = MenetrendService.evaluateSmartCommute(
-      todaysLessons: lessons,
-      prefs: widget.prefs,
-    );
 
     return RefreshIndicator(
       onRefresh: _loadDashboard,
@@ -668,24 +700,24 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildErrorCard(theme, _error!),
             const SizedBox(height: 14),
           ],
-          MenetrendHeroCard(
-            evaluation: commuteEval,
-            prefs: widget.prefs,
-          ).staggeredEntrance(
-            0,
-            animationKey: ValueKey('home-transit-$_tabSwitchEpoch'),
-          ),
-          const SizedBox(height: 14),
+          if (widget.prefs.transitCardEnabled) ...[
+            MenetrendHomeCard(
+              evaluation: _commuteEval,
+              isLoading: _commuteLoading,
+              prefs: widget.prefs,
+              onOpenSettings: () => _selectBottomTab(2),
+              onRetry: _refreshCommute,
+            ).staggeredEntrance(
+              0,
+              animationKey: ValueKey('home-transit-$_tabSwitchEpoch'),
+            ),
+            const SizedBox(height: 14),
+          ],
           _buildNextLessonHeroCard(theme, scheme, lessons).staggeredEntrance(
             1,
             animationKey: ValueKey('home-next-$_tabSwitchEpoch'),
           ),
           const SizedBox(height: 22),
-          _buildActivityFeedHeader(theme, scheme).staggeredEntrance(
-            2,
-            animationKey: ValueKey('home-hdr-$_tabSwitchEpoch'),
-          ),
-          const SizedBox(height: 10),
           _buildFilterChipBar(theme, scheme).staggeredEntrance(
             3,
             animationKey: ValueKey('home-chips-$_tabSwitchEpoch'),
@@ -750,7 +782,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final isOngoing = status.phase == NextLessonPhase.ongoing;
 
     final progressText = status.phase == NextLessonPhase.completedForToday
-        ? 'Mára vége az óráknak!'
+        ? 'Ma már nincs több órád!'
         : 'Ma még ${status.remainingLessonsCount} / ${status.totalLessonsCount} óra van hátra';
 
     final heroTag =
@@ -785,6 +817,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (status.phase != NextLessonPhase.completedForToday) ...[
               Row(
                 children: [
                   Container(
@@ -841,6 +874,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
               const SizedBox(height: 14),
+              ],
               if (status.phase == NextLessonPhase.completedForToday ||
                   currentOrNext == null)
                 Row(
@@ -856,7 +890,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            uwu('Mára vége az óráknak!'),
+                            uwu('Ma már nincs több órád!'),
                             style: theme.textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.w900,
                               color: scheme.onSurface,
@@ -1027,24 +1061,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildActivityFeedHeader(ThemeData theme, ColorScheme scheme) {
-    return Row(
-      children: [
-        Icon(Icons.dynamic_feed_rounded, size: 20, color: scheme.primary),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            uwu('Aktivitási hírfolyam'),
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w800,
-              color: scheme.onSurface,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildFilterChipBar(ThemeData theme, ColorScheme scheme) {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -1175,13 +1191,10 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         child: ChristmasSnowCap(
           enabled: widget.prefs.christmasModeEnabled,
-          child: Container(
+          child: SoftGlassCard(
+            prefs: widget.prefs,
             padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-            decoration: BoxDecoration(
-              color: theme.cardTheme.color,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: theme.dividerColor),
-            ),
+            borderRadius: BorderRadius.circular(18),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -1400,11 +1413,10 @@ class _HomeScreenState extends State<HomeScreen> {
       rawSubjectTitle,
       test.subject.uid,
     );
-    final teacherDisplay = widget.prefs.resolveTeacherName(test.teacherName);
     final heroTag = 'home_test_${test.uid}';
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: 8),
       child: TactileBounce(
         pressedScale: 0.97,
         onTap: () => showTestInspectionModal(
@@ -1415,33 +1427,30 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         child: ChristmasSnowCap(
           enabled: widget.prefs.christmasModeEnabled,
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: theme.cardTheme.color,
-              borderRadius: OledTheme.cardRadius,
-              border: Border.all(color: theme.dividerColor),
-            ),
+          child: SoftGlassCard(
+            prefs: widget.prefs,
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+            borderRadius: BorderRadius.circular(18),
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Hero(
                   tag: heroTag,
                   child: Material(
                     type: MaterialType.transparency,
                     child: Container(
-                      width: 44,
-                      height: 44,
+                      width: 38,
+                      height: 38,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                         color: testColor.withValues(alpha: 0.2),
-                        borderRadius: OledTheme.badgeRadius,
+                        borderRadius: BorderRadius.circular(11),
                         border: Border.all(color: testColor),
                       ),
                       child: const Icon(
                         Icons.assignment_late_rounded,
                         color: testColor,
-                        size: 22,
+                        size: 20,
                       ),
                     ),
                   ),
@@ -1457,15 +1466,15 @@ class _HomeScreenState extends State<HomeScreen> {
                           Expanded(
                             child: Text(
                               subjectTitle,
-                              style: theme.textTheme.titleSmall?.copyWith(
+                              style: const TextStyle(
+                                fontSize: 13.5,
                                 fontWeight: FontWeight.w800,
-                                color: scheme.onSurface,
                               ),
                             ),
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            '$weekdayName\n${_dateFormat.format(testLocal)}',
+                            '$weekdayName ${_dateFormat.format(testLocal)}',
                             textAlign: TextAlign.right,
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: testColor,
@@ -1475,31 +1484,16 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 2),
                       Text(
-                        '${test.method.description} (${test.lessonNumber}. óra)',
-                        style: theme.textTheme.bodySmall?.copyWith(
+                        '${test.method.description} (${test.lessonNumber}. óra)'
+                        '${test.theme != null && test.theme!.trim().isNotEmpty ? ' • ${test.theme!.trim()}' : ''}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
                           color: testColor,
                           fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      if (test.theme != null &&
-                          test.theme!.trim().isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          'Téma: ${test.theme}',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurface.withValues(alpha: 0.78),
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                      const SizedBox(height: 4),
-                      Text(
-                        teacherDisplay,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: scheme.onSurface.withValues(alpha: 0.54),
                         ),
                       ),
                     ],

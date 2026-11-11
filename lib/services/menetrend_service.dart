@@ -40,6 +40,19 @@ enum MenetrendTransportMode {
   }
 }
 
+/// A real stop/station returned by the transit service search.
+class TransitStopResult {
+  final String name;
+  final double lat;
+  final double lon;
+
+  const TransitStopResult({
+    required this.name,
+    required this.lat,
+    required this.lon,
+  });
+}
+
 class MenetrendStop {
   final String name;
   final String? platformCode;
@@ -83,7 +96,7 @@ class MenetrendTripOption {
     this.arrivalPlatformCode,
     this.intermediateStops = const [],
     required this.walkToStationMinutes,
-    this.walkToDestinationMinutes = 8,
+    this.walkToDestinationMinutes = 0,
     this.isFavorite = false,
   });
 
@@ -188,7 +201,7 @@ class CommuteEvaluation {
     final depStr = recommendedTrip.departureTimeFormatted;
     final walkStartStr = DateFormat('HH:mm').format(latestWalkStartTime);
     final vehicle = recommendedTrip.mode.vehicleNounAccusative;
-    return 'A $depStr-es $vehicle legkésőbb $walkStartStr-kor indulnod kell ($effectiveWalkMinutes perc séta). Ne késs el a suliból!';
+    return 'A $depStr-es $vehicle legkésőbb $walkStartStr-kor indulnod kell ($effectiveWalkMinutes perc séta). Ne késs el!';
   }
 
   bool get hasSignificantDelay =>
@@ -215,24 +228,6 @@ class MenetrendService {
   static const MethodChannel _transitChannel =
       MethodChannel('hu.rekreta.rekreta_app/transit');
 
-  static const List<String> commonStations = [
-    'Bodajk vasútállomás',
-    'Bodajk, autóbusz-forduló',
-    'Székesfehérvár',
-    'Székesfehérvár, autóbusz-állomás',
-    'Mór vasútállomás',
-    'Csókakő',
-    'Fehérvárcsurgó',
-    'Moha-Rakodó',
-    'Börgönd',
-    'Budapest-Déli',
-    'Budapest-Kelenföld',
-    'Veszprém',
-    'Siokfok',
-    'Gárdony',
-    'Velence',
-  ];
-
   final http.Client _http;
 
   MenetrendService({http.Client? httpClient})
@@ -257,80 +252,43 @@ class MenetrendService {
     return scaled.clamp(1, 90);
   }
 
-  /// Evaluates today's commute (Morning mode -> school, Afternoon mode -> home)
-  /// based on the student's active lessons and MenetrendGO preferences.
-  static CommuteEvaluation evaluateSmartCommute({
-    required List<Lesson> todaysLessons,
+  /// Builds a [CommuteEvaluation] from real [trips] returned by the transit
+  /// service. Returns `null` when no trip is available.
+  static CommuteEvaluation? buildEvaluation({
+    required List<MenetrendTripOption> trips,
+    required bool isMorning,
+    required Lesson? firstLesson,
+    required Lesson? lastLesson,
     required UserProfilePrefs prefs,
-    DateTime? nowOverride,
-    int simulatedDelayMinutes = 0,
+    required int effectiveWalk,
+    required DateTime now,
   }) {
-    final now = nowOverride ?? DateTime.now();
-    final activeLessons = todaysLessons
-        .where((l) => !isLessonCancelledStatic(l))
-        .toList()
-      ..sort((a, b) => a.start.toLocal().compareTo(b.start.toLocal()));
-
-    Lesson? firstLesson;
-    Lesson? lastLesson;
-    if (activeLessons.isNotEmpty) {
-      firstLesson = activeLessons.first;
-      lastLesson = activeLessons.last;
-    }
-
-    // Morning mode if before 11:30 AM and before first lesson end (or no lessons yet).
+    if (trips.isEmpty) return null;
+    final allTrips = [...trips]
+      ..sort((a, b) => a.scheduledDeparture.compareTo(b.scheduledDeparture));
     final firstStartLocal = firstLesson?.start.toLocal();
-    final isMorning = firstStartLocal != null
-        ? now.isBefore(firstStartLocal.add(const Duration(minutes: 30)))
-        : (now.hour < 12);
-
-    final effectiveWalk = calculateEffectiveWalkingMinutes(
-      baseWalkingMinutes: prefs.walkingDurationMinutes,
-      walkingSpeedKmh: prefs.walkingSpeedKmh,
-    );
-
-    final targetPeriod = firstLesson?.lessonNumber ??
-        (firstStartLocal != null && firstStartLocal.hour >= 8 && firstStartLocal.minute >= 40
-            ? 2
-            : 1);
-
-    final allTrips = buildCommuterTripsForDay(
-      date: now,
-      isMorningToSchool: isMorning,
-      prefs: prefs,
-      effectiveWalkMinutes: effectiveWalk,
-      targetPeriodNumber: targetPeriod,
-      simulatedDelayMinutes: simulatedDelayMinutes,
-    );
 
     MenetrendTripOption selectedTrip;
     if (isMorning) {
-      final targetArrival = firstStartLocal ??
-          DateTime(now.year, now.month, now.day, 8, 0);
-      // Latest possible departure that arrives at school (including walk to school) on time.
-      final arrivingOnTime = allTrips.where((t) {
-        final schoolArrival = t.effectiveArrival
-            .add(Duration(minutes: t.walkToDestinationMinutes));
-        return !schoolArrival.isAfter(targetArrival);
-      }).toList();
-
-      if (arrivingOnTime.isNotEmpty) {
-        selectedTrip = arrivingOnTime.last;
-      } else {
-        selectedTrip = allTrips.first;
-      }
+      final targetArrival = firstStartLocal;
+      final arrivingOnTime = targetArrival == null
+          ? <MenetrendTripOption>[]
+          : allTrips
+              .where((t) => !t.effectiveArrival.isAfter(targetArrival))
+              .toList();
+      selectedTrip =
+          arrivingOnTime.isNotEmpty ? arrivingOnTime.last : allTrips.first;
     } else {
-      final earliestLeaveTime = lastLesson != null
-          ? lastLesson.end.toLocal()
-          : now;
+      final earliestLeaveTime =
+          lastLesson != null ? lastLesson.end.toLocal() : now;
       final referenceTime =
           now.isAfter(earliestLeaveTime) ? now : earliestLeaveTime;
       final departingAfter = allTrips.where((t) {
         final walkLeave =
             t.effectiveDeparture.subtract(Duration(minutes: effectiveWalk));
-        return !walkLeave.isBefore(referenceTime.subtract(const Duration(minutes: 5)));
+        return !walkLeave
+            .isBefore(referenceTime.subtract(const Duration(minutes: 5)));
       }).toList();
-
       selectedTrip =
           departingAfter.isNotEmpty ? departingAfter.first : allTrips.last;
     }
@@ -338,7 +296,7 @@ class MenetrendService {
     return CommuteEvaluation(
       isMorningMode: isMorning,
       targetLesson: isMorning ? firstLesson : lastLesson,
-      targetPeriodNumber: targetPeriod,
+      targetPeriodNumber: firstLesson?.lessonNumber ?? 1,
       recommendedTrip: selectedTrip,
       alternatives: allTrips,
       effectiveWalkMinutes: effectiveWalk,
@@ -355,322 +313,136 @@ class MenetrendService {
         stateName.contains('cancelled');
   }
 
-  /// Generates the filtered commuter timetable between [prefs.transitHomeStation]
-  /// and [prefs.transitSchoolStation] aligned with MÁV-START / Volánbusz schedules.
-  static List<MenetrendTripOption> buildCommuterTripsForDay({
-    required DateTime date,
-    required bool isMorningToSchool,
-    required UserProfilePrefs prefs,
-    required int effectiveWalkMinutes,
-    required int targetPeriodNumber,
-    int simulatedDelayMinutes = 0,
-  }) {
-    final day = DateTime(date.year, date.month, date.day);
-    final fromStation = isMorningToSchool
-        ? prefs.transitHomeStation
-        : prefs.transitSchoolStation;
-    final toStation = isMorningToSchool
-        ? prefs.transitSchoolStation
-        : prefs.transitHomeStation;
+  static final Map<String, ({double lat, double lon})> _coordCache = {};
 
-    final fav1 = prefs.favoriteRoute1stPeriod.trim().toLowerCase();
-    final fav2 = prefs.favoriteRoute2ndPeriod.trim().toLowerCase();
-    final activeFavPattern = targetPeriodNumber >= 2 ? fav2 : fav1;
-
-    bool matchesFavorite(String routeShort, String depTime) {
-      if (activeFavPattern.isEmpty && fav1.isEmpty && fav2.isEmpty) return false;
-      final combined = '${routeShort.toLowerCase()} $depTime';
-      if (activeFavPattern.isNotEmpty &&
-          (combined.contains(activeFavPattern) ||
-              activeFavPattern.contains(depTime) ||
-              activeFavPattern.contains(routeShort.toLowerCase()))) {
-        return true;
-      }
-      return (fav1.isNotEmpty &&
-              (combined.contains(fav1) || fav1.contains(depTime))) ||
-          (fav2.isNotEmpty &&
-              (combined.contains(fav2) || fav2.contains(depTime)));
+  /// Searches real stops/stations by name in the MÁVPlusz OTP2 backend.
+  Future<List<TransitStopResult>> searchStops(String query) async {
+    final q = query.trim();
+    if (q.length < 2) return const [];
+    final escaped = jsonEncode(q);
+    final response = await _http
+        .post(
+          Uri.parse('$mavPluszBaseUrl/index/graphql'),
+          headers: mavHeaders,
+          body: jsonEncode({
+            'query':
+                '{ stops(name: $escaped) { gtfsId name lat lon } }',
+          }),
+        )
+        .timeout(const Duration(seconds: 6));
+    if (response.statusCode != 200) return const [];
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    final stops = decoded['data']?['stops'];
+    if (stops is! List) return const [];
+    final seen = <String>{};
+    final out = <TransitStopResult>[];
+    for (final st in stops) {
+      if (st is! Map) continue;
+      final name = (st['name'] ?? '').toString();
+      final lat = (st['lat'] as num?)?.toDouble();
+      final lon = (st['lon'] as num?)?.toDouble();
+      if (name.isEmpty || lat == null || lon == null) continue;
+      if (!seen.add(name)) continue;
+      _coordCache[name] = (lat: lat, lon: lon);
+      out.add(TransitStopResult(name: name, lat: lat, lon: lon));
     }
-
-    final intermediateMorningRail = <MenetrendStop>[
-      const MenetrendStop(name: 'Csókakő', platformCode: '1. vágány', timeLabel: '+4 p'),
-      const MenetrendStop(name: 'Moha-Rakodó', platformCode: '1. vágány', timeLabel: '+11 p'),
-      const MenetrendStop(name: 'Fehérvárcsurgó', platformCode: '1. vágány', timeLabel: '+16 p'),
-      const MenetrendStop(name: 'Börgönd', platformCode: '2. vágány', timeLabel: '+22 p'),
-    ];
-
-    final intermediateMorningCoach = <MenetrendStop>[
-      const MenetrendStop(name: 'Bodajk, városháza', platformCode: '2. kocsiállás', timeLabel: '+3 p'),
-      const MenetrendStop(name: 'Söréd, Kossuth u.', timeLabel: '+9 p'),
-      const MenetrendStop(name: 'Csákberény, elágazás', timeLabel: '+14 p'),
-      const MenetrendStop(name: 'Zámoly, posta', timeLabel: '+21 p'),
-      const MenetrendStop(name: 'Székesfehérvár, Király sor', timeLabel: '+31 p'),
-    ];
-
-    final intermediateAfternoonRail = intermediateMorningRail.reversed.toList();
-    final intermediateAfternoonCoach = intermediateMorningCoach.reversed.toList();
-
-    final rawTemplates = isMorningToSchool
-        ? <Map<String, dynamic>>[
-            {
-              'short': 'S150',
-              'long': '$fromStation – $toStation (Személyvonat)',
-              'mode': MenetrendTransportMode.rail,
-              'depH': 6,
-              'depM': 24,
-              'dur': 29,
-              'plat': '1. vágány',
-              'arrPlat': '4. vágány',
-              'stops': intermediateMorningRail,
-            },
-            {
-              'short': '8080',
-              'long': 'Mór – $fromStation – $toStation (Volánbusz)',
-              'mode': MenetrendTransportMode.coach,
-              'depH': 6,
-              'depM': 45,
-              'dur': 35,
-              'plat': '1. kocsiállás',
-              'arrPlat': '7. kocsiállás',
-              'stops': intermediateMorningCoach,
-            },
-            {
-              'short': 'S150',
-              'long': '$fromStation – $toStation (Személyvonat)',
-              'mode': MenetrendTransportMode.rail,
-              'depH': 7,
-              'depM': 9,
-              'dur': 29,
-              'plat': '1. vágány',
-              'arrPlat': '3. vágány',
-              'stops': intermediateMorningRail,
-            },
-            {
-              'short': '24',
-              'long': 'Helyi csatlakozó járat ($toStation)',
-              'mode': MenetrendTransportMode.localBus,
-              'depH': 7,
-              'depM': 25,
-              'dur': 20,
-              'plat': 'B megálló',
-              'arrPlat': 'Iskola megálló',
-              'stops': const <MenetrendStop>[
-                MenetrendStop(name: 'Vasútállomás', timeLabel: '+2 p'),
-                MenetrendStop(name: 'Prohászka Ottokár út', timeLabel: '+7 p'),
-                MenetrendStop(name: 'Várkörút', timeLabel: '+12 p'),
-              ],
-            },
-            {
-              'short': '8080',
-              'long': 'Mór – $fromStation – $toStation (Volánbusz)',
-              'mode': MenetrendTransportMode.coach,
-              'depH': 7,
-              'depM': 55,
-              'dur': 35,
-              'plat': '1. kocsiállás',
-              'arrPlat': '6. kocsiállás',
-              'stops': intermediateMorningCoach,
-            },
-            {
-              'short': 'S150',
-              'long': '$fromStation – $toStation (Személyvonat)',
-              'mode': MenetrendTransportMode.rail,
-              'depH': 8,
-              'depM': 9,
-              'dur': 29,
-              'plat': '1. vágány',
-              'arrPlat': '3. vágány',
-              'stops': intermediateMorningRail,
-            },
-          ]
-        : <Map<String, dynamic>>[
-            {
-              'short': 'S150',
-              'long': '$fromStation – $toStation (Személyvonat)',
-              'mode': MenetrendTransportMode.rail,
-              'depH': 13,
-              'depM': 48,
-              'dur': 29,
-              'plat': '3. vágány',
-              'arrPlat': '1. vágány',
-              'stops': intermediateAfternoonRail,
-            },
-            {
-              'short': '8080',
-              'long': '$fromStation – $toStation – Mór (Volánbusz)',
-              'mode': MenetrendTransportMode.coach,
-              'depH': 14,
-              'depM': 20,
-              'dur': 35,
-              'plat': '7. kocsiállás',
-              'arrPlat': '2. kocsiállás',
-              'stops': intermediateAfternoonCoach,
-            },
-            {
-              'short': 'S150',
-              'long': '$fromStation – $toStation (Személyvonat)',
-              'mode': MenetrendTransportMode.rail,
-              'depH': 14,
-              'depM': 48,
-              'dur': 29,
-              'plat': '4. vágány',
-              'arrPlat': '1. vágány',
-              'stops': intermediateAfternoonRail,
-            },
-            {
-              'short': '24',
-              'long': 'Helyi járat – Vasútállomás felé',
-              'mode': MenetrendTransportMode.localBus,
-              'depH': 15,
-              'depM': 5,
-              'dur': 18,
-              'plat': 'A megálló',
-              'arrPlat': 'Vasútállomás',
-              'stops': const <MenetrendStop>[
-                MenetrendStop(name: 'Várkörút', timeLabel: '+5 p'),
-                MenetrendStop(name: 'Prohászka Ottokár út', timeLabel: '+11 p'),
-              ],
-            },
-            {
-              'short': '8080',
-              'long': '$fromStation – $toStation – Mór (Volánbusz)',
-              'mode': MenetrendTransportMode.coach,
-              'depH': 15,
-              'depM': 25,
-              'dur': 35,
-              'plat': '7. kocsiállás',
-              'arrPlat': '2. kocsiállás',
-              'stops': intermediateAfternoonCoach,
-            },
-            {
-              'short': 'S150',
-              'long': '$fromStation – $toStation (Személyvonat)',
-              'mode': MenetrendTransportMode.rail,
-              'depH': 16,
-              'depM': 18,
-              'dur': 29,
-              'plat': '3. vágány',
-              'arrPlat': '1. vágány',
-              'stops': intermediateAfternoonRail,
-            },
-            {
-              'short': '8080',
-              'long': '$fromStation – $toStation – Mór (Volánbusz)',
-              'mode': MenetrendTransportMode.coach,
-              'depH': 17,
-              'depM': 15,
-              'dur': 35,
-              'plat': '7. kocsiállás',
-              'arrPlat': '2. kocsiállás',
-              'stops': intermediateAfternoonCoach,
-            },
-          ];
-
-    final filtered = <MenetrendTripOption>[];
-    for (final item in rawTemplates) {
-      final mode = item['mode'] as MenetrendTransportMode;
-      if (mode == MenetrendTransportMode.rail && !prefs.transitAllowTrain) {
-        continue;
-      }
-      if (mode == MenetrendTransportMode.coach && !prefs.transitAllowCoach) {
-        continue;
-      }
-      if (mode == MenetrendTransportMode.localBus &&
-          !prefs.transitAllowLocalBus) {
-        continue;
-      }
-
-      final dep = DateTime(
-        day.year,
-        day.month,
-        day.day,
-        item['depH'] as int,
-        item['depM'] as int,
-      );
-      final arr = dep.add(Duration(minutes: item['dur'] as int));
-      final shortName = item['short'] as String;
-      final depFormatted = DateFormat('HH:mm').format(dep);
-
-      filtered.add(
-        MenetrendTripOption(
-          routeShortName: shortName,
-          routeLongName: item['long'] as String,
-          mode: mode,
-          departureStation: fromStation,
-          arrivalStation: toStation,
-          scheduledDeparture: dep,
-          scheduledArrival: arr,
-          delayMinutes: simulatedDelayMinutes,
-          platformCode: item['plat'] as String?,
-          arrivalPlatformCode: item['arrPlat'] as String?,
-          intermediateStops: item['stops'] as List<MenetrendStop>,
-          walkToStationMinutes: effectiveWalkMinutes,
-          walkToDestinationMinutes: 8,
-          isFavorite: isMorningToSchool && matchesFavorite(shortName, depFormatted),
-        ),
-      );
-    }
-
-    if (filtered.isEmpty) {
-      // If user unchecked all transport modes, keep default train option so UI never crashes
-      final dep = DateTime(day.year, day.month, day.day, 7, 9);
-      filtered.add(
-        MenetrendTripOption(
-          routeShortName: 'S150',
-          routeLongName: '$fromStation – $toStation',
-          mode: MenetrendTransportMode.rail,
-          departureStation: fromStation,
-          arrivalStation: toStation,
-          scheduledDeparture: dep,
-          scheduledArrival: dep.add(const Duration(minutes: 29)),
-          delayMinutes: simulatedDelayMinutes,
-          platformCode: '1. vágány',
-          arrivalPlatformCode: '3. vágány',
-          intermediateStops: intermediateMorningRail,
-          walkToStationMinutes: effectiveWalkMinutes,
-          walkToDestinationMinutes: 8,
-          isFavorite: true,
-        ),
-      );
-    }
-
-    return filtered;
+    return out;
   }
 
-  /// Queries live OTP2 GraphQL delays from MÁVPlusz if reachable (15-20 min before departure
-  /// or when refreshing the home card), falling back cleanly to the local schedule.
-  Future<CommuteEvaluation> fetchLiveCommuteEvaluation({
+  Future<({double lat, double lon})?> _resolve(String name) async {
+    final cached = _coordCache[name];
+    if (cached != null) return cached;
+    final results = await searchStops(name);
+    if (results.isEmpty) return null;
+    final exact = results.firstWhere(
+      (r) => r.name.toLowerCase() == name.toLowerCase(),
+      orElse: () => results.first,
+    );
+    return (lat: exact.lat, lon: exact.lon);
+  }
+
+  static MenetrendTransportMode _modeFor(Map leg) {
+    final mode = (leg['mode'] ?? '').toString().toUpperCase();
+    if (mode == 'RAIL' || mode == 'SUBWAY' || mode == 'TRAM') {
+      return MenetrendTransportMode.rail;
+    }
+    final agency =
+        (leg['route']?['agency']?['name'] ?? '').toString().toLowerCase();
+    if (agency.contains('volán') || agency.contains('volan')) {
+      return MenetrendTransportMode.coach;
+    }
+    return MenetrendTransportMode.localBus;
+  }
+
+  /// Fetches the real commute from the transit service (MÁVPlusz OTP2).
+  /// Returns `null` when stops are not configured, not found or no itinerary
+  /// exists. Never fabricates routes.
+  Future<CommuteEvaluation?> fetchLiveCommuteEvaluation({
     required List<Lesson> todaysLessons,
     required UserProfilePrefs prefs,
     DateTime? nowOverride,
   }) async {
-    final baseEval = evaluateSmartCommute(
-      todaysLessons: todaysLessons,
-      prefs: prefs,
-      nowOverride: nowOverride,
+    if (!prefs.transitConfigured) return null;
+    final now = nowOverride ?? DateTime.now();
+    final activeLessons = todaysLessons
+        .where((l) => !isLessonCancelledStatic(l))
+        .toList()
+      ..sort((a, b) => a.start.toLocal().compareTo(b.start.toLocal()));
+    final firstLesson = activeLessons.isNotEmpty ? activeLessons.first : null;
+    final lastLesson = activeLessons.isNotEmpty ? activeLessons.last : null;
+    final firstStartLocal = firstLesson?.start.toLocal();
+    final isMorning = firstStartLocal != null
+        ? now.isBefore(firstStartLocal.add(const Duration(minutes: 30)))
+        : now.hour < 12;
+
+    final effectiveWalk = calculateEffectiveWalkingMinutes(
+      baseWalkingMinutes: prefs.walkingDurationMinutes,
+      walkingSpeedKmh: prefs.walkingSpeedKmh,
     );
 
+    final fromName =
+        isMorning ? prefs.transitHomeStation : prefs.transitSchoolStation;
+    final toName =
+        isMorning ? prefs.transitSchoolStation : prefs.transitHomeStation;
+
     try {
-      final dateStr = DateFormat('yyyy-MM-dd').format(baseEval.now);
-      final timeStr =
-          DateFormat('HH:mm').format(baseEval.recommendedTrip.scheduledDeparture);
+      final from = await _resolve(fromName);
+      final to = await _resolve(toName);
+      if (from == null || to == null) return null;
+
+      final DateTime refTime;
+      final bool arriveBy;
+      if (isMorning) {
+        arriveBy = firstStartLocal != null;
+        refTime = firstStartLocal ?? now;
+      } else {
+        arriveBy = false;
+        final lastEnd = lastLesson?.end.toLocal() ?? now;
+        refTime = now.isAfter(lastEnd) ? now : lastEnd;
+      }
+
       final query = '''
       {
         plan(
-          fromPlace: "${baseEval.recommendedTrip.departureStation}",
-          toPlace: "${baseEval.recommendedTrip.arrivalStation}",
-          date: "$dateStr",
-          time: "$timeStr",
-          numItineraries: 3
+          from: {lat: ${from.lat}, lon: ${from.lon}},
+          to: {lat: ${to.lat}, lon: ${to.lon}},
+          date: "${DateFormat('yyyy-MM-dd').format(refTime)}",
+          time: "${DateFormat('HH:mm').format(refTime)}",
+          arriveBy: $arriveBy,
+          numItineraries: 6
         ) {
           itineraries {
+            startTime
+            endTime
             legs {
               mode
-              realTime
+              startTime
+              endTime
               departureDelay
               from { name stop { platformCode } }
               to { name stop { platformCode } }
-              route { shortName longName }
+              route { shortName longName agency { name } }
+              intermediateStops { name }
             }
           }
         }
@@ -683,36 +455,85 @@ class MenetrendService {
             headers: mavHeaders,
             body: jsonEncode({'query': query}),
           )
-          .timeout(const Duration(seconds: 3));
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) return null;
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final itineraries = decoded['data']?['plan']?['itineraries'];
+      if (itineraries is! List) return null;
 
-      if (response.statusCode == 200) {
-        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-        final itineraries = decoded['data']?['plan']?['itineraries'];
-        if (itineraries is List && itineraries.isNotEmpty) {
-          final firstLegList = itineraries.first['legs'];
-          if (firstLegList is List && firstLegList.isNotEmpty) {
-            for (final leg in firstLegList) {
-              if (leg is Map && leg['mode'] != 'WALK') {
-                final delaySec = (leg['departureDelay'] as num?)?.toInt() ?? 0;
-                final delayMin = (delaySec / 60).round().clamp(0, 180);
-                if (delayMin > 0) {
-                  return evaluateSmartCommute(
-                    todaysLessons: todaysLessons,
-                    prefs: prefs,
-                    nowOverride: nowOverride,
-                    simulatedDelayMinutes: delayMin,
-                  );
-                }
-              }
-            }
-          }
+      DateTime ms(dynamic v) => DateTime.fromMillisecondsSinceEpoch(
+            (v as num).toInt(),
+          );
+
+      final trips = <MenetrendTripOption>[];
+      for (final it in itineraries) {
+        if (it is! Map) continue;
+        final legs = (it['legs'] as List?)
+                ?.whereType<Map>()
+                .where((l) => l['mode'] != 'WALK')
+                .toList() ??
+            const [];
+        if (legs.isEmpty) continue;
+        final firstLeg = legs.first;
+        final mode = _modeFor(firstLeg);
+        if (mode == MenetrendTransportMode.rail && !prefs.transitAllowTrain) {
+          continue;
         }
+        if (mode == MenetrendTransportMode.coach && !prefs.transitAllowCoach) {
+          continue;
+        }
+        if (mode == MenetrendTransportMode.localBus &&
+            !prefs.transitAllowLocalBus) {
+          continue;
+        }
+        final shortNames = legs
+            .map((l) => (l['route']?['shortName'] ??
+                    l['route']?['longName'] ??
+                    '')
+                .toString())
+            .where((n) => n.isNotEmpty)
+            .join(' → ');
+        final stops = <MenetrendStop>[
+          for (final st in (firstLeg['intermediateStops'] as List? ?? const []))
+            if (st is Map && st['name'] != null)
+              MenetrendStop(name: st['name'].toString()),
+        ];
+        final delaySec = (firstLeg['departureDelay'] as num?)?.toInt() ?? 0;
+        trips.add(
+          MenetrendTripOption(
+            routeShortName: shortNames.isEmpty ? 'Járat' : shortNames,
+            routeLongName:
+                (firstLeg['route']?['longName'] ?? '').toString(),
+            mode: mode,
+            departureStation:
+                (firstLeg['from']?['name'] ?? fromName).toString(),
+            arrivalStation: toName,
+            scheduledDeparture: ms(firstLeg['startTime']),
+            scheduledArrival: ms(it['endTime']),
+            delayMinutes: (delaySec / 60).round().clamp(0, 180),
+            platformCode:
+                firstLeg['from']?['stop']?['platformCode']?.toString(),
+            arrivalPlatformCode:
+                (legs.last['to']?['stop']?['platformCode'])?.toString(),
+            intermediateStops: stops,
+            walkToStationMinutes: effectiveWalk,
+            walkToDestinationMinutes: 0,
+          ),
+        );
       }
-    } catch (_) {
-      // Offline or OTP endpoint unreachable: return deterministic evaluation cleanly.
-    }
 
-    return baseEval;
+      return buildEvaluation(
+        trips: trips,
+        isMorning: isMorning,
+        firstLesson: firstLesson,
+        lastLesson: lastLesson,
+        prefs: prefs,
+        effectiveWalk: effectiveWalk,
+        now: now,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Schedules the morning departure alarm & checks for live delays via the native

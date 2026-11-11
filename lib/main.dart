@@ -65,10 +65,9 @@ class _ReKretaAppState extends State<ReKretaApp> {
 
   Future<void> _updatePrefs(UserProfilePrefs nextPrefs) async {
     setState(() => _prefs = nextPrefs);
-    await Future.wait([
-      _tokenStorage.saveProfilePrefs(nextPrefs),
-      DynamicIconService.syncIconWithPrefs(nextPrefs),
-    ]);
+    // Persist first: the alias swap may restart the process.
+    await _tokenStorage.saveProfilePrefs(nextPrefs);
+    await DynamicIconService.syncIconWithPrefs(nextPrefs);
   }
 
   Future<void> _launchWebViewLogin(BuildContext navContext) async {

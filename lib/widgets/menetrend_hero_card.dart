@@ -9,6 +9,82 @@ import '../services/token_storage_service.dart';
 import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
 
+/// Home wrapper for the MenetrendGO card. Handles unconfigured, loading and
+/// "no route found" states; real data is rendered by [MenetrendHeroCard].
+class MenetrendHomeCard extends StatelessWidget {
+  final CommuteEvaluation? evaluation;
+  final bool isLoading;
+  final UserProfilePrefs prefs;
+  final VoidCallback onOpenSettings;
+  final VoidCallback onRetry;
+
+  const MenetrendHomeCard({
+    super.key,
+    required this.evaluation,
+    required this.isLoading,
+    required this.prefs,
+    required this.onOpenSettings,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final eval = evaluation;
+    if (prefs.transitConfigured && eval != null) {
+      return MenetrendHeroCard(evaluation: eval, prefs: prefs);
+    }
+    final scheme = Theme.of(context).colorScheme;
+    final String text;
+    final IconData icon;
+    VoidCallback onTap = onOpenSettings;
+    if (!prefs.transitConfigured) {
+      text = 'Koppints a menetrendi beállításokhoz';
+      icon = Icons.settings_rounded;
+    } else if (isLoading) {
+      text = 'Menetrend betöltése...';
+      icon = Icons.directions_transit_rounded;
+      onTap = () {};
+    } else {
+      text = 'Nem található járat. Koppints az újrapróbálkozáshoz.';
+      icon = Icons.refresh_rounded;
+      onTap = onRetry;
+    }
+    return TactileBounce(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: OledTheme.surfaceDark,
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: scheme.primary.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: scheme.primary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                uwu(text),
+                style: TextStyle(
+                  color: scheme.onSurface,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            if (isLoading && prefs.transitConfigured)
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class MenetrendHeroCard extends StatelessWidget {
   final CommuteEvaluation evaluation;
   final UserProfilePrefs prefs;

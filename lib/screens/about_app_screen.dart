@@ -10,7 +10,7 @@ import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 
 /// Dedicated "Az alkalmazásról" (About App / Rendszer & Névjegy) screen with:
-/// - App icon (`AppBrandIconBadge`), name ('reKRETA'), semantic version ('v1.2.0+4'),
+/// - App icon (`AppBrandIconBadge`), name ('reKRETA'), semantic version ('v1.2.1'),
 ///   and developer credits.
 /// - Direct link to `https://github.com/mlnlbrt10/reKRETA`.
 /// - Manual "Frissítések keresése" button (GitHub Releases OTA updater).
@@ -32,7 +32,6 @@ class AboutAppScreen extends StatefulWidget {
 
 class _AboutAppScreenState extends State<AboutAppScreen> {
   String _version = GitHubUpdaterService.fallbackAppVersion;
-  String _buildNumber = GitHubUpdaterService.fallbackBuildNumber;
   int _versionTapCount = 0;
   DateTime? _lastTapTime;
   bool _isCheckingUpdates = false;
@@ -53,11 +52,10 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
   }
 
   Future<void> _loadPackageVersion() async {
-    final (ver, build) = await GitHubUpdaterService.getAppVersionInfo();
+    final (ver, _) = await GitHubUpdaterService.getAppVersionInfo();
     if (!mounted) return;
     setState(() {
       _version = ver;
-      _buildNumber = build;
     });
   }
 
@@ -228,7 +226,7 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    uwu('Verzió: v$_version+$_buildNumber'),
+                    uwu('v$_version'),
                     style: theme.textTheme.labelLarge?.copyWith(
                       color: scheme.primary,
                       fontWeight: FontWeight.w800,

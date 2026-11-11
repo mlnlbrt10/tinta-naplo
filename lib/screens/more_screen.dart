@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -5,7 +6,6 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
-import '../services/dynamic_icon_service.dart';
 import '../services/github_updater_service.dart';
 import '../services/kreta_client.dart';
 import '../services/menetrend_service.dart';
@@ -237,7 +237,6 @@ class _MoreScreenState extends State<MoreScreen> {
       nextIcon = style == AppThemeStyle.oledPureBlack
           ? 'icon_christmas_oled'
           : 'icon_christmas';
-      DynamicIconService.setAppIcon(nextIcon);
     }
     _updatePrefs(
       _currentPrefs.copyWith(
@@ -253,7 +252,6 @@ class _MoreScreenState extends State<MoreScreen> {
     final String targetIcon = enabled
         ? (isOled ? 'icon_christmas_oled' : 'icon_christmas')
         : (isOled ? 'icon_oled' : 'icon_normal');
-    DynamicIconService.setAppIcon(targetIcon);
     _updatePrefs(
       _currentPrefs.copyWith(
         christmasModeEnabled: enabled,
@@ -264,7 +262,12 @@ class _MoreScreenState extends State<MoreScreen> {
 
   void _selectAppIconPreset(String iconId) {
     HapticFeedback.selectionClick();
-    DynamicIconService.setAppIcon(iconId);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(
+        content: Text('Alkalmazás ikon módosítva! Újraindítás...'),
+        duration: Duration(milliseconds: 1500),
+      ));
     _updatePrefs(
       _currentPrefs.copyWith(appIconPreset: iconId),
     );
@@ -1083,6 +1086,76 @@ class _MoreScreenState extends State<MoreScreen> {
           children: [
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
+              title: const Text(
+                'Kártyák soft blur & áttetszőség',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+              ),
+              subtitle: Text(
+                'Lágy, matt üveghatású kártyák a főoldalon',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: scheme.onSurface.withValues(alpha: 0.68),
+                ),
+              ),
+              value: _currentPrefs.cardBlurEnabled,
+              onChanged: (v) =>
+                  _updatePrefs(_currentPrefs.copyWith(cardBlurEnabled: v)),
+            ),
+            if (_currentPrefs.cardBlurEnabled) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Áttetszőség',
+                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                  ),
+                  Text(
+                    '${(_currentPrefs.cardOpacity * 100).round()}%',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w900,
+                      color: scheme.primary,
+                    ),
+                  ),
+                ],
+              ),
+              Slider(
+                value: _currentPrefs.cardOpacity.clamp(0.6, 1.0),
+                min: 0.6,
+                max: 1.0,
+                divisions: 8,
+                onChanged: (v) =>
+                    _updatePrefs(_currentPrefs.copyWith(cardOpacity: v)),
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Elmosás erőssége',
+                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                  ),
+                  Text(
+                    _currentPrefs.cardBlurSigma.toStringAsFixed(0),
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w900,
+                      color: scheme.primary,
+                    ),
+                  ),
+                ],
+              ),
+              Slider(
+                value: _currentPrefs.cardBlurSigma.clamp(2.0, 8.0),
+                min: 2,
+                max: 8,
+                divisions: 6,
+                onChanged: (v) =>
+                    _updatePrefs(_currentPrefs.copyWith(cardBlurSigma: v)),
+              ),
+            ],
+            const Divider(height: 20),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
               activeThumbColor: const Color(0xFFFF5252),
               title: const Text(
                 'Karácsonyi mód (Ünnepi hóesés)',
@@ -1796,10 +1869,24 @@ class _MoreScreenState extends State<MoreScreen> {
     return _SettingsAccordionCard(
       icon: Icons.directions_railway_filled_rounded,
       title: 'MenetrendGO Ingázás & Értesítések',
-      subtitle:
-          '${_currentPrefs.transitHomeStation} ↔ ${_currentPrefs.transitSchoolStation}',
+      subtitle: _currentPrefs.transitConfigured
+          ? '${_currentPrefs.transitHomeStation} ↔ ${_currentPrefs.transitSchoolStation}'
+          : 'Nincs beállítva',
       christmasCap: _currentPrefs.christmasModeEnabled,
       children: [
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          secondary: const Icon(Icons.directions_railway_filled_rounded),
+          title: const Text(
+            'MenetrendGO kártya megjelenítése a főoldalon',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+          ),
+          value: _currentPrefs.transitCardEnabled,
+          onChanged: (v) => _updatePrefs(
+            _currentPrefs.copyWith(transitCardEnabled: v),
+          ),
+        ),
+        const SizedBox(height: 6),
         Text(
           'Állomások és útvonal (MenetrendGO):',
           style: theme.textTheme.labelMedium?.copyWith(
@@ -1808,72 +1895,30 @@ class _MoreScreenState extends State<MoreScreen> {
           ),
         ),
         const SizedBox(height: 10),
-        TextField(
+        _TransitStopSearchField(
           controller: _homeStationController,
-          decoration: InputDecoration(
-            labelText: 'Otthoni megálló / állomás',
-            hintText: 'pl. Bodajk vasútállomás',
-            prefixIcon: const Icon(Icons.home_rounded),
-            suffixIcon:PopupMenuButton<String>(
-              tooltip: 'Gyors állomásválasztó',
-              icon: const Icon(Icons.arrow_drop_down_circle_outlined),
-              onSelected: (station) {
-                _homeStationController.text = station;
-                _updatePrefs(
-                  _currentPrefs.copyWith(transitHomeStation: station),
-                );
-              },
-              itemBuilder: (context) => MenetrendService.commonStations
-                  .map(
-                    (s) => PopupMenuItem<String>(
-                      value: s,
-                      child: Text(s),
-                    ),
-                  )
-                  .toList(),
-            ),
+          label: 'Otthoni megálló / lakóhely',
+          hint: 'Keress megállót vagy állomást',
+          icon: Icons.home_rounded,
+          onSelected: (name) => _updatePrefs(
+            _currentPrefs.copyWith(transitHomeStation: name),
           ),
-          onChanged: (val) {
-            if (val.trim().isNotEmpty) {
-              _updatePrefs(
-                _currentPrefs.copyWith(transitHomeStation: val.trim()),
-              );
-            }
-          },
+          onCleared: () => _updatePrefs(
+            _currentPrefs.copyWith(transitHomeStation: ''),
+          ),
         ),
         const SizedBox(height: 10),
-        TextField(
+        _TransitStopSearchField(
           controller: _schoolStationController,
-          decoration: InputDecoration(
-            labelText: 'Iskolai megálló / állomás',
-            hintText: 'pl. Székesfehérvár',
-            prefixIcon: const Icon(Icons.school_rounded),
-            suffixIcon: PopupMenuButton<String>(
-              tooltip: 'Gyors állomásválasztó',
-              icon: const Icon(Icons.arrow_drop_down_circle_outlined),
-              onSelected: (station) {
-                _schoolStationController.text = station;
-                _updatePrefs(
-                  _currentPrefs.copyWith(transitSchoolStation: station),
-                );
-              },
-              itemBuilder: (context) => MenetrendService.commonStations
-                  .map(
-                    (s) => PopupMenuItem<String>(
-                      value: s,
-                      child: Text(s),
-                    ),
-                  )
-                  .toList(),
-            ),
+          label: 'Iskola megállója / címe',
+          hint: 'Keress megállót vagy állomást',
+          icon: Icons.school_rounded,
+          onSelected: (name) => _updatePrefs(
+            _currentPrefs.copyWith(transitSchoolStation: name),
           ),
-          onChanged: (val) {
-            if (val.trim().isNotEmpty) {
-              _updatePrefs(
-                _currentPrefs.copyWith(transitSchoolStation: val.trim()),
-              );
-            }
-          },
+          onCleared: () => _updatePrefs(
+            _currentPrefs.copyWith(transitSchoolStation: ''),
+          ),
         ),
         const SizedBox(height: 14),
         Text(
@@ -2094,7 +2139,7 @@ class _MoreScreenState extends State<MoreScreen> {
                   await MenetrendService.showImmediateNotification(
                     title: '🚶 Indulj lassan az állomásra!',
                     body:
-                        'A 07:09-es vonathoz legkésőbb 06:55-kor indulnod kell (${_currentPrefs.walkingDurationMinutes} perc séta). Ne késs el a suliból!',
+                        'Teszt értesítés: indulj el időben az állomásra (${_currentPrefs.walkingDurationMinutes} perc séta).',
                   );
                 },
                 icon: const Icon(Icons.notifications_active_rounded, size: 17),
@@ -2566,6 +2611,7 @@ class _MoreScreenState extends State<MoreScreen> {
                 ChoiceChip(
                   avatar: const Icon(Icons.inbox_rounded, size: 16),
                   label: const Text('Beérkezett'),
+                  showCheckmark: false,
                   selected: !_showSentMessages,
                   onSelected: (_) =>
                       setState(() => _showSentMessages = false),
@@ -2574,6 +2620,7 @@ class _MoreScreenState extends State<MoreScreen> {
                 ChoiceChip(
                   avatar: const Icon(Icons.send_rounded, size: 16),
                   label: const Text('Elküldött'),
+                  showCheckmark: false,
                   selected: _showSentMessages,
                   onSelected: (_) =>
                       setState(() => _showSentMessages = true),
@@ -3240,6 +3287,124 @@ class _SettingsAccordionCardState extends State<_SettingsAccordionCard> {
           ],
         ),
       ),
+    );
+  }
+}
+
+
+/// Text field with live stop/station search against the real transit service.
+class _TransitStopSearchField extends StatefulWidget {
+  final TextEditingController controller;
+  final String label;
+  final String hint;
+  final IconData icon;
+  final ValueChanged<String> onSelected;
+  final VoidCallback onCleared;
+
+  const _TransitStopSearchField({
+    required this.controller,
+    required this.label,
+    required this.hint,
+    required this.icon,
+    required this.onSelected,
+    required this.onCleared,
+  });
+
+  @override
+  State<_TransitStopSearchField> createState() =>
+      _TransitStopSearchFieldState();
+}
+
+class _TransitStopSearchFieldState extends State<_TransitStopSearchField> {
+  final MenetrendService _service = MenetrendService();
+  Timer? _debounce;
+  List<TransitStopResult> _results = const [];
+  bool _searching = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _onChanged(String value) {
+    _debounce?.cancel();
+    final q = value.trim();
+    if (q.isEmpty) {
+      setState(() {
+        _results = const [];
+        _error = null;
+      });
+      widget.onCleared();
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 450), () async {
+      setState(() {
+        _searching = true;
+        _error = null;
+      });
+      try {
+        final res = await _service.searchStops(q);
+        if (!mounted) return;
+        setState(() {
+          _results = res.take(6).toList();
+          _searching = false;
+          if (res.isEmpty) _error = 'Nincs találat.';
+        });
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _results = const [];
+          _searching = false;
+          _error = 'A keresés nem érhető el.';
+        });
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          controller: widget.controller,
+          onChanged: _onChanged,
+          decoration: InputDecoration(
+            labelText: widget.label,
+            hintText: widget.hint,
+            prefixIcon: Icon(widget.icon),
+            suffixIcon: _searching
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : null,
+          ),
+        ),
+        for (final r in _results)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.place_rounded, size: 18),
+            title: Text(r.name),
+            onTap: () {
+              widget.controller.text = r.name;
+              setState(() => _results = const []);
+              widget.onSelected(r.name);
+              FocusScope.of(context).unfocus();
+            },
+          ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4, left: 12),
+            child: Text(_error!, style: const TextStyle(fontSize: 12)),
+          ),
+      ],
     );
   }
 }

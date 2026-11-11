@@ -406,16 +406,56 @@ class _FrostedUpdateDialogContentState
             case OtaStatus.INSTALLATION_ERROR:
             case OtaStatus.CANCELED:
               if (event.status != OtaStatus.INSTALLATION_DONE) {
-                _openFallbackUrl(apkUrl);
+                _showInstallError(
+                  'A telepítés nem indítható el (${event.status.name}'
+                  '${event.value != null ? ': ${event.value}' : ''}).',
+                  apkUrl,
+                );
               }
               break;
           }
         },
-        onError: (_) {
-          _openFallbackUrl(apkUrl);
+        onError: (e) {
+          _showInstallError('Hiba a frissítés közben: $e', apkUrl);
         },
       );
-    } catch (_) {
+    } catch (e) {
+      await _showInstallError('Hiba a frissítés közben: $e', apkUrl);
+    }
+  }
+
+  bool _errorShown = false;
+
+  Future<void> _showInstallError(String message, String apkUrl) async {
+    if (!mounted || _errorShown) return;
+    _errorShown = true;
+    setState(() {
+      _isDownloading = false;
+      _downloadProgress = null;
+      _statusMessage = null;
+    });
+    final openBrowser = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Frissítés sikertelen'),
+        content: Text(
+          '$message\n\nEngedélyezd az ismeretlen forrásból származó '
+          'alkalmazások telepítését, vagy töltsd le az APK-t böngészővel.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Bezár'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Letöltés böngészőben'),
+          ),
+        ],
+      ),
+    );
+    _errorShown = false;
+    if (openBrowser == true) {
       await _openFallbackUrl(apkUrl);
     }
   }

@@ -12,6 +12,7 @@ class DynamicIconService {
   );
 
   static String? _lastSyncedIconId;
+  static String? _pendingIconId;
 
   /// Resolves the active icon preset for [prefs] and updates the Android
   /// launcher `<activity-alias>` if running on Android.
@@ -27,10 +28,14 @@ class DynamicIconService {
       _lastSyncedIconId = iconId;
       return null;
     }
-    if (_lastSyncedIconId == iconId) {
+    if (_lastSyncedIconId == iconId || _pendingIconId == iconId) {
       return null;
     }
+    _pendingIconId = iconId;
     try {
+      // Android may restart the process when the alias changes; give the UI
+      // time to show feedback and prefs time to persist first.
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
       final preset = AppIconPresetInfo.fromId(iconId);
       final appliedAlias = await _channel.invokeMethod<String>(
         'setAppIcon',
@@ -40,8 +45,10 @@ class DynamicIconService {
         },
       );
       _lastSyncedIconId = preset.id;
+      _pendingIconId = null;
       return appliedAlias;
     } catch (_) {
+      _pendingIconId = null;
       // Ignore MissingPluginException in widget tests or non-Android hosts.
       return null;
     }

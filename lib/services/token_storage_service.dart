@@ -145,6 +145,10 @@ class UserProfilePrefs {
   final int walkingDurationMinutes;
   final int transitAlertBufferMinutes;
   final bool transitNotificationsEnabled;
+  final bool transitCardEnabled;
+  final bool cardBlurEnabled;
+  final double cardOpacity;
+  final double cardBlurSigma;
   final String favoriteRoute1stPeriod;
   final String favoriteRoute2ndPeriod;
   final Map<String, GradeRoundingConfig> subjectRoundingOverrides;
@@ -179,8 +183,8 @@ class UserProfilePrefs {
     this.appIconPreset = 'default',
     this.backgroundPreset = 'pure_oled',
     this.modalCloseMode = ModalCloseButtonMode.both,
-    this.transitHomeStation = 'Bodajk vasútállomás',
-    this.transitSchoolStation = 'Székesfehérvár',
+    this.transitHomeStation = '',
+    this.transitSchoolStation = '',
     this.transitAllowCoach = true,
     this.transitAllowTrain = true,
     this.transitAllowLocalBus = true,
@@ -188,13 +192,22 @@ class UserProfilePrefs {
     this.walkingDurationMinutes = 10,
     this.transitAlertBufferMinutes = 5,
     this.transitNotificationsEnabled = true,
-    this.favoriteRoute1stPeriod = '07:09',
-    this.favoriteRoute2ndPeriod = '07:55',
+    this.transitCardEnabled = false,
+    this.cardBlurEnabled = false,
+    this.cardOpacity = 0.9,
+    this.cardBlurSigma = 4.0,
+    this.favoriteRoute1stPeriod = '',
+    this.favoriteRoute2ndPeriod = '',
     this.subjectRoundingOverrides = const {},
     this.subjectCustomColors = const {},
     this.subjectCustomNames = const {},
     this.teacherCustomNames = const {},
   });
+
+  /// True when both the home and school stops have been configured.
+  bool get transitConfigured =>
+      transitHomeStation.trim().isNotEmpty &&
+      transitSchoolStation.trim().isNotEmpty;
 
   Color colorForGrade(int? numericValue) {
     if (numericValue == null) return const Color(0xFF37474F);
@@ -288,6 +301,10 @@ class UserProfilePrefs {
     int? walkingDurationMinutes,
     int? transitAlertBufferMinutes,
     bool? transitNotificationsEnabled,
+    bool? transitCardEnabled,
+    bool? cardBlurEnabled,
+    double? cardOpacity,
+    double? cardBlurSigma,
     String? favoriteRoute1stPeriod,
     String? favoriteRoute2ndPeriod,
     Map<String, GradeRoundingConfig>? subjectRoundingOverrides,
@@ -328,6 +345,10 @@ class UserProfilePrefs {
           transitAlertBufferMinutes ?? this.transitAlertBufferMinutes,
       transitNotificationsEnabled:
           transitNotificationsEnabled ?? this.transitNotificationsEnabled,
+      transitCardEnabled: transitCardEnabled ?? this.transitCardEnabled,
+      cardBlurEnabled: cardBlurEnabled ?? this.cardBlurEnabled,
+      cardOpacity: cardOpacity ?? this.cardOpacity,
+      cardBlurSigma: cardBlurSigma ?? this.cardBlurSigma,
       favoriteRoute1stPeriod:
           favoriteRoute1stPeriod ?? this.favoriteRoute1stPeriod,
       favoriteRoute2ndPeriod:
@@ -371,6 +392,10 @@ class UserProfilePrefs {
       'walkingDurationMinutes': walkingDurationMinutes,
       'transitAlertBufferMinutes': transitAlertBufferMinutes,
       'transitNotificationsEnabled': transitNotificationsEnabled,
+      'transitCardEnabled': transitCardEnabled,
+      'cardBlurEnabled': cardBlurEnabled,
+      'cardOpacity': cardOpacity,
+      'cardBlurSigma': cardBlurSigma,
       'favoriteRoute1stPeriod': favoriteRoute1stPeriod,
       'favoriteRoute2ndPeriod': favoriteRoute2ndPeriod,
       'subjectRoundingOverrides':
@@ -484,11 +509,11 @@ class UserProfilePrefs {
       transitHomeStation:
           (json['transitHomeStation'] as String?)?.trim().isNotEmpty == true
               ? (json['transitHomeStation'] as String).trim()
-              : 'Bodajk vasútállomás',
+              : '',
       transitSchoolStation:
           (json['transitSchoolStation'] as String?)?.trim().isNotEmpty == true
               ? (json['transitSchoolStation'] as String).trim()
-              : 'Székesfehérvár',
+              : '',
       transitAllowCoach: json['transitAllowCoach'] != false,
       transitAllowTrain: json['transitAllowTrain'] != false,
       transitAllowLocalBus: json['transitAllowLocalBus'] != false,
@@ -498,10 +523,14 @@ class UserProfilePrefs {
       transitAlertBufferMinutes:
           (json['transitAlertBufferMinutes'] as num?)?.toInt() ?? 5,
       transitNotificationsEnabled: json['transitNotificationsEnabled'] != false,
+      transitCardEnabled: json['transitCardEnabled'] == true,
+      cardBlurEnabled: json['cardBlurEnabled'] == true,
+      cardOpacity: ((json['cardOpacity'] as num?)?.toDouble() ?? 0.9).clamp(0.6, 1.0),
+      cardBlurSigma: ((json['cardBlurSigma'] as num?)?.toDouble() ?? 4.0).clamp(2.0, 8.0),
       favoriteRoute1stPeriod:
-          (json['favoriteRoute1stPeriod'] as String?) ?? '07:09',
+          (json['favoriteRoute1stPeriod'] as String?) ?? '',
       favoriteRoute2ndPeriod:
-          (json['favoriteRoute2ndPeriod'] as String?) ?? '07:55',
+          (json['favoriteRoute2ndPeriod'] as String?) ?? '',
       subjectRoundingOverrides: subjRounding,
       subjectCustomColors: subjColors,
       subjectCustomNames: subjNames,
@@ -623,6 +652,10 @@ class TokenStorageService {
   static const _keyWalkingDurationMinutes = 'kreta_walking_duration_min';
   static const _keyTransitAlertBufferMinutes = 'kreta_transit_alert_buffer_min';
   static const _keyTransitNotificationsEnabled = 'kreta_transit_notifs_enabled';
+  static const _keyTransitCardEnabled = 'kreta_transit_card_enabled';
+  static const _keyCardBlurEnabled = 'kreta_card_blur_enabled';
+  static const _keyCardOpacity = 'kreta_card_opacity';
+  static const _keyCardBlurSigma = 'kreta_card_blur_sigma';
   static const _keyFavoriteRoute1stPeriod = 'kreta_fav_route_1st';
   static const _keyFavoriteRoute2ndPeriod = 'kreta_fav_route_2nd';
   static const _keySubjectRoundingOverrides = 'kreta_subj_rounding_overrides';
@@ -781,11 +814,11 @@ class TokenStorageService {
     final transitHomeStation =
         values[_keyTransitHomeStation]?.trim().isNotEmpty == true
             ? values[_keyTransitHomeStation]!.trim()
-            : 'Bodajk vasútállomás';
+            : '';
     final transitSchoolStation =
         values[_keyTransitSchoolStation]?.trim().isNotEmpty == true
             ? values[_keyTransitSchoolStation]!.trim()
-            : 'Székesfehérvár';
+            : '';
     final transitAllowCoach =
         values[_keyTransitAllowCoach] == null || values[_keyTransitAllowCoach] == 'true';
     final transitAllowTrain =
@@ -802,9 +835,9 @@ class TokenStorageService {
         values[_keyTransitNotificationsEnabled] == null ||
             values[_keyTransitNotificationsEnabled] == 'true';
     final favoriteRoute1stPeriod =
-        values[_keyFavoriteRoute1stPeriod] ?? '07:09';
+        values[_keyFavoriteRoute1stPeriod] ?? '';
     final favoriteRoute2ndPeriod =
-        values[_keyFavoriteRoute2ndPeriod] ?? '07:55';
+        values[_keyFavoriteRoute2ndPeriod] ?? '';
 
     UwuHelper.isEnabled = uwuEnabled;
     UwuHelper.isTsundereEnabled = tsundereEnabled;
@@ -921,6 +954,12 @@ class TokenStorageService {
       walkingDurationMinutes: walkingDurationMinutes,
       transitAlertBufferMinutes: transitAlertBufferMinutes,
       transitNotificationsEnabled: transitNotificationsEnabled,
+      transitCardEnabled: values[_keyTransitCardEnabled] == 'true',
+      cardBlurEnabled: values[_keyCardBlurEnabled] == 'true',
+      cardOpacity:
+          (double.tryParse(values[_keyCardOpacity] ?? '') ?? 0.9).clamp(0.6, 1.0),
+      cardBlurSigma:
+          (double.tryParse(values[_keyCardBlurSigma] ?? '') ?? 4.0).clamp(2.0, 8.0),
       favoriteRoute1stPeriod: favoriteRoute1stPeriod,
       favoriteRoute2ndPeriod: favoriteRoute2ndPeriod,
       subjectRoundingOverrides: subjRounding,
@@ -1046,6 +1085,22 @@ class TokenStorageService {
       _storage.write(
         key: _keyTransitNotificationsEnabled,
         value: prefs.transitNotificationsEnabled.toString(),
+      ),
+      _storage.write(
+        key: _keyTransitCardEnabled,
+        value: prefs.transitCardEnabled.toString(),
+      ),
+      _storage.write(
+        key: _keyCardBlurEnabled,
+        value: prefs.cardBlurEnabled.toString(),
+      ),
+      _storage.write(
+        key: _keyCardOpacity,
+        value: prefs.cardOpacity.toString(),
+      ),
+      _storage.write(
+        key: _keyCardBlurSigma,
+        value: prefs.cardBlurSigma.toString(),
       ),
       _storage.write(
         key: _keyFavoriteRoute1stPeriod,
