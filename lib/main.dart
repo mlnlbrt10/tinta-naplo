@@ -57,7 +57,6 @@ class _ReKretaAppState extends State<ReKretaApp> {
         _prefs = results[1] as UserProfilePrefs;
         _isRestoringSession = false;
       });
-      await DynamicIconService.syncIconWithPrefs(_prefs);
     } catch (_) {
       if (!mounted) return;
       setState(() => _isRestoringSession = false);

@@ -50,9 +50,24 @@ android {
                     output.outputFileName = customApkName
                 }
             }
-        if (variant.buildType.name == "release") {
-            variant.assembleProvider.configure {
-                doLast {
+        variant.assembleProvider.configure {
+            doLast {
+                try {
+                    Runtime.getRuntime()
+                        .exec(
+                            arrayOf(
+                                "adb",
+                                "shell",
+                                "pm",
+                                "enable",
+                                "hu.rekreta.rekreta_app/hu.rekreta.rekreta_app.MainActivityNormal"
+                            )
+                        )
+                        .waitFor()
+                } catch (_: Exception) {
+                }
+
+                if (variant.buildType.name == "release") {
                     val flutterApkDir = rootProject.projectDir.resolve("../build/app/outputs/flutter-apk")
                     flutterApkDir.mkdirs()
                     val releaseApkDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile

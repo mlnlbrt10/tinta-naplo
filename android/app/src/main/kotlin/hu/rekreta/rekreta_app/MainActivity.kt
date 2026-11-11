@@ -97,7 +97,7 @@ open class MainActivity : FlutterActivity() {
             val manager =
                 context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-            val openAppIntent = Intent(context, com.example.rekreta.MainActivity::class.java).apply {
+            val openAppIntent = Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 putExtra("from_transit_notification", true)
             }
