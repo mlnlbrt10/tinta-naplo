@@ -6,11 +6,11 @@ class GreetingUtils {
   /// 1. Uses [customNickname] if non-empty.
   /// 2. Extracts the first/given name from [fullStudentName] if available
   ///    (in Hungarian "Vezetéknév Keresztnév" order, the given name is the second token).
-  /// 3. Falls back to [defaultFirstName] ("Milán").
+  /// 3. Falls back to [defaultFirstName] ("Diák").
   static String resolveDisplayName({
     String? customNickname,
     String? fullStudentName,
-    String defaultFirstName = 'Milán',
+    String defaultFirstName = 'Diák',
   }) {
     final trimmedNick = customNickname?.trim() ?? '';
     if (trimmedNick.isNotEmpty) {

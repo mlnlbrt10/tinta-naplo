@@ -161,6 +161,10 @@ class UserProfilePrefs {
   final Map<String, String> subjectCustomNames;
   final Map<String, String> teacherCustomNames;
 
+  /// Forward-compatible bag for v1.2.5 settings (timetable filters, scholarship
+  /// mode, exact commute addresses, per-day commute plans). Persisted as JSON.
+  final Map<String, dynamic> extras;
+
   static const Map<int, int> defaultGradeColors = {
     5: 0xFF2E7D32, // Green
     4: 0xFF1565C0, // Blue
@@ -212,12 +216,103 @@ class UserProfilePrefs {
     this.subjectCustomColors = const {},
     this.subjectCustomNames = const {},
     this.teacherCustomNames = const {},
+    this.extras = const {},
   });
 
-  /// True when both the home and school stops have been configured.
+  // ---- v1.2.5 typed accessors over [extras] --------------------------------
+  /// "Elmaradó órák elrejtése" (falls back to the legacy single filter).
+  bool get hideCancelledLessons =>
+      (extras['hideCancelledLessons'] as bool?) ?? !showCancelledLessons;
+
+  /// "Lyukas / szabad órák elrejtése" (falls back to the legacy single filter).
+  bool get hideFreeLessons =>
+      (extras['hideFreeLessons'] as bool?) ?? !showCancelledLessons;
+
+  /// `true` => "Ágazati alapoktatás (9–10. évf.)", `false` => "Szakirányú oktatás".
+  bool get scholarshipBasicEducation => extras['scholarshipBasic'] == true;
+
+  /// `technikum` or `szakkepzo`.
+  String get scholarshipSchoolType =>
+      extras['scholarshipSchoolType'] == 'szakkepzo' ? 'szakkepzo' : 'technikum';
+
+  String get homeAddress => (extras['homeAddress'] as String?)?.trim() ?? '';
+  double? get homeAddressLat => (extras['homeAddressLat'] as num?)?.toDouble();
+  double? get homeAddressLon => (extras['homeAddressLon'] as num?)?.toDouble();
+
+  String get schoolAddress => (extras['schoolAddress'] as String?)?.trim() ?? '';
+  double? get schoolAddressLat =>
+      (extras['schoolAddressLat'] as num?)?.toDouble();
+  double? get schoolAddressLon =>
+      (extras['schoolAddressLon'] as num?)?.toDouble();
+
+  String get homeBusStop => transitHomeStation.trim();
+  String get homeTrainStation =>
+      (extras['homeTrainStation'] as String?)?.trim() ?? '';
+
+  String get schoolBusStop => transitSchoolStation.trim();
+  String get schoolTrainStation =>
+      (extras['schoolTrainStation'] as String?)?.trim() ?? '';
+
+  String get primaryHomeStop => homeBusStop.isNotEmpty
+      ? homeBusStop
+      : (homeTrainStation.isNotEmpty ? homeTrainStation : homeAddress);
+
+  String get primarySchoolStop => schoolBusStop.isNotEmpty
+      ? schoolBusStop
+      : (schoolTrainStation.isNotEmpty ? schoolTrainStation : schoolAddress);
+
+  /// Per-weekday commute plan (1 = Hétfő … 5 = Péntek).
+  /// Supports bidirectional keys:
+  /// - Morning (`Odafele`): `morningLine`, `morningUseLocalBus` (falls back to `line` / `useLocalBus`)
+  /// - Afternoon (`Hazafele`): `afternoonLine`, `afternoonUseLocalBus` (falls back to `line` / `useLocalBus`)
+  Map<String, dynamic> commutePlanForWeekday(int weekday) {
+    final raw = extras['commuteDays'];
+    if (raw is Map && raw['$weekday'] is Map) {
+      return Map<String, dynamic>.from(raw['$weekday'] as Map);
+    }
+    return const {};
+  }
+
+  UserProfilePrefs withExtra(String key, Object? value) {
+    final next = Map<String, dynamic>.from(extras);
+    if (value == null) {
+      next.remove(key);
+    } else {
+      next[key] = value;
+    }
+    return copyWith(extras: next);
+  }
+
+  UserProfilePrefs withExtras(Map<String, Object?> updates) {
+    final next = Map<String, dynamic>.from(extras);
+    updates.forEach((key, value) {
+      if (value == null) {
+        next.remove(key);
+      } else {
+        next[key] = value;
+      }
+    });
+    return copyWith(extras: next);
+  }
+
+  UserProfilePrefs withCommutePlan(int weekday, Map<String, dynamic> plan) {
+    final days = <String, dynamic>{};
+    final raw = extras['commuteDays'];
+    if (raw is Map) {
+      raw.forEach((k, v) => days[k.toString()] = v);
+    }
+    days['$weekday'] = plan;
+    return withExtra('commuteDays', days);
+  }
+
+  /// True when both the home and school stops/addresses have been configured.
   bool get transitConfigured =>
-      transitHomeStation.trim().isNotEmpty &&
-      transitSchoolStation.trim().isNotEmpty;
+      (homeBusStop.isNotEmpty ||
+          homeTrainStation.isNotEmpty ||
+          homeAddress.isNotEmpty) &&
+      (schoolBusStop.isNotEmpty ||
+          schoolTrainStation.isNotEmpty ||
+          schoolAddress.isNotEmpty);
 
   Color colorForGrade(int? numericValue) {
     if (numericValue == null) return const Color(0xFF37474F);
@@ -326,6 +421,7 @@ class UserProfilePrefs {
     Map<String, int>? subjectCustomColors,
     Map<String, String>? subjectCustomNames,
     Map<String, String>? teacherCustomNames,
+    Map<String, dynamic>? extras,
   }) {
     return UserProfilePrefs(
       nickname: clearNickname ? null : (nickname ?? this.nickname),
@@ -378,6 +474,7 @@ class UserProfilePrefs {
       subjectCustomColors: subjectCustomColors ?? this.subjectCustomColors,
       subjectCustomNames: subjectCustomNames ?? this.subjectCustomNames,
       teacherCustomNames: teacherCustomNames ?? this.teacherCustomNames,
+      extras: extras ?? this.extras,
     );
   }
 
@@ -428,6 +525,7 @@ class UserProfilePrefs {
       'subjectCustomColors': subjectCustomColors,
       'subjectCustomNames': subjectCustomNames,
       'teacherCustomNames': teacherCustomNames,
+      'extras': extras,
     };
   }
 
@@ -565,6 +663,9 @@ class UserProfilePrefs {
       subjectCustomColors: subjColors,
       subjectCustomNames: subjNames,
       teacherCustomNames: teacherNames,
+      extras: json['extras'] is Map
+          ? Map<String, dynamic>.from(json['extras'] as Map)
+          : const {},
     );
   }
 
@@ -697,6 +798,7 @@ class TokenStorageService {
   static const _keySubjectCustomColors = 'kreta_subj_custom_colors';
   static const _keySubjectCustomNames = 'kreta_subj_custom_names';
   static const _keyTeacherCustomNames = 'kreta_teacher_custom_names';
+  static const _keyExtras = 'kreta_extras_json';
 
   final FlutterSecureStorage _storage;
 
@@ -1006,7 +1108,17 @@ class TokenStorageService {
       subjectCustomColors: subjColors,
       subjectCustomNames: subjNames,
       teacherCustomNames: teacherNames,
+      extras: _decodeExtras(values[_keyExtras]),
     );
+  }
+
+  static Map<String, dynamic> _decodeExtras(String? raw) {
+    if (raw == null || raw.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    return const {};
   }
 
   Future<void> saveProfilePrefs(UserProfilePrefs prefs) async {
@@ -1027,6 +1139,7 @@ class TokenStorageService {
     final serializedTeacherNames = jsonEncode(prefs.teacherCustomNames);
 
     await Future.wait([
+      _storage.write(key: _keyExtras, value: jsonEncode(prefs.extras)),
       if (trimmedNick.isEmpty)
         _storage.delete(key: _keyCustomNickname)
       else

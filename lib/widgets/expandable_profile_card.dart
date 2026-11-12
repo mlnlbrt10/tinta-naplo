@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import '../utils/greeting_utils.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:kreta_api/kreta_api.dart';
@@ -254,10 +255,10 @@ class _StreamlinedProfileModalSheetState
         : scheme.primary;
     final photoFile = _resolveValidPhotoFile();
 
-    final displayNick = (_prefs.nickname != null &&
-            _prefs.nickname!.trim().isNotEmpty)
-        ? _prefs.nickname!
-        : (widget.student?.name.split(' ').last ?? 'Milán');
+    final displayNick = GreetingUtils.resolveDisplayName(
+      customNickname: _prefs.nickname,
+      fullStudentName: widget.student?.name,
+    );
 
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
@@ -391,7 +392,7 @@ class _StreamlinedProfileModalSheetState
                       controller: _nicknameController,
                       decoration: InputDecoration(
                         labelText: uwu('Becenév szerkesztése'),
-                        hintText: 'pl. Milán',
+                        hintText: 'pl. Alexa',
                         prefixIcon: const Icon(Icons.person_outline_rounded),
                         suffixIcon: _nicknameController.text.isNotEmpty
                             ? IconButton(

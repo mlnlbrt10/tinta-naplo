@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -25,83 +26,100 @@ bool isLessonCancelled(Lesson lesson) {
 bool isInactivePlaceholderLesson(Lesson lesson) =>
     lesson.uid.startsWith('inactive_period_');
 
-/// Filters a day's sorted lessons according to [showCancelledLessons].
-/// When [showCancelledLessons] is true:
-/// - All cancelled lessons (including 0th/1st morning lessons) remain in the list.
-/// - If school starts later (e.g. first scheduled lesson is period 2+ or starts >= 08:40
-///   with no period 1 record), synthesizes a muted greyed-out placeholder card for the
-///   inactive first period(s) so the student clearly sees the free morning slot.
+/// Filters a day's sorted lessons using two independent toggles:
+/// * [hideCancelled] – hides lessons flagged as cancelled ("Elmaradó órák");
+/// * [hideFree] – hides synthesized free / gap ("Lyukas") placeholder periods.
+///
+/// When [hideFree] is false, muted placeholder cards are synthesized for the
+/// inactive leading period(s) and for numbered periods missing between lessons,
+/// so the student clearly sees free slots.
 List<Lesson> filterLessonsForDisplay(
   List<Lesson> rawDayLessons, {
-  required bool showCancelledLessons,
+  required bool hideCancelled,
+  required bool hideFree,
 }) {
   final sorted = List<Lesson>.from(rawDayLessons)
     ..sort((a, b) => a.start.toLocal().compareTo(b.start.toLocal()));
-  if (!showCancelledLessons) {
-    return sorted
-        .where((l) => !isLessonCancelled(l) && !isInactivePlaceholderLesson(l))
-        .toList();
-  }
+  final real = sorted
+      .where((l) => !isInactivePlaceholderLesson(l))
+      .where((l) => !(hideCancelled && isLessonCancelled(l)))
+      .toList();
+  if (hideFree || real.isEmpty) return real;
 
-  if (sorted.isEmpty) {
-    return sorted;
-  }
-
-  final first = sorted.first;
-  final firstLocal = first.start.toLocal();
-  final hasPeriod1 = sorted.any((l) => l.lessonNumber == 1);
-  final firstPeriodNum = first.lessonNumber ??
+  // Period numbers that actually exist (cancelled lessons still occupy a slot).
+  final numbered = sorted
+      .where((l) => l.lessonNumber != null && !isInactivePlaceholderLesson(l))
+      .toList();
+  final firstLocal = sorted.first.start.toLocal();
+  final presentNumbers = numbered.map((l) => l.lessonNumber!).toSet();
+  final firstPeriodNum = sorted.first.lessonNumber ??
       ((firstLocal.hour > 8 ||
               (firstLocal.hour == 8 && firstLocal.minute >= 40))
           ? 2
           : 1);
+  final lastPeriodNum = numbered.isEmpty
+      ? firstPeriodNum
+      : numbered.map((l) => l.lessonNumber!).reduce((a, b) => a > b ? a : b);
 
-  if (!hasPeriod1 && firstPeriodNum > 1) {
-    final placeholders = <Lesson>[];
+  final missing = <int>[];
+  if (!presentNumbers.contains(1)) {
     for (int p = 1; p < firstPeriodNum; p++) {
-      final startTime = DateTime(
-        firstLocal.year,
-        firstLocal.month,
-        firstLocal.day,
-        8 + ((p - 1) * 55) ~/ 60,
-        ((p - 1) * 55) % 60,
-      );
-      final endTime = startTime.add(const Duration(minutes: 45));
-      final dateStr = DateFormat('yyyy-MM-dd').format(firstLocal);
-      placeholders.add(
-        Lesson(
-          uid: 'inactive_period_${dateStr}_$p',
-          date: dateStr,
-          start: startTime,
-          end: endTime,
-          name: 'Nincs óra (Szabad sáv)',
-          lessonNumber: p,
-          lessonSeqNumber: p,
-          roomName: 'Inaktív óra',
-          type: NameUidDesc(
-            uid: 'inactive,Tanora',
-            name: 'Tanora',
-            description: 'Tanóra',
-          ),
-          state: NameUidDesc(
-            uid: 'inactive_period,elmaradt',
-            name: 'elmaradt',
-            description: 'Nincs óra / Elmarad',
-          ),
-          canStudentEditHomework: false,
-          isHomeworkComplete: false,
-          attachments: const [],
-          isDigitalLesson: false,
-          digitalSupportDeviceTypeList: const [],
-          createdAt: startTime,
-          lastModifiedAt: startTime,
-        ),
-      );
+      missing.add(p);
     }
-    return [...placeholders, ...sorted];
+  }
+  for (int p = firstPeriodNum; p <= lastPeriodNum; p++) {
+    if (!presentNumbers.contains(p) && !missing.contains(p)) missing.add(p);
+  }
+  if (missing.isEmpty) return real;
+
+  Lesson placeholder(int p) {
+    final startTime = DateTime(
+      firstLocal.year,
+      firstLocal.month,
+      firstLocal.day,
+      8 + ((p - 1) * 55) ~/ 60,
+      ((p - 1) * 55) % 60,
+    );
+    final endTime = startTime.add(const Duration(minutes: 45));
+    final dateStr = DateFormat('yyyy-MM-dd').format(firstLocal);
+    return Lesson(
+      uid: 'inactive_period_${dateStr}_$p',
+      date: dateStr,
+      start: startTime,
+      end: endTime,
+      name: 'Nincs óra (Szabad sáv)',
+      lessonNumber: p,
+      lessonSeqNumber: p,
+      roomName: 'Inaktív óra',
+      type: NameUidDesc(
+        uid: 'inactive,Tanora',
+        name: 'Tanora',
+        description: 'Tanóra',
+      ),
+      state: NameUidDesc(
+        uid: 'inactive_period,elmaradt',
+        name: 'elmaradt',
+        description: 'Nincs óra / Elmarad',
+      ),
+      canStudentEditHomework: false,
+      isHomeworkComplete: false,
+      attachments: const [],
+      isDigitalLesson: false,
+      digitalSupportDeviceTypeList: const [],
+      createdAt: startTime,
+      lastModifiedAt: startTime,
+    );
   }
 
-  return sorted;
+  final merged = [...real, ...missing.map(placeholder)]..sort((a, b) {
+      final an = a.lessonNumber ?? 99;
+      final bn = b.lessonNumber ?? 99;
+      final cmp = an.compareTo(bn);
+      return cmp != 0
+          ? cmp
+          : a.start.toLocal().compareTo(b.start.toLocal());
+    });
+  return merged;
 }
 
 /// "Órarend" tab providing:
@@ -138,6 +156,8 @@ class TimetableScreen extends StatefulWidget {
 }
 
 class _TimetableScreenState extends State<TimetableScreen> {
+  Timer? _minuteTicker;
+
   static const List<String> _weekdayShortNames = [
     'H',
     'K',
@@ -162,6 +182,9 @@ class _TimetableScreenState extends State<TimetableScreen> {
   late PageController _pageController;
   bool _isAnimatingPage = false;
   bool _isWeeklyMode = false;
+  bool _showFilterPanel = false;
+  bool _initialEntrancePlayed = false;
+  bool _entranceActive = false;
   bool _isLoading = false;
   String? _error;
   List<Lesson> _weekLessons = const [];
@@ -172,25 +195,54 @@ class _TimetableScreenState extends State<TimetableScreen> {
 
   int get _visibleDaysCount => widget.prefs.showWeekends ? 7 : 5;
 
+  void _armInitialEntranceIfNeeded() {
+    if (!_initialEntrancePlayed && widget.isActiveTab && !_isLoading) {
+      _initialEntrancePlayed = true;
+      _entranceActive = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _entranceActive = false;
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     final now = DateTime.now();
-    var initialDay = DateTime(now.year, now.month, now.day);
-    if (!widget.prefs.showWeekends && initialDay.weekday > 5) {
-      initialDay = _mondayOf(initialDay);
+    var initialDay = DateUtils.dateOnly(now);
+    final todaysEnded = widget.initialTodaysLessons.isNotEmpty &&
+        widget.initialTodaysLessons
+            .where((l) => !isLessonCancelled(l))
+            .every((l) => !l.end.toLocal().isAfter(now));
+    if (initialDay.weekday > 5) {
+      // Weekend -> Monday.
+      initialDay = initialDay.add(Duration(days: 8 - initialDay.weekday));
+    } else if (now.hour >= 18 || todaysEnded) {
+      // Evening / school day over -> tomorrow (Friday evening -> Monday).
+      initialDay = initialDay.add(
+        Duration(days: initialDay.weekday == 5 ? 3 : 1),
+      );
     }
     _selectedDate = initialDay;
     final initialPage =
         (_selectedDate.weekday - 1).clamp(0, _visibleDaysCount - 1);
     _pageController = PageController(initialPage: initialPage);
-    _weekLessons = List<Lesson>.from(widget.initialTodaysLessons);
+    _weekLessons = _isSameDay(initialDay, DateUtils.dateOnly(now))
+        ? List<Lesson>.from(widget.initialTodaysLessons)
+        : const [];
     _loadCurrentWeek(showFullSpinner: true);
+    // Keeps the "ongoing lesson" glow in sync with the clock.
+    _minuteTicker = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted && widget.isActiveTab) setState(() {});
+    });
   }
 
   @override
   void didUpdateWidget(covariant TimetableScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!oldWidget.isActiveTab && widget.isActiveTab) {
+      _armInitialEntranceIfNeeded();
+    }
     if (oldWidget.isActiveTab && !widget.isActiveTab && _isWeeklyMode) {
       _applyOrientation(weeklyLandscape: false);
       widget.onImmersiveWeeklyModeChanged?.call(false);
@@ -202,6 +254,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
 
   @override
   void dispose() {
+    _minuteTicker?.cancel();
     _pageController.dispose();
     SystemChrome.setPreferredOrientations(const [
       DeviceOrientation.portraitUp,
@@ -256,11 +309,18 @@ class _TimetableScreenState extends State<TimetableScreen> {
     }
   }
 
-  void _toggleShowCancelledLessons() {
+  void _toggleHideCancelledLessons() {
     HapticFeedback.lightImpact();
-    final nextVal = !widget.prefs.showCancelledLessons;
     widget.onPrefsChanged(
-      widget.prefs.copyWith(showCancelledLessons: nextVal),
+      widget.prefs
+          .withExtra('hideCancelledLessons', !widget.prefs.hideCancelledLessons),
+    );
+  }
+
+  void _toggleHideFreeLessons() {
+    HapticFeedback.lightImpact();
+    widget.onPrefsChanged(
+      widget.prefs.withExtra('hideFreeLessons', !widget.prefs.hideFreeLessons),
     );
   }
 
@@ -294,6 +354,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
         _weekLessons = lessons;
         _isLoading = false;
         _error = null;
+        _armInitialEntranceIfNeeded();
       });
     } catch (e) {
       if (!mounted) return;
@@ -460,9 +521,21 @@ class _TimetableScreenState extends State<TimetableScreen> {
           padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
           child: Column(
             children: [
-              _buildTopControlsCard(theme, scheme, monday, endDay),
+              _buildTopControlsCard(theme, scheme, monday, endDay)
+                  .staggeredEntrance(0, enabled: _entranceActive),
               const SizedBox(height: 6),
-              _buildWeekdaySelector(theme, scheme, monday, visibleDaysCount),
+              _buildWeekdaySelector(theme, scheme, monday, visibleDaysCount)
+                  .staggeredEntrance(1, enabled: _entranceActive),
+              AnimatedSize(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                child: _showFilterPanel
+                    ? Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: _buildExpandableFilterCard(theme, scheme),
+                      )
+                    : const SizedBox.shrink(),
+              ),
               const SizedBox(height: 6),
             ],
           ),
@@ -493,9 +566,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
                           ),
                         );
                       },
-                    ).staggeredEntrance(
-                      0,
-                      animationKey: ValueKey('tt-tab-${widget.entranceEpoch}'),
                     ),
         ),
       ],
@@ -508,13 +578,11 @@ class _TimetableScreenState extends State<TimetableScreen> {
     DateTime monday,
     DateTime endDay,
   ) {
-    return Container(
+    return SoftGlassCard(
+      prefs: widget.prefs,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: theme.cardTheme.color,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: theme.dividerColor),
-      ),
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: theme.dividerColor),
       child: Row(
         children: [
           SizedBox(
@@ -600,47 +668,89 @@ class _TimetableScreenState extends State<TimetableScreen> {
           SizedBox(
             width: 30,
             height: 30,
-            child: PopupMenuButton<String>(
+            child: IconButton(
               padding: EdgeInsets.zero,
               tooltip: 'Órarend beállítások',
-              icon: const Icon(Icons.tune_rounded, size: 18),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(18),
-              ),
-              onSelected: (val) {
-                if (val == 'toggle_weekends') {
-                  _toggleShowWeekends();
-                } else if (val == 'toggle_cancelled') {
-                  _toggleShowCancelledLessons();
-                } else if (val == 'jump_today') {
-                  _jumpToToday();
-                } else if (val == 'pick_date') {
-                  _openDatePicker();
-                }
+              onPressed: () {
+                HapticFeedback.selectionClick();
+                setState(() => _showFilterPanel = !_showFilterPanel);
               },
-              itemBuilder: (context) => [
-                const PopupMenuItem<String>(
-                  value: 'jump_today',
-                  child: Text('Ugrás a mai napra (Ma)'),
-                ),
-                const PopupMenuItem<String>(
-                  value: 'pick_date',
-                  child: Text('Dátum választása naptárból...'),
-                ),
-                CheckedPopupMenuItem<String>(
-                  value: 'toggle_cancelled',
-                  checked: widget.prefs.showCancelledLessons,
-                  child: const Text(
-                    'Elmaradt órák megjelenítése (nulladik/első óra is)',
-                  ),
-                ),
-                CheckedPopupMenuItem<String>(
-                  value: 'toggle_weekends',
-                  checked: widget.prefs.showWeekends,
-                  child: const Text('Hétvége mutatása'),
-                ),
-              ],
+              icon: Icon(
+                Icons.tune_rounded,
+                size: 18,
+                color: _showFilterPanel ? scheme.primary : null,
+              ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExpandableFilterCard(ThemeData theme, ColorScheme scheme) {
+    return SoftGlassCard(
+      prefs: widget.prefs,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: theme.dividerColor),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SwitchListTile.adaptive(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: const Text(
+              'Elmaradó órák elrejtése',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+            value: widget.prefs.hideCancelledLessons,
+            onChanged: (_) => _toggleHideCancelledLessons(),
+          ),
+          SwitchListTile.adaptive(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: const Text(
+              'Lyukas / szabad órák elrejtése',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+            value: widget.prefs.hideFreeLessons,
+            onChanged: (_) => _toggleHideFreeLessons(),
+          ),
+          SwitchListTile.adaptive(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: const Text(
+              'Hétvége mutatása',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+            value: widget.prefs.showWeekends,
+            onChanged: (_) => _toggleShowWeekends(),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: ActionChip(
+                  avatar: const Icon(Icons.today_rounded, size: 16),
+                  label: const Text('Mai nap (Ma)'),
+                  onPressed: () {
+                    setState(() => _showFilterPanel = false);
+                    _jumpToToday();
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ActionChip(
+                  avatar: const Icon(Icons.calendar_month_rounded, size: 16),
+                  label: const Text('Naptár...'),
+                  onPressed: () {
+                    setState(() => _showFilterPanel = false);
+                    _openDatePicker();
+                  },
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -691,65 +801,101 @@ class _TimetableScreenState extends State<TimetableScreen> {
     );
   }
 
-  /// Modern segmented pill bar without redundant dot indicators underneath each day.
+  /// Weekday selector with a smooth sliding pill indicator that is driven
+  /// 1:1 by the horizontal [PageView] scroll position.
   Widget _buildWeekdaySelector(
     ThemeData theme,
     ColorScheme scheme,
     DateTime monday,
     int visibleDaysCount,
   ) {
-    return Container(
+    final selectedIdx =
+        (_selectedDate.weekday - 1).clamp(0, visibleDaysCount - 1);
+    return SoftGlassCard(
+      prefs: widget.prefs,
       padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: theme.cardTheme.color,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: theme.dividerColor),
-      ),
-      child: Row(
-        children: List.generate(visibleDaysCount, (idx) {
-          final day = monday.add(Duration(days: idx));
-          final selected = _isSameDay(day, _selectedDate);
-
-          return Expanded(
-            child: TactileBounce(
-              onTap: () => _onSelectWeekdayPill(idx, monday),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 4),
-                decoration: BoxDecoration(
-                  color: selected ? scheme.primary : Colors.transparent,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  mainAxisSize: MainAxisSize.min,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: theme.dividerColor),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final slotWidth = constraints.maxWidth / visibleDaysCount;
+          return AnimatedBuilder(
+            animation: _pageController,
+            builder: (context, _) {
+              double page = selectedIdx.toDouble();
+              if (_pageController.hasClients &&
+                  _pageController.position.haveDimensions) {
+                page = (_pageController.page ?? page)
+                    .clamp(0.0, (visibleDaysCount - 1).toDouble());
+              }
+              return SizedBox(
+                height: 34,
+                child: Stack(
                   children: [
-                    Text(
-                      _weekdayShortNames[idx],
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: selected ? scheme.onPrimary : scheme.onSurface,
+                    Positioned(
+                      left: page * slotWidth,
+                      top: 0,
+                      bottom: 0,
+                      width: slotWidth,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: scheme.primary,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 3),
-                    Text(
-                      '${day.day}.',
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w600,
-                        color: selected
-                            ? scheme.onPrimary.withValues(alpha: 0.88)
-                            : scheme.onSurface.withValues(alpha: 0.62),
-                      ),
+                    Row(
+                      children: List.generate(visibleDaysCount, (idx) {
+                        final day = monday.add(Duration(days: idx));
+                        final t = (1 - (page - idx).abs()).clamp(0.0, 1.0);
+                        final mainColor = Color.lerp(
+                          scheme.onSurface,
+                          scheme.onPrimary,
+                          t,
+                        )!;
+                        final subColor = Color.lerp(
+                          scheme.onSurface.withValues(alpha: 0.62),
+                          scheme.onPrimary.withValues(alpha: 0.88),
+                          t,
+                        )!;
+                        return Expanded(
+                          child: TactileBounce(
+                            onTap: () => _onSelectWeekdayPill(idx, monday),
+                            child: Center(
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    _weekdayShortNames[idx],
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w800,
+                                      color: mainColor,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    '${day.day}.',
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: subColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
                     ),
                   ],
                 ),
-              ),
-            ),
+              );
+            },
           );
-        }),
+        },
       ),
     );
   }
@@ -764,7 +910,8 @@ class _TimetableScreenState extends State<TimetableScreen> {
         .toList();
     final dayLessons = filterLessonsForDisplay(
       rawDayLessons,
-      showCancelledLessons: widget.prefs.showCancelledLessons,
+      hideCancelled: widget.prefs.hideCancelledLessons,
+      hideFree: widget.prefs.hideFreeLessons,
     );
 
     final dayName = _weekdayFullNames[(day.weekday - 1).clamp(0, 6)];
@@ -807,6 +954,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
       ),
       if (dayLessons.isEmpty)
         _buildEmptyLessonsCard(theme, scheme)
+            .staggeredEntrance(2, enabled: _entranceActive)
       else
         ...List.generate(dayLessons.length, (idx) {
           final lesson = dayLessons[idx];
@@ -816,7 +964,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
             lesson,
             _timeFormat,
             prefs: widget.prefs,
-          );
+          ).staggeredEntrance(idx + 2, enabled: _entranceActive);
         }),
     ];
   }
@@ -837,7 +985,8 @@ class _TimetableScreenState extends State<TimetableScreen> {
             .toList();
         final dayLessons = filterLessonsForDisplay(
           rawDayLessons,
-          showCancelledLessons: widget.prefs.showCancelledLessons,
+          hideCancelled: widget.prefs.hideCancelledLessons,
+          hideFree: widget.prefs.hideFreeLessons,
         );
         final isToday = _isSameDay(day, DateTime.now());
 
@@ -1018,13 +1167,11 @@ class _TimetableScreenState extends State<TimetableScreen> {
   }
 
   Widget _buildEmptyLessonsCard(ThemeData theme, ColorScheme scheme) {
-    return Container(
+    return SoftGlassCard(
+      prefs: widget.prefs,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: theme.cardTheme.color,
-        borderRadius: OledTheme.cardRadius,
-        border: Border.all(color: theme.dividerColor),
-      ),
+      borderRadius: OledTheme.cardRadius,
+      border: Border.all(color: theme.dividerColor),
       child: Row(
         children: [
           Icon(
@@ -1114,9 +1261,13 @@ Widget buildOledLessonCard(
           ? prefs.resolveTeacherName(lesson.substituteTeacher)
           : lesson.substituteTeacher;
 
-  return Padding(
-    padding: const EdgeInsets.only(bottom: 7),
-    child: TactileBounce(
+  final nowLocal = DateTime.now();
+  final isOngoing = !isPlaceholder &&
+      !isCancelled &&
+      !nowLocal.isBefore(startLocal) &&
+      !nowLocal.isAfter(endLocal);
+
+  Widget card = TactileBounce(
       pressedScale: 0.97,
       onTap: () => showLessonInspectionModal(
         context,
@@ -1134,7 +1285,9 @@ Widget buildOledLessonCard(
               : theme.cardTheme.color,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isPlaceholder
+            color: isOngoing
+                ? Colors.blueAccent
+                : isPlaceholder
                 ? theme.dividerColor.withValues(alpha: 0.45)
                 : isCancelled
                     ? const Color(0xFFC62828).withValues(alpha: 0.75)
@@ -1332,6 +1485,26 @@ Widget buildOledLessonCard(
           ),
         ),
       ),
-    ),
+    );
+
+  if (isOngoing) {
+    card = DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.blueAccent.withValues(alpha: 0.35),
+            blurRadius: 14,
+            spreadRadius: 0.5,
+          ),
+        ],
+      ),
+      child: card,
+    );
+  }
+
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 7),
+    child: card,
   );
 }

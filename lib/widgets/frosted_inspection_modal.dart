@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -38,21 +36,21 @@ Future<void> showFrostedModal({
       opaque: false,
       barrierDismissible: true,
       barrierLabel: 'Bezárás',
-      barrierColor: Colors.transparent,
-      transitionDuration: const Duration(milliseconds: 280),
-      reverseTransitionDuration: const Duration(milliseconds: 240),
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 180),
+      reverseTransitionDuration: const Duration(milliseconds: 160),
       pageBuilder: (dialogContext, animation, secondaryAnimation) {
         final theme = Theme.of(dialogContext);
         final scheme = theme.colorScheme;
         final isDark = theme.brightness == Brightness.dark;
         final cardBg = isDark
-            ? const Color(0xFF121212).withValues(alpha: 0.92)
-            : Colors.white.withValues(alpha: 0.94);
+            ? const Color(0xFF14181F).withValues(alpha: 0.94)
+            : Colors.white.withValues(alpha: 0.96);
 
         final curved = CurvedAnimation(
           parent: animation,
-          curve: Curves.easeOutBack,
-          reverseCurve: Curves.easeInOutCubic,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
         );
 
         Widget badgeOrIcon;
@@ -381,31 +379,16 @@ Future<void> showFrostedModal({
           ),
         );
 
-        return AnimatedBuilder(
-          animation: curved,
-          builder: (context, child) {
-            final t = animation.value.clamp(0.0, 1.0);
-            final sigma = 4.5 * t;
-            final scale = 0.90 + (0.10 * curved.value);
-            return GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => Navigator.of(dialogContext).pop(),
-              child: ColoredBox(
-                color: const Color(0xFF121212).withValues(alpha: 0.78 * t),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-                  child: Opacity(
-                    opacity: t,
-                    child: Transform.scale(
-                      scale: scale,
-                      child: child,
-                    ),
-                  ),
-                ),
-              ),
-            );
-          },
-          child: modalCard,
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => Navigator.of(dialogContext).pop(),
+          child: FadeTransition(
+            opacity: curved,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.92, end: 1.0).animate(curved),
+              child: RepaintBoundary(child: modalCard),
+            ),
+          ),
         );
       },
     ),

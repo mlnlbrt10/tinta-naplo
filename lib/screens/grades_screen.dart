@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -9,6 +11,7 @@ import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 import '../widgets/frosted_inspection_modal.dart';
+import '../widgets/glass_card.dart';
 
 /// Sorting modes for the Jegyek subject list.
 enum SubjectSortMode {
@@ -30,6 +33,7 @@ class ScholarshipTier {
   final String shortTitle;
   final String monthlyAmountLabel;
   final int estimatedMonthlyForint;
+  final int percent;
 
   const ScholarshipTier({
     required this.rangeLabel,
@@ -39,46 +43,58 @@ class ScholarshipTier {
     required this.shortTitle,
     required this.monthlyAmountLabel,
     required this.estimatedMonthlyForint,
+    required this.percent,
   });
 
+  /// Official Hungarian vocational scholarship (szakképzési ösztöndíj) tiers
+  /// for szakirányú oktatás (11. évfolyamtól).
   static const List<ScholarshipTier> tiers = [
     ScholarshipTier(
-      rangeLabel: '2.00 - 2.99',
+      rangeLabel: '2,00 – 2,99',
       minAverage: 2.00,
       maxAverage: 2.99,
-      title: 'Alap ösztöndíj sáv',
-      shortTitle: 'Alap sáv',
-      monthlyAmountLabel: '~8 000 Ft/hó',
+      title: '8 000 Ft / hó',
+      shortTitle: '2,00 – 2,99 sáv',
+      monthlyAmountLabel: '8 000 Ft / hó',
       estimatedMonthlyForint: 8000,
+      percent: 8,
     ),
     ScholarshipTier(
-      rangeLabel: '3.00 - 3.99',
+      rangeLabel: '3,00 – 3,99',
       minAverage: 3.00,
       maxAverage: 3.99,
-      title: 'Középszintű ösztöndíj sáv',
-      shortTitle: 'Középszintű sáv',
-      monthlyAmountLabel: '~16 000 Ft/hó',
-      estimatedMonthlyForint: 16000,
+      title: '25 000 Ft / hó',
+      shortTitle: '3,00 – 3,99 sáv',
+      monthlyAmountLabel: '25 000 Ft / hó',
+      estimatedMonthlyForint: 25000,
+      percent: 25,
     ),
     ScholarshipTier(
-      rangeLabel: '4.00 - 4.49',
+      rangeLabel: '4,00 – 4,49',
       minAverage: 4.00,
       maxAverage: 4.49,
-      title: 'Emelt ösztöndíj sáv',
-      shortTitle: 'Emelt sáv',
-      monthlyAmountLabel: '~33 000 - 40 000 Ft/hó',
-      estimatedMonthlyForint: 33000,
+      title: '42 000 Ft / hó',
+      shortTitle: '4,00 – 4,49 sáv',
+      monthlyAmountLabel: '42 000 Ft / hó',
+      estimatedMonthlyForint: 42000,
+      percent: 42,
     ),
     ScholarshipTier(
-      rangeLabel: '4.50 - 5.00',
+      rangeLabel: '4,50 – 5,00',
       minAverage: 4.50,
       maxAverage: 5.00,
-      title: 'Kiemelt csúcs ösztöndíj sáv',
-      shortTitle: 'Kiemelt csúcs sáv',
-      monthlyAmountLabel: '~50 000 - 59 000 Ft/hó',
+      title: '59 000 Ft / hó',
+      shortTitle: '4,50 – 5,00 sáv',
+      monthlyAmountLabel: '59 000 Ft / hó',
       estimatedMonthlyForint: 59000,
+      percent: 59,
     ),
   ];
+
+  /// Fixed monthly payout during ágazati alapoktatás (9–10. évf.):
+  /// Technikum 8 000 Ft / hó, Szakképző 16 000 Ft / hó.
+  static int basicEducationMonthlyForint(String schoolType) =>
+      schoolType == 'szakkepzo' ? 16000 : 8000;
 
   static String formatForint(int amount) {
     final s = amount.abs().toString();
@@ -216,31 +232,66 @@ class SubjectGradeSummary {
   }
 
   /// Computes a weighted average across real [grades] and optional [ghostGrades].
+  /// When [allow200Weight] is explicitly `false`, weights above 100% are treated
+  /// as 100% (unweighted / 100% base weight mode).
   static double? computeWeightedAverage(
     Iterable<Grade> grades, [
     Iterable<GhostGrade> ghostGrades = const [],
+    bool? allow200Weight,
   ]) {
     double weightedSum = 0;
     double totalWeight = 0;
     for (final g in grades) {
       final val = g.numericValue;
       if (val == null || val < 1 || val > 5) continue;
-      final weight =
+      double weight =
           (g.weightPercentage != null && g.weightPercentage! > 0)
               ? g.weightPercentage!.toDouble()
               : 100.0;
+      if (allow200Weight == false && weight > 100.0) {
+        weight = 100.0;
+      }
       weightedSum += val * weight;
       totalWeight += weight;
     }
     for (final ghost in ghostGrades) {
-      final w = ghost.weightPercentage > 0
+      double w = ghost.weightPercentage > 0
           ? ghost.weightPercentage.toDouble()
           : 100.0;
+      if (allow200Weight == false && w > 100.0) {
+        w = 100.0;
+      }
       weightedSum += ghost.value * w;
       totalWeight += w;
     }
     if (totalWeight <= 0) return null;
     return weightedSum / totalWeight;
+  }
+
+  /// Evaluates the rounded integer grade (1..5) for [subject] using the user's
+  /// configured rounding thresholds ("Globális kerekítési határok": Jeles 5,
+  /// Jó 4, Közepes 3, Elégséges 2, plus any per-subject override).
+  static int evaluateRoundedSubjectGrade(
+    SubjectGradeSummary subject, {
+    UserProfilePrefs? prefs,
+    bool? allow200Weight,
+    double? rawAverageOverride,
+  }) {
+    final rawAvg = rawAverageOverride ??
+        (allow200Weight != null && subject.grades.isNotEmpty
+            ? computeWeightedAverage(subject.grades, const [], allow200Weight)
+            : null) ??
+        subject.weightedAverage ??
+        computeWeightedAverage(subject.grades) ??
+        1.0;
+    if (prefs != null) {
+      return prefs.evaluateSubjectRoundedGrade(
+        rawAvg,
+        subject.heroId,
+        subject.subjectName,
+      );
+    }
+    return const GradeRoundingConfig().evaluateRoundedGrade(rawAvg);
   }
 
   /// Calculates how many grades of [gradeValue] (at [weightPercentage]) are
@@ -252,23 +303,30 @@ class SubjectGradeSummary {
     required double targetThreshold,
     required int gradeValue,
     int weightPercentage = 100,
+    bool? allow200Weight,
   }) {
     double weightedSum = 0;
     double totalWeight = 0;
     for (final g in currentGrades) {
       final val = g.numericValue;
       if (val == null || val < 1 || val > 5) continue;
-      final weight =
+      double weight =
           (g.weightPercentage != null && g.weightPercentage! > 0)
               ? g.weightPercentage!.toDouble()
               : 100.0;
+      if (allow200Weight == false && weight > 100.0) {
+        weight = 100.0;
+      }
       weightedSum += val * weight;
       totalWeight += weight;
     }
     for (final ghost in ghostGrades) {
-      final w = ghost.weightPercentage > 0
+      double w = ghost.weightPercentage > 0
           ? ghost.weightPercentage.toDouble()
           : 100.0;
+      if (allow200Weight == false && w > 100.0) {
+        w = 100.0;
+      }
       weightedSum += ghost.value * w;
       totalWeight += w;
     }
@@ -303,29 +361,51 @@ class SubjectGradeSummary {
     return counts;
   }
 
-  /// Computes the global scholarship average across subjects:
-  /// `Global Average = Sum(Subject Averages) / Number of Subjects`.
+  /// Computes the overall average (Kimeneti átlag) and vocational scholarship
+  /// average strictly as the arithmetic mean of each subject's rounded integer
+  /// grade (1, 2, 3, 4, or 5) evaluated via the user's rounding thresholds.
   static double? computeOverallSubjectAverage(
-    Iterable<SubjectGradeSummary> subjects,
-  ) {
-    double sumSubjAvgs = 0;
-    int count = 0;
+    Iterable<SubjectGradeSummary> subjects, {
+    UserProfilePrefs? prefs,
+    bool? allow200Weight,
+    Iterable<GhostGrade> ghostGrades = const [],
+  }) {
+    double sumRounded = 0;
+    double count = 0;
     for (final s in subjects) {
-      final avg = s.weightedAverage ?? computeWeightedAverage(s.grades);
-      if (avg != null && avg > 0) {
-        sumSubjAvgs += avg;
-        count++;
+      final rawAvg = (allow200Weight != null && s.grades.isNotEmpty
+              ? computeWeightedAverage(s.grades, const [], allow200Weight)
+              : null) ??
+          s.weightedAverage ??
+          computeWeightedAverage(s.grades);
+      if (rawAvg != null && rawAvg > 0) {
+        final rounded = evaluateRoundedSubjectGrade(
+          s,
+          prefs: prefs,
+          allow200Weight: allow200Weight,
+          rawAverageOverride: rawAvg,
+        );
+        sumRounded += rounded;
+        count += 1.0;
       }
     }
-    if (count == 0) return null;
-    return sumSubjAvgs / count;
+    for (final ghost in ghostGrades) {
+      final wFactor = (ghost.weightPercentage > 0
+              ? ghost.weightPercentage.toDouble()
+              : 100.0) /
+          100.0;
+      sumRounded += ghost.value.clamp(1, 5) * wFactor;
+      count += wFactor;
+    }
+    if (count <= 0) return null;
+    return sumRounded / count;
   }
 
   /// Analyzes the student's overall scholarship average across subjects:
-  /// `Global Average = Sum(Subject Averages) / Number of Subjects`
-  /// and calculates subject-specific triage impact ordered dynamically by
-  /// easiest effort (which subjects boost the overall average fastest with the
-  /// fewest grades).
+  /// `Global Average = Sum(Rounded Integer Subject Grades) / Number of Subjects`
+  /// and calculates how many 5-ös grades are needed in each subject to push its
+  /// raw average across the next rounding threshold (flipping its rounded integer
+  /// grade up by +1 and boosting the overall average).
   static List<ScholarshipRecommendation> buildScholarshipRecommendations({
     required List<Grade> allGrades,
     required List<SubjectGradeSummary> subjects,
@@ -334,25 +414,48 @@ class SubjectGradeSummary {
     bool? allow200Weight,
   }) {
     final validSubjects = subjects
-        .where((s) => (s.weightedAverage ?? computeWeightedAverage(s.grades)) != null)
+        .where(
+          (s) => (s.weightedAverage ?? computeWeightedAverage(s.grades)) != null,
+        )
         .toList();
     final nSubjects = validSubjects.length;
-    if (nSubjects == 0 || targetAverage >= 5.0) {
+    if (nSubjects == 0 || targetAverage > 5.0) {
       return const [];
     }
 
-    final currentGlobalAvg = computeOverallSubjectAverage(validSubjects) ?? 0.0;
-    if (currentGlobalAvg >= targetAverage) {
+    final use200 = allow200Weight ?? prefs?.calcAllow200Weight ?? false;
+    final weight = use200 ? 200 : 100;
+    // Respect the 100% vs 200% weight toggle when explicit or configured:
+    final effectiveAllow200 =
+        (allow200Weight != null || prefs != null) ? use200 : null;
+
+    final currentGlobalAvg = computeOverallSubjectAverage(
+          validSubjects,
+          prefs: prefs,
+          allow200Weight: effectiveAllow200,
+        ) ??
+        0.0;
+    if (currentGlobalAvg >= targetAverage - 1e-9) {
       return const [];
     }
 
     final gap = targetAverage - currentGlobalAvg;
-    final use200 = allow200Weight ?? prefs?.calcAllow200Weight ?? false;
-    final weight = use200 ? 200 : 100;
 
     String nameOf(SubjectGradeSummary s) => prefs != null
         ? prefs.resolveSubjectName(s.subjectName, s.subjectUid)
         : s.subjectName;
+
+    GradeRoundingConfig roundingOf(SubjectGradeSummary s) => prefs != null
+        ? prefs.roundingForSubject(s.heroId, s.subjectName)
+        : const GradeRoundingConfig();
+
+    double rawAvgOf(SubjectGradeSummary s) =>
+        (effectiveAllow200 != null && s.grades.isNotEmpty
+            ? computeWeightedAverage(s.grades, const [], effectiveAllow200)
+            : null) ??
+        s.weightedAverage ??
+        computeWeightedAverage(s.grades) ??
+        0.0;
 
     double simSubjAvg(SubjectGradeSummary s, int k) {
       return computeWeightedAverage(
@@ -361,6 +464,7 @@ class SubjectGradeSummary {
               k,
               GhostGrade(value: 5, weightPercentage: weight),
             ),
+            effectiveAllow200,
           ) ??
           5.0;
     }
@@ -368,56 +472,89 @@ class SubjectGradeSummary {
     final candidates = <({
       SubjectGradeSummary subj,
       double oldAvg,
-      double singleBoost,
+      int oldRounded,
+      int newRounded,
       int count,
       double newAvg,
       double totalBoost,
+      double distanceToThreshold,
     })>[];
 
     for (final subj in validSubjects) {
-      final oldAvg =
-          subj.weightedAverage ?? computeWeightedAverage(subj.grades) ?? 0.0;
-      if (oldAvg >= 4.995) continue;
+      final rounding = roundingOf(subj);
+      final oldAvg = rawAvgOf(subj);
+      final oldRounded = rounding.evaluateRoundedGrade(oldAvg);
+      if (oldRounded >= 5) continue;
 
-      final avg1 = simSubjAvg(subj, 1);
-      final boost1 = (avg1 - oldAvg) / nSubjects;
-      if (boost1 <= 0) continue;
+      final nextRounded = oldRounded + 1;
+      final nextThreshold = rounding.thresholdForGrade(nextRounded);
 
-      // Determine the fewest grades needed in this subject if 1..3 grades can
-      // reach the target alone; otherwise show the high-leverage 1 db 5-ös boost.
-      int chosenCount = 1;
-      for (int k = 1; k <= 3; k++) {
-        final avgK = simSubjAvg(subj, k);
-        final boostK = (avgK - oldAvg) / nSubjects;
-        if (boostK >= gap - 1e-9) {
-          chosenCount = k;
-          break;
+      final neededCount = calculateNeededGradesCount(
+        currentGrades: subj.grades,
+        ghostGrades: const [],
+        targetThreshold: nextThreshold,
+        gradeValue: 5,
+        weightPercentage: weight,
+        allow200Weight: effectiveAllow200,
+      );
+      if (neededCount == null || neededCount <= 0) continue;
+
+      int chosenCount = neededCount;
+      double newAvg = simSubjAvg(subj, chosenCount);
+      int newRounded = rounding.evaluateRoundedGrade(newAvg);
+      if (newRounded <= oldRounded) {
+        newRounded = nextRounded;
+      }
+      double totalBoost = (newRounded - oldRounded) / nSubjects;
+
+      // If flipping by +1 doesn't reach targetAverage alone and the subject can
+      // be pushed to an even higher rounded integer grade within <= 4 grades,
+      // check if a multi-grade jump reaches the target.
+      if (totalBoost < gap - 1e-9 && newRounded < 5) {
+        final higherTargetGrade = (oldRounded + 2).clamp(2, 5);
+        final higherThreshold = rounding.thresholdForGrade(higherTargetGrade);
+        final neededHigher = calculateNeededGradesCount(
+          currentGrades: subj.grades,
+          ghostGrades: const [],
+          targetThreshold: higherThreshold,
+          gradeValue: 5,
+          weightPercentage: weight,
+          allow200Weight: effectiveAllow200,
+        );
+        if (neededHigher != null && neededHigher > 0 && neededHigher <= 4) {
+          final avgH = simSubjAvg(subj, neededHigher);
+          final roundH = rounding.evaluateRoundedGrade(avgH);
+          final boostH = (roundH - oldRounded) / nSubjects;
+          if (boostH >= gap - 1e-9) {
+            chosenCount = neededHigher;
+            newAvg = avgH;
+            newRounded = roundH;
+            totalBoost = boostH;
+          }
         }
       }
-
-      final newAvg = simSubjAvg(subj, chosenCount);
-      final totalBoost = (newAvg - oldAvg) / nSubjects;
 
       candidates.add((
         subj: subj,
         oldAvg: oldAvg,
-        singleBoost: boost1,
+        oldRounded: oldRounded,
+        newRounded: newRounded,
         count: chosenCount,
         newAvg: newAvg,
         totalBoost: totalBoost,
+        distanceToThreshold: (nextThreshold - oldAvg).clamp(0.0, 5.0),
       ));
     }
 
-    // Order dynamically by easiest effort: highest global boost per single 5-ös first!
+    // Order dynamically by easiest effort: fewest 5-ös grades needed to flip
+    // the rounded subject grade first, then highest global boost, then closest
+    // to the next rounding threshold!
     candidates.sort((a, b) {
-      if (use200) {
-        final wCmp =
-            b.subj.maxWeightPercentage.compareTo(a.subj.maxWeightPercentage);
-        if (wCmp != 0) return wCmp;
-      }
-      final boostCmp = b.singleBoost.compareTo(a.singleBoost);
+      final countCmp = a.count.compareTo(b.count);
+      if (countCmp != 0) return countCmp;
+      final boostCmp = b.totalBoost.compareTo(a.totalBoost);
       if (boostCmp != 0) return boostCmp;
-      return a.oldAvg.compareTo(b.oldAvg);
+      return a.distanceToThreshold.compareTo(b.distanceToThreshold);
     });
 
     final recs = <ScholarshipRecommendation>[];
@@ -428,7 +565,8 @@ class SubjectGradeSummary {
       final reachesTarget = projGlobal >= targetAverage - 1e-9;
       final explanation =
           '$displayName: Szerezz ${c.count} db ${weightLabel}5-öst '
-          '(${c.oldAvg.toStringAsFixed(2)} -> ${c.newAvg.toStringAsFixed(2)}), '
+          '(${c.oldAvg.toStringAsFixed(2)} -> ${c.newAvg.toStringAsFixed(2)}, '
+          'kerekítve: ${c.oldRounded} -> ${c.newRounded}), '
           'ami +${c.totalBoost.toStringAsFixed(2)}-vel dobja meg a teljes átlagodat'
           '${reachesTarget ? " (eléri a kívánt ${targetAverage.toStringAsFixed(2)}-t)!" : "!"}';
 
@@ -486,7 +624,11 @@ class SubjectGradeSummary {
           subjectName: first.subject.name,
           categoryDescription: first.subject.category.description,
           grades: list,
-          weightedAverage: computeWeightedAverage(list),
+          weightedAverage: computeWeightedAverage(
+            list,
+            const [],
+            prefs?.calcAllow200Weight,
+          ),
           latestGrade: first,
         ),
       );
@@ -530,6 +672,7 @@ class GradesScreen extends StatefulWidget {
   final UserProfilePrefs prefs;
   final ValueChanged<UserProfilePrefs> onPrefsChanged;
   final Future<void> Function() onRefresh;
+  final bool isActiveTab;
   final int entranceEpoch;
 
   const GradesScreen({
@@ -538,6 +681,7 @@ class GradesScreen extends StatefulWidget {
     required this.prefs,
     required this.onPrefsChanged,
     required this.onRefresh,
+    this.isActiveTab = true,
     this.entranceEpoch = 0,
   });
 
@@ -550,6 +694,41 @@ class _GradesScreenState extends State<GradesScreen> {
   bool _showSimulatorPanel = false;
   int _selectedGhostWeight = 100;
   SubjectSortMode _sortMode = SubjectSortMode.alphabetical;
+
+  /// Entrance animations run once when the screen is first shown with data;
+  /// lazily built list tiles never re-animate while scrolling.
+  bool _initialEntrancePlayed = false;
+  bool _entranceActive = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isActiveTab) {
+      _armInitialEntrance();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant GradesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActiveTab && !_initialEntrancePlayed) {
+      _armInitialEntrance();
+    }
+  }
+
+  void _armInitialEntrance() {
+    _initialEntrancePlayed = true;
+    _entranceActive = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _entranceActive = false;
+    });
+  }
+
+  Widget _enter(Widget child, int index, Key key) => child.staggeredEntrance(
+        index,
+        animationKey: key,
+        enabled: _entranceActive,
+      );
 
   void _addOverallGhostGrade(int gradeValue) {
     setState(() {
@@ -606,13 +785,29 @@ class _GradesScreenState extends State<GradesScreen> {
       prefs: widget.prefs,
     );
 
-    final baseOverallAvg =
-        SubjectGradeSummary.computeOverallSubjectAverage(subjects) ??
-            SubjectGradeSummary.computeWeightedAverage(widget.allGrades);
-    final simulatedOverallAvg = SubjectGradeSummary.computeWeightedAverage(
-      widget.allGrades,
-      _overallGhostGrades,
-    );
+    final baseOverallAvg = SubjectGradeSummary.computeOverallSubjectAverage(
+          subjects,
+          prefs: widget.prefs,
+          allow200Weight: widget.prefs.calcAllow200Weight,
+        ) ??
+        SubjectGradeSummary.computeWeightedAverage(
+          widget.allGrades,
+          const [],
+          widget.prefs.calcAllow200Weight,
+        );
+    final simulatedOverallAvg = _overallGhostGrades.isEmpty
+        ? baseOverallAvg
+        : (SubjectGradeSummary.computeOverallSubjectAverage(
+              subjects,
+              prefs: widget.prefs,
+              allow200Weight: widget.prefs.calcAllow200Weight,
+              ghostGrades: _overallGhostGrades,
+            ) ??
+            SubjectGradeSummary.computeWeightedAverage(
+              widget.allGrades,
+              _overallGhostGrades,
+              widget.prefs.calcAllow200Weight,
+            ));
     final numericGradeCount =
         widget.allGrades.where((g) => g.numericValue != null).length;
 
@@ -647,6 +842,7 @@ class _GradesScreenState extends State<GradesScreen> {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 160),
           children: [
+            _enter(
             TactileBounce(
               pressedScale: 0.98,
               onTap: () => _openScholarshipAndBreakdownModal(
@@ -663,9 +859,9 @@ class _GradesScreenState extends State<GradesScreen> {
                 subjectCount: subjects.length,
                 gradeCount: numericGradeCount,
               ),
-            ).staggeredEntrance(
+            ),
               0,
-              animationKey: ValueKey('grades-top-${widget.entranceEpoch}'),
+              const ValueKey('grades-top'),
             ),
             AnimatedCrossFade(
               firstChild: const SizedBox.shrink(),
@@ -727,12 +923,10 @@ class _GradesScreenState extends State<GradesScreen> {
             else
               ...List.generate(subjects.length, (idx) {
                 final subj = subjects[idx];
-                return _buildSubjectTile(context, theme, scheme, subj)
-                    .staggeredEntrance(
+                return _enter(
+                  _buildSubjectTile(context, theme, scheme, subj),
                   idx + 1,
-                  animationKey: ValueKey(
-                    'subj-${subj.heroId}-${_sortMode.name}-${widget.entranceEpoch}',
-                  ),
+                  ValueKey('subj-${subj.heroId}'),
                 );
               }),
           ],
@@ -824,17 +1018,13 @@ class _GradesScreenState extends State<GradesScreen> {
 
     return ChristmasSnowCap(
       enabled: widget.prefs.christmasModeEnabled,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 240),
-        curve: Curves.easeOutCubic,
+      child: SoftGlassCard(
+        prefs: widget.prefs,
         padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: theme.cardTheme.color,
-          borderRadius: OledTheme.largeRadius,
-          border: Border.all(
-            color: avgColor.withValues(alpha: 0.6),
-            width: 1.5,
-          ),
+        borderRadius: OledTheme.largeRadius,
+        border: Border.all(
+          color: avgColor.withValues(alpha: 0.6),
+          width: 1.5,
         ),
         child: Row(
           children: [
@@ -964,15 +1154,13 @@ class _GradesScreenState extends State<GradesScreen> {
     required double? baseAverage,
     required double? simulatedAverage,
   }) {
-    return Container(
+    return SoftGlassCard(
+      prefs: widget.prefs,
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: theme.cardTheme.color,
-        borderRadius: OledTheme.largeRadius,
-        border: Border.all(
-          color: scheme.primary.withValues(alpha: 0.55),
-          width: 1.3,
-        ),
+      borderRadius: OledTheme.largeRadius,
+      border: Border.all(
+        color: scheme.primary.withValues(alpha: 0.55),
+        width: 1.3,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1106,13 +1294,11 @@ class _GradesScreenState extends State<GradesScreen> {
   }
 
   Widget _buildEmptyCard(ThemeData theme, ColorScheme scheme) {
-    return Container(
+    return SoftGlassCard(
+      prefs: widget.prefs,
       padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: theme.cardTheme.color,
-        borderRadius: OledTheme.cardRadius,
-        border: Border.all(color: theme.dividerColor),
-      ),
+      borderRadius: OledTheme.cardRadius,
+      border: Border.all(color: theme.dividerColor),
       child: Row(
         children: [
           Icon(
@@ -1187,16 +1373,14 @@ class _GradesScreenState extends State<GradesScreen> {
             type: MaterialType.transparency,
             child: ChristmasSnowCap(
               enabled: widget.prefs.christmasModeEnabled,
-              child: Container(
+              child: SoftGlassCard(
+                prefs: widget.prefs,
                 padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: theme.cardTheme.color,
-                  borderRadius: OledTheme.cardRadius,
-                  border: Border.all(
-                    color: customColor != null
-                        ? customColor.withValues(alpha: 0.65)
-                        : theme.dividerColor,
-                  ),
+                borderRadius: OledTheme.cardRadius,
+                border: Border.all(
+                  color: customColor != null
+                      ? customColor.withValues(alpha: 0.65)
+                      : theme.dividerColor,
                 ),
                 child: SingleChildScrollView(
                   physics: const NeverScrollableScrollPhysics(),
@@ -1326,11 +1510,121 @@ class _ScholarshipAndBreakdownDialogState
     extends State<_ScholarshipAndBreakdownDialog> {
   late int _selectedTargetTierIdx;
   late bool _allow200Weight;
+  late UserProfilePrefs _prefs;
+  late bool _basic;
+
+  void _updateScholarshipPrefs(UserProfilePrefs next) {
+    setState(() {
+      _prefs = next;
+      _basic = next.scholarshipBasicEducation;
+    });
+    widget.onPrefsChanged?.call(next);
+  }
+
+  Widget _buildModeSelector(ThemeData theme, ColorScheme scheme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            ChoiceChip(
+              showCheckmark: false,
+              label: const Text('Szakirányú oktatás'),
+              selected: !_basic,
+              onSelected: (_) => _updateScholarshipPrefs(
+                _prefs.withExtra('scholarshipBasic', false),
+              ),
+            ),
+            ChoiceChip(
+              showCheckmark: false,
+              label: const Text('Ágazati alapoktatás (9–10. évf.)'),
+              selected: _basic,
+              onSelected: (_) => _updateScholarshipPrefs(
+                _prefs.withExtra('scholarshipBasic', true),
+              ),
+            ),
+          ],
+        ),
+        if (_basic) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final entry in const {
+                'technikum': 'Technikum',
+                'szakkepzo': 'Szakképző',
+              }.entries)
+                ChoiceChip(
+                  showCheckmark: false,
+                  label: Text(entry.value),
+                  selected: _prefs.scholarshipSchoolType == entry.key,
+                  onSelected: (_) => _updateScholarshipPrefs(
+                    _prefs.withExtra('scholarshipSchoolType', entry.key),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildBasicEducationCard(ThemeData theme, ColorScheme scheme) {
+    final amount =
+        ScholarshipTier.basicEducationMonthlyForint(_prefs.scholarshipSchoolType);
+    final typeLabel =
+        _prefs.scholarshipSchoolType == 'szakkepzo' ? 'Szakképző' : 'Technikum';
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            scheme.primary.withValues(alpha: 0.22),
+            scheme.surfaceContainerHigh,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: OledTheme.cardRadius,
+        border: Border.all(color: scheme.primary.withValues(alpha: 0.55)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.payments_rounded, color: scheme.primary, size: 30),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${ScholarshipTier.formatForint(amount)} Ft / hó',
+                  style: theme.textTheme.titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Ágazati alapoktatás • $typeLabel • fix összeg, átlagtól független',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurface.withValues(alpha: 0.72),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     _allow200Weight = widget.prefs.calcAllow200Weight;
+    _prefs = widget.prefs;
+    _basic = widget.prefs.scholarshipBasicEducation;
     final curIdx = ScholarshipTier.currentTierIndex(widget.overallAverage);
     if (curIdx == null) {
       _selectedTargetTierIdx = 0;
@@ -1346,10 +1640,13 @@ class _ScholarshipAndBreakdownDialogState
     final scheme = theme.colorScheme;
     final counts = SubjectGradeSummary.computeGradeCounts(widget.allGrades);
     final totalGrades = counts.values.fold<int>(0, (a, b) => a + b);
-    final currentTierIdx =
-        ScholarshipTier.currentTierIndex(widget.overallAverage);
-    final currentAvg = widget.overallAverage ??
-        SubjectGradeSummary.computeOverallSubjectAverage(widget.subjects);
+    final currentAvg = SubjectGradeSummary.computeOverallSubjectAverage(
+          widget.subjects,
+          prefs: _prefs,
+          allow200Weight: _allow200Weight,
+        ) ??
+        widget.overallAverage;
+    final currentTierIdx = ScholarshipTier.currentTierIndex(currentAvg);
     final currentTier =
         currentTierIdx != null ? ScholarshipTier.tiers[currentTierIdx] : null;
     final targetTier = ScholarshipTier.tiers[_selectedTargetTierIdx];
@@ -1374,7 +1671,7 @@ class _ScholarshipAndBreakdownDialogState
       allGrades: widget.allGrades,
       subjects: widget.subjects,
       targetAverage: targetTier.minAverage,
-      prefs: widget.prefs,
+      prefs: _prefs,
       allow200Weight: _allow200Weight,
     );
 
@@ -1430,7 +1727,12 @@ class _ScholarshipAndBreakdownDialogState
                   ],
                 ),
                 const SizedBox(height: 12),
+                _buildModeSelector(theme, scheme),
+                const SizedBox(height: 12),
                 // 1. Gamified Motivational Cash Payout Milestone Card
+                if (_basic)
+                  _buildBasicEducationCard(theme, scheme)
+                else
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -1623,6 +1925,7 @@ class _ScholarshipAndBreakdownDialogState
                     );
                   }).toList(),
                 ),
+                if (!_basic) ...[
                 const SizedBox(height: 22),
                 // 3. Vocational Scholarship Tier Optimizer
                 Row(
@@ -1702,7 +2005,7 @@ class _ScholarshipAndBreakdownDialogState
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    '${tier.rangeLabel} • ${tier.title}',
+                                    '${tier.rangeLabel}: ${tier.title}',
                                     style: theme.textTheme.labelLarge?.copyWith(
                                       fontWeight: FontWeight.w800,
                                     ),
@@ -1772,10 +2075,11 @@ class _ScholarshipAndBreakdownDialogState
                       label: const Text('100% alapeset'),
                       selected: !_allow200Weight,
                       onSelected: (_) {
-                        setState(() => _allow200Weight = false);
-                        widget.onPrefsChanged?.call(
-                          widget.prefs.copyWith(calcAllow200Weight: false),
-                        );
+                        setState(() {
+                          _allow200Weight = false;
+                          _prefs = _prefs.copyWith(calcAllow200Weight: false);
+                        });
+                        widget.onPrefsChanged?.call(_prefs);
                       },
                     ),
                     ChoiceChip(
@@ -1783,17 +2087,18 @@ class _ScholarshipAndBreakdownDialogState
                       label: const Text('200% témazáró engedélyezése'),
                       selected: _allow200Weight,
                       onSelected: (_) {
-                        setState(() => _allow200Weight = true);
-                        widget.onPrefsChanged?.call(
-                          widget.prefs.copyWith(calcAllow200Weight: true),
-                        );
+                        setState(() {
+                          _allow200Weight = true;
+                          _prefs = _prefs.copyWith(calcAllow200Weight: true);
+                        });
+                        widget.onPrefsChanged?.call(_prefs);
                       },
                     ),
                   ],
                 ),
                 const SizedBox(height: 14),
-                if (widget.overallAverage != null &&
-                    widget.overallAverage! >= targetTier.minAverage)
+                if (currentAvg != null &&
+                    currentAvg >= targetTier.minAverage)
                   Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
@@ -1804,7 +2109,7 @@ class _ScholarshipAndBreakdownDialogState
                       ),
                     ),
                     child: Text(
-                      'Már elérted a(z) ${targetTier.rangeLabel} ösztöndíj sávot (${widget.overallAverage!.toStringAsFixed(2)})!',
+                      'Már elérted a(z) ${targetTier.rangeLabel} ösztöndíj sávot (${currentAvg.toStringAsFixed(2)})!',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: Colors.greenAccent,
                         fontWeight: FontWeight.w800,
@@ -1886,6 +2191,7 @@ class _ScholarshipAndBreakdownDialogState
                     );
                   }),
                 ],
+              ],
               ],
             ),
           );
@@ -2122,43 +2428,35 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                       ),
                       _buildModalThresholdRow(
                         theme,
-                        '5 (Jeles) küszöb: ${threshold5.toStringAsFixed(2)}',
+                        '5 (Jeles) küszöb',
                         threshold5,
                         4.00,
                         4.95,
-                        (v) => setModalState(
-                          () => threshold5 = double.parse(v.toStringAsFixed(2)),
-                        ),
+                        (v) => setModalState(() => threshold5 = v),
                       ),
                       _buildModalThresholdRow(
                         theme,
-                        '4 (Jó) küszöb: ${threshold4.toStringAsFixed(2)}',
+                        '4 (Jó) küszöb',
                         threshold4,
                         3.00,
                         3.95,
-                        (v) => setModalState(
-                          () => threshold4 = double.parse(v.toStringAsFixed(2)),
-                        ),
+                        (v) => setModalState(() => threshold4 = v),
                       ),
                       _buildModalThresholdRow(
                         theme,
-                        '3 (Közepes) küszöb: ${threshold3.toStringAsFixed(2)}',
+                        '3 (Közepes) küszöb',
                         threshold3,
                         2.00,
                         2.95,
-                        (v) => setModalState(
-                          () => threshold3 = double.parse(v.toStringAsFixed(2)),
-                        ),
+                        (v) => setModalState(() => threshold3 = v),
                       ),
                       _buildModalThresholdRow(
                         theme,
-                        '2 (Elégséges) küszöb: ${threshold2.toStringAsFixed(2)}',
+                        '2 (Elégséges) küszöb',
                         threshold2,
                         1.10,
                         2.20,
-                        (v) => setModalState(
-                          () => threshold2 = double.parse(v.toStringAsFixed(2)),
-                        ),
+                        (v) => setModalState(() => threshold2 = v),
                       ),
                       const SizedBox(height: 14),
                       FilledButton.icon(
@@ -2202,10 +2500,14 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                             _prefs.subjectRoundingOverrides,
                           );
                           nextSubjRounding[subjectKey] = GradeRoundingConfig(
-                            threshold5: threshold5,
-                            threshold4: threshold4,
-                            threshold3: threshold3,
-                            threshold2: threshold2,
+                            threshold5:
+                                double.parse(threshold5.toStringAsFixed(2)),
+                            threshold4:
+                                double.parse(threshold4.toStringAsFixed(2)),
+                            threshold3:
+                                double.parse(threshold3.toStringAsFixed(2)),
+                            threshold2:
+                                double.parse(threshold2.toStringAsFixed(2)),
                           );
 
                           _updatePrefs(
@@ -2241,20 +2543,39 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
     ValueChanged<double> onChanged,
   ) {
     final clamped = value.clamp(min, max);
+    final scheme = theme.colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: theme.textTheme.labelMedium?.copyWith(
-            fontWeight: FontWeight.w700,
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              label,
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: Text(
+                clamped.toStringAsFixed(2),
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: scheme.primary,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ],
         ),
         Slider(
           value: clamped,
           min: min,
           max: max,
-          divisions: ((max - min) * 20).round(),
           onChanged: onChanged,
         ),
       ],

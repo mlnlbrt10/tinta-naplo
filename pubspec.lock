@@ -205,7 +205,7 @@ packages:
       sha256: be76c1d24a97d0b98f8b54bce6b481a380a6590df992d0098f868ad54dc8f688
       url: "https://pub.dev"
     source: hosted
-    version: "1.2.4"
+    version: "1.2.3"
   flutter_secure_storage_macos:
     dependency: transitive
     description:
@@ -487,14 +487,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "9.5.0"
-  ota_update:
-    dependency: "direct main"
-    description:
-      name: ota_update
-      sha256: "1f4c7c3c4f306729a6c00b84435096ce2d8b28439013f7237173acc699b2abc8"
-      url: "https://pub.dev"
-    source: hosted
-    version: "7.1.0"
   package_config:
     dependency: transitive
     description:
@@ -659,7 +651,7 @@ packages:
       sha256: "7f554798625ea768a7518313e58f83891c7f5024f88e46e7182a4558850a4b8e"
       url: "https://pub.dev"
     source: hosted
-    version: "1.2.4"
+    version: "1.2.2"
   test_api:
     dependency: transitive
     description:

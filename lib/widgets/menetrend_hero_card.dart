@@ -1,16 +1,16 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../theme/oled_theme.dart';
 import '../services/menetrend_service.dart';
 import '../services/token_storage_service.dart';
+import '../utils/html_sanitizer.dart';
 import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
 
-/// Home wrapper for the MenetrendGO card. Handles unconfigured, loading and
-/// "no route found" states; real data is rendered by [MenetrendHeroCard].
+/// Home wrapper for the MenetrendGO card. Outside morning/afternoon commute
+/// windows or when zero catchable departures remain, renders [SizedBox.shrink]
+/// so it takes zero space on Főoldal.
 class MenetrendHomeCard extends StatelessWidget {
   final CommuteEvaluation? evaluation;
   final bool isLoading;
@@ -30,57 +30,11 @@ class MenetrendHomeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final eval = evaluation;
-    if (prefs.transitConfigured && eval != null) {
-      return MenetrendHeroCard(evaluation: eval, prefs: prefs);
+    if (!prefs.transitConfigured || eval == null) {
+      return const SizedBox.shrink();
     }
-    final scheme = Theme.of(context).colorScheme;
-    final String text;
-    final IconData icon;
-    VoidCallback onTap = onOpenSettings;
-    if (!prefs.transitConfigured) {
-      text = 'Koppints a menetrendi beállításokhoz';
-      icon = Icons.settings_rounded;
-    } else if (isLoading) {
-      text = 'Menetrend betöltése...';
-      icon = Icons.directions_transit_rounded;
-      onTap = () {};
-    } else {
-      text = 'Nem található járat. Koppints az újrapróbálkozáshoz.';
-      icon = Icons.refresh_rounded;
-      onTap = onRetry;
-    }
-    return TactileBounce(
-      onTap: onTap,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: OledTheme.surfaceDark,
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: scheme.primary.withValues(alpha: 0.35)),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: scheme.primary),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                uwu(text),
-                style: TextStyle(
-                  color: scheme.onSurface,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            if (isLoading && prefs.transitConfigured)
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-          ],
-        ),
-      ),
+    return RepaintBoundary(
+      child: MenetrendHeroCard(evaluation: eval, prefs: prefs),
     );
   }
 }
@@ -123,6 +77,9 @@ class MenetrendHeroCard extends StatelessWidget {
         ? 'REGGELI INGÁZÁS • ISKOLÁBA'
         : 'DÉLUTÁNI HAZAÚT • OTTHONBA';
 
+    final fromExact = evaluation.isMorningMode
+        ? prefs.homeAddress.isNotEmpty
+        : prefs.schoolAddress.isNotEmpty;
     final countdownBadgeText = 'Indulásig: ${evaluation.minutesUntilDeparture} perc';
     final walkStartFormatted =
         DateFormat('HH:mm').format(evaluation.latestWalkStartTime);
@@ -269,7 +226,7 @@ class MenetrendHeroCard extends StatelessWidget {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
-                          trip.routeShortName,
+                          HtmlSanitizer.clean(trip.routeShortName),
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w900,
@@ -285,7 +242,7 @@ class MenetrendHeroCard extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '${trip.departureStation} → ${trip.arrivalStation}',
+                            HtmlSanitizer.clean('${trip.departureStation} → ${trip.arrivalStation}'),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -297,7 +254,7 @@ class MenetrendHeroCard extends StatelessWidget {
                           ),
                           const SizedBox(height: 3),
                           Text(
-                            evaluation.isMorningMode
+                            evaluation.isMorningMode && !fromExact
                                 ? 'Séta indulás: $walkStartFormatted (${evaluation.effectiveWalkMinutes} p séta)${trip.platformCode != null ? " • ${trip.platformCode}" : ""}'
                                 : '$countdownBadgeText${trip.platformCode != null ? " • ${trip.platformCode}" : ""}',
                             maxLines: 1,
@@ -337,9 +294,18 @@ class MenetrendHeroCard extends StatelessWidget {
                 ),
                 if (trip.legs.length > 1) ...[
                   const SizedBox(height: 10),
-                  SingleChildScrollView(
+                  ShaderMask(
+                    blendMode: BlendMode.dstIn,
+                    shaderCallback: (rect) => const LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      colors: [Colors.white, Colors.white, Colors.transparent],
+                      stops: [0.0, 0.86, 1.0],
+                    ).createShader(rect),
+                    child: SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     physics: const BouncingScrollPhysics(),
+                    padding: const EdgeInsets.only(right: 28),
                     child: Row(
                       children: [
                         for (var i = 0; i < trip.legs.length; i++) ...[
@@ -365,7 +331,7 @@ class MenetrendHeroCard extends StatelessWidget {
                                 ),
                                 const SizedBox(width: 5),
                                 Text(
-                                  '${i + 1}. szakasz: ${trip.legs[i].routeShortName} '
+                                  '${i + 1}. szakasz: ${HtmlSanitizer.clean(trip.legs[i].routeShortName)} '
                                   '(${trip.legs[i].mode == MenetrendTransportMode.rail ? "vonat" : "busz"})',
                                   style: TextStyle(
                                     fontSize: 11.5,
@@ -421,6 +387,7 @@ class MenetrendHeroCard extends StatelessWidget {
                       ],
                     ),
                   ),
+                  ),
                 ],
               ],
             ),
@@ -441,8 +408,8 @@ Future<void> showMenetrendDetailsModal(
       opaque: false,
       barrierDismissible: true,
       barrierColor: Colors.black.withValues(alpha: 0.72),
-      transitionDuration: const Duration(milliseconds: 300),
-      reverseTransitionDuration: const Duration(milliseconds: 240),
+      transitionDuration: const Duration(milliseconds: 180),
+      reverseTransitionDuration: const Duration(milliseconds: 160),
       pageBuilder: (ctx, animation, secondaryAnimation) {
         return _MenetrendDetailsModalSheet(
           evaluation: evaluation,
@@ -492,7 +459,7 @@ class _MenetrendDetailsModalSheetState
 
     final curved = CurvedAnimation(
       parent: widget.animation,
-      curve: Curves.easeOutBack,
+      curve: Curves.easeOutCubic,
       reverseCurve: Curves.easeInCubic,
     );
 
@@ -504,23 +471,21 @@ class _MenetrendDetailsModalSheetState
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () => Navigator.of(context).pop(),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
-                child: const ColoredBox(color: Colors.transparent),
-              ),
+              child: const ColoredBox(color: Colors.transparent),
             ),
           ),
           Center(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 28),
               child: FadeTransition(
-                opacity: widget.animation,
+                opacity: curved,
                 child: ScaleTransition(
-                  scale: Tween<double>(begin: 0.90, end: 1.0).animate(curved),
-                  child: Hero(
-                    tag: 'menetrend_hero_card',
-                    child: Material(
-                      color: const Color(0xF0121212),
+                  scale: Tween<double>(begin: 0.92, end: 1.0).animate(curved),
+                  child: RepaintBoundary(
+                    child: Hero(
+                      tag: 'menetrend_hero_card',
+                      child: Material(
+                        color: const Color(0xF0121212),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(24),
                         side: BorderSide(
@@ -562,7 +527,7 @@ class _MenetrendDetailsModalSheetState
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          '${trip.routeShortName} • ${trip.mode.displayName}',
+                                          HtmlSanitizer.clean('${trip.routeShortName} • ${trip.mode.displayName}'),
                                           style: const TextStyle(
                                             fontSize: 17,
                                             fontWeight: FontWeight.w800,
@@ -570,7 +535,7 @@ class _MenetrendDetailsModalSheetState
                                           ),
                                         ),
                                         Text(
-                                          trip.routeLongName,
+                                          HtmlSanitizer.clean(trip.routeLongName),
                                           style: const TextStyle(
                                             fontSize: 12,
                                             color: OledTheme.textSecondary,
@@ -607,7 +572,7 @@ class _MenetrendDetailsModalSheetState
                                             const EdgeInsets.only(right: 8),
                                         child: ChoiceChip(
                                           label: Text(
-                                            '${alt.routeShortName} (${alt.departureTimeFormatted})',
+                                            '${HtmlSanitizer.clean(alt.routeShortName)} (${alt.departureTimeFormatted})',
                                             style: TextStyle(
                                               fontSize: 12,
                                               fontWeight: FontWeight.w700,
@@ -691,14 +656,17 @@ class _MenetrendDetailsModalSheetState
                               ),
                               const SizedBox(height: 16),
                               // Step-by-step Trip Breakdown
-                              _buildTimelineStep(
-                                icon: Icons.directions_walk_rounded,
-                                time: DateFormat('HH:mm').format(walkLeave),
-                                title: 'Gyaloglás az állomásra',
-                                subtitle:
-                                    '${trip.walkToStationMinutes} perc séta (${widget.prefs.walkingSpeedKmh.toStringAsFixed(1)} km/h tempó)',
-                                accentColor: OledTheme.textSecondary,
-                              ),
+                              if (!(widget.evaluation.isMorningMode
+                                  ? widget.prefs.homeAddress.isNotEmpty
+                                  : widget.prefs.schoolAddress.isNotEmpty))
+                                _buildTimelineStep(
+                                  icon: Icons.directions_walk_rounded,
+                                  time: DateFormat('HH:mm').format(walkLeave),
+                                  title: 'Gyaloglás az állomásra',
+                                  subtitle:
+                                      '${trip.walkToStationMinutes} perc séta (${MenetrendService.walkingSpeedLabel(widget.prefs.walkingSpeedKmh)})',
+                                  accentColor: OledTheme.textSecondary,
+                                ),
                               if (trip.legs.length > 1)
                                 ..._buildLegSteps(trip, primary)
                               else ...[
@@ -707,9 +675,9 @@ class _MenetrendDetailsModalSheetState
                                     ? Icons.train_rounded
                                     : Icons.directions_bus_rounded,
                                 time: trip.effectiveDepartureTimeFormatted,
-                                title: 'Felszállás: ${trip.departureStation}',
+                                title: 'Felszállás: ${HtmlSanitizer.clean(trip.departureStation)}',
                                 subtitle:
-                                    '${trip.routeShortName}${trip.platformCode != null ? " • ${trip.platformCode}" : ""}',
+                                    '${HtmlSanitizer.clean(trip.routeShortName)}${trip.platformCode != null ? " • ${trip.platformCode}" : ""}',
                                 accentColor: primary,
                               ),
                               if (trip.intermediateStops.isNotEmpty)
@@ -758,7 +726,7 @@ class _MenetrendDetailsModalSheetState
                                                 const SizedBox(width: 8),
                                                 Expanded(
                                                   child: Text(
-                                                    stop.name,
+                                                    HtmlSanitizer.clean(stop.name),
                                                     style: const TextStyle(
                                                       fontSize: 12,
                                                       color: Colors.white,
@@ -797,7 +765,7 @@ class _MenetrendDetailsModalSheetState
                               _buildTimelineStep(
                                 icon: Icons.location_on_rounded,
                                 time: trip.effectiveArrivalTimeFormatted,
-                                title: 'Érkezés: ${trip.arrivalStation}',
+                                title: 'Érkezés: ${HtmlSanitizer.clean(trip.arrivalStation)}',
                                 subtitle: trip.arrivalPlatformCode ??
                                     (trip.mode == MenetrendTransportMode.rail
                                         ? 'Érkező vágány'
@@ -864,6 +832,7 @@ class _MenetrendDetailsModalSheetState
                       ),
                     ),
                   ),
+                  ),
                 ),
               ),
             ),
@@ -885,9 +854,9 @@ class _MenetrendDetailsModalSheetState
         _buildTimelineStep(
           icon: rail ? Icons.train_rounded : Icons.directions_bus_rounded,
           time: fmt.format(leg.departure),
-          title: '${i + 1}. szakasz: ${leg.routeShortName} • ${leg.fromName}',
+          title: '${i + 1}. szakasz: ${HtmlSanitizer.clean(leg.routeShortName)} • ${HtmlSanitizer.clean(leg.fromName)}',
           subtitle:
-              '→ ${leg.toName} (${fmt.format(leg.arrival)})'
+              '→ ${HtmlSanitizer.clean(leg.toName)} (${fmt.format(leg.arrival)})'
               '${rail && leg.platformCode != null ? ' • ${leg.platformCode}' : ''}',
           accentColor: primary,
         ),
@@ -898,7 +867,7 @@ class _MenetrendDetailsModalSheetState
           _buildTimelineStep(
             icon: Icons.transfer_within_a_station_rounded,
             time: fmt.format(leg.arrival),
-            title: 'Átszállás: ${leg.toName}',
+            title: 'Átszállás: ${HtmlSanitizer.clean(leg.toName)}',
             subtitle: '$wait perc várakozás',
             accentColor: const Color(0xFFFFB300),
           ),

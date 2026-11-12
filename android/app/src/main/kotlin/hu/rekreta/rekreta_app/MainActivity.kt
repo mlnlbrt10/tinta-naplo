@@ -10,6 +10,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.Settings
+import androidx.core.content.FileProvider
+import java.io.File
 import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
@@ -24,6 +27,7 @@ open class MainActivity : FlutterActivity() {
         private const val CHANNEL_NAME = "hu.rekreta.rekreta_app/dynamic_icon"
         private const val LEGACY_CHANNEL_NAME = "flutter_dynamic_icon"
         private const val TRANSIT_CHANNEL_NAME = "hu.rekreta.rekreta_app/transit"
+        private const val UPDATER_CHANNEL_NAME = "hu.rekreta.rekreta_app/updater"
 
         const val TRANSIT_NOTIFICATION_CHANNEL_ID = "rekreta_menetrendgo_alerts"
         const val TRANSIT_NOTIFICATION_CHANNEL_NAME = "MenetrendGO Indulási & Késési riasztások"
@@ -197,10 +201,55 @@ open class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LEGACY_CHANNEL_NAME)
             .setMethodCallHandler(iconHandler)
 
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, UPDATER_CHANNEL_NAME)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "installApk" -> {
+                        val filePath = (call.arguments as? Map<*, *>)?.get("filePath")?.toString()
+                            ?: (call.arguments as? String)
+                        if (filePath.isNullOrBlank()) {
+                            result.error("NO_PATH", "filePath missing", null)
+                        } else {
+                            installApk(filePath, result)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, TRANSIT_CHANNEL_NAME)
             .setMethodCallHandler { call, result ->
                 handleTransitMethodCall(call, result)
             }
+    }
+
+    private fun installApk(filePath: String, result: MethodChannel.Result) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                !packageManager.canRequestPackageInstalls()
+            ) {
+                val settingsIntent = Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:$packageName")
+                ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                startActivity(settingsIntent)
+                result.success("permission_required")
+                return
+            }
+            val uri = FileProvider.getUriForFile(
+                this,
+                "${applicationContext.packageName}.fileprovider",
+                File(filePath)
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            }
+            startActivity(intent)
+            result.success("started")
+        } catch (e: Exception) {
+            result.error("INSTALL_FAILED", e.message, null)
+        }
     }
 
     private fun handleIconMethodCall(call: MethodCall, result: MethodChannel.Result) {

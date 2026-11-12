@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -6,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../utils/html_sanitizer.dart';
 import 'token_storage_service.dart';
 
 enum MenetrendTransportMode {
@@ -262,17 +264,37 @@ class MenetrendService {
         'Content-Type': 'application/json; charset=utf-8',
         'Origin': 'https://mavplusz.hu',
         'Referer': 'https://mavplusz.hu/',
-        'User-Agent': 'MenetrendGO/1.2.0 (Android)',
+        'User-Agent': 'MenetrendGO/1.2.5 (Android)',
       };
 
+  /// Snaps any stored walking speed to one of the three supported presets:
+  /// `4.0` Lassú, `5.0` Normál, `6.0` Gyors (km/h).
+  static double normalizeWalkingSpeed(double kmh) {
+    if (kmh <= 4.4) return 4.0;
+    if (kmh < 5.5) return 5.0;
+    return 6.0;
+  }
+
+  /// Human readable label for a walking speed preset.
+  static String walkingSpeedLabel(double kmh) {
+    switch (normalizeWalkingSpeed(kmh).round()) {
+      case 4:
+        return 'Lassú (4 km/h)';
+      case 6:
+        return 'Gyors (6 km/h)';
+      default:
+        return 'Normál (5 km/h)';
+    }
+  }
+
   /// Computes the effective walking time in minutes adjusted for the user's
-  /// selected walking speed (`3.5` Lassú, `4.5` Normál, `5.5` Gyors/Sietős).
+  /// selected walking speed preset (4 / 5 / 6 km/h).
   static int calculateEffectiveWalkingMinutes({
     required int baseWalkingMinutes,
     required double walkingSpeedKmh,
   }) {
-    final speed = walkingSpeedKmh.clamp(2.5, 7.0);
-    final scaled = (baseWalkingMinutes * (4.5 / speed)).round();
+    final speed = normalizeWalkingSpeed(walkingSpeedKmh);
+    final scaled = (baseWalkingMinutes * (5.0 / speed)).round();
     return scaled.clamp(1, 90);
   }
 
@@ -318,6 +340,18 @@ class MenetrendService {
           departingAfter.isNotEmpty ? departingAfter.first : allTrips.last;
     }
 
+    final favorite = allTrips.where((t) => t.isFavorite).toList();
+    if (favorite.isNotEmpty && !favorite.contains(selectedTrip)) {
+      if (isMorning && firstStartLocal != null) {
+        final onTime = favorite
+            .where((t) => !t.effectiveArrival.isAfter(firstStartLocal))
+            .toList();
+        if (onTime.isNotEmpty) selectedTrip = onTime.last;
+      } else if (!isMorning) {
+        selectedTrip = favorite.first;
+      }
+    }
+
     return CommuteEvaluation(
       isMorningMode: isMorning,
       targetLesson: isMorning ? firstLesson : lastLesson,
@@ -328,6 +362,184 @@ class MenetrendService {
       alertBufferMinutes: prefs.transitAlertBufferMinutes,
       now: now,
     );
+  }
+
+  /// Smart visibility window:
+  /// * morning: from 2 h before the first lesson until it starts;
+  /// * afternoon: from 30 min before the last lesson ends until 1 h after.
+  /// Returns `true` (morning), `false` (afternoon) or `null` when hidden.
+  static bool? commuteWindow({
+    required DateTime now,
+    required DateTime? firstStart,
+    required DateTime? lastEnd,
+  }) {
+    if (firstStart != null &&
+        !now.isBefore(firstStart.subtract(const Duration(hours: 2))) &&
+        now.isBefore(firstStart)) {
+      return true;
+    }
+    if (lastEnd != null &&
+        !now.isBefore(lastEnd.subtract(const Duration(minutes: 30))) &&
+        !now.isAfter(lastEnd.add(const Duration(hours: 1)))) {
+      return false;
+    }
+    return null;
+  }
+
+  /// A trip is catchable when the user can still walk to the boarding point
+  /// before the (delay-adjusted) departure.
+  static bool isTripCatchable(MenetrendTripOption t, DateTime now) {
+    if (t.isCancelled) return false;
+    final mustLeaveBy = t.effectiveDeparture
+        .subtract(Duration(minutes: t.walkToStationMinutes));
+    return !mustLeaveBy.isBefore(now);
+  }
+
+  static bool _matchesFavorite(
+    String routeName,
+    DateTime departure,
+    List<String> prefs,
+  ) {
+    final time = DateFormat('HH:mm').format(departure);
+    for (final pref in prefs) {
+      for (final token in pref.split(RegExp(r'[\/,;]'))) {
+        final t = token.trim().toLowerCase();
+        if (t.isEmpty) continue;
+        if (time == t || routeName.toLowerCase().contains(t)) return true;
+      }
+    }
+    return false;
+  }
+
+  static bool _isLocalBusLeg(Map leg) {
+    if ((leg['mode'] ?? '').toString().toUpperCase() != 'BUS') return false;
+    final short = (leg['route']?['shortName'] ?? '').toString();
+    return short.replaceAll(RegExp(r'\D'), '').length <= 2;
+  }
+
+  static final Map<String, ({double lat, double lon})> _addressCache = {};
+
+  /// Estimates walking duration in minutes between two geographic coordinates
+  /// using a 1.28 urban street detour factor and the user's walking speed preset.
+  static int estimateWalkingMinutesBetween({
+    required double lat1,
+    required double lon1,
+    required double lat2,
+    required double lon2,
+    required double walkingSpeedKmh,
+  }) {
+    const r = 6371.0; // km
+    final dLat = (lat2 - lat1) * (math.pi / 180.0);
+    final dLon = (lon2 - lon1) * (math.pi / 180.0);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(lat1 * (math.pi / 180.0)) *
+            math.cos(lat2 * (math.pi / 180.0)) *
+            math.sin(dLon / 2) *
+            math.sin(dLon / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    final streetKm = r * c * 1.28;
+    final speed = normalizeWalkingSpeed(walkingSpeedKmh);
+    final mins = ((streetKm / speed) * 60.0).ceil();
+    return mins.clamp(1, 90);
+  }
+
+  /// Live geocoding autocomplete via OpenStreetMap Nominatim (with Photon fallback).
+  Future<List<TransitStopResult>> searchAddresses(String query) async {
+    final q = query.trim();
+    if (q.length < 3) return const [];
+    try {
+      final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
+        'q': q,
+        'format': 'json',
+        'limit': '6',
+        'countrycodes': 'hu',
+        'addressdetails': '1',
+      });
+      final response = await _http.get(uri, headers: const {
+        'User-Agent': 'reKRETA-Android/1.2.5',
+        'Accept': 'application/json',
+      }).timeout(const Duration(seconds: 6));
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        if (decoded is List && decoded.isNotEmpty) {
+          final seen = <String>{};
+          final out = <TransitStopResult>[];
+          for (final item in decoded) {
+            if (item is! Map) continue;
+            final rawDisplay = (item['display_name'] ?? '').toString().trim();
+            final lat = double.tryParse('${item['lat']}');
+            final lon = double.tryParse('${item['lon']}');
+            if (rawDisplay.isEmpty || lat == null || lon == null) continue;
+            final parts = rawDisplay
+                .split(',')
+                .map((s) => s.trim())
+                .where((s) => s.isNotEmpty && s.toLowerCase() != 'magyarország')
+                .take(4)
+                .toList();
+            final label = parts.isNotEmpty ? parts.join(', ') : rawDisplay;
+            if (!seen.add(label)) continue;
+            _addressCache[label.toLowerCase()] = (lat: lat, lon: lon);
+            out.add(TransitStopResult(name: label, lat: lat, lon: lon));
+          }
+          if (out.isNotEmpty) return out;
+        }
+      }
+    } catch (_) {
+      // Fallback to Photon below
+    }
+
+    try {
+      final photonUri = Uri.https('photon.komoot.io', '/api/', {
+        'q': q,
+        'limit': '6',
+      });
+      final res = await _http
+          .get(photonUri, headers: const {'User-Agent': 'reKRETA-Android/1.2.5'})
+          .timeout(const Duration(seconds: 6));
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+        final features = decoded['features'];
+        if (features is List) {
+          final out = <TransitStopResult>[];
+          final seen = <String>{};
+          for (final f in features) {
+            if (f is! Map) continue;
+            final props = f['properties'] as Map? ?? const {};
+            final coords = f['geometry']?['coordinates'] as List?;
+            if (coords == null || coords.length < 2) continue;
+            final lon = (coords[0] as num?)?.toDouble();
+            final lat = (coords[1] as num?)?.toDouble();
+            if (lat == null || lon == null) continue;
+            final city = (props['city'] ?? props['locality'] ?? '').toString();
+            final street = (props['street'] ?? props['name'] ?? '').toString();
+            final house = (props['housenumber'] ?? '').toString();
+            final label = [
+              if (city.isNotEmpty) city,
+              if (street.isNotEmpty)
+                house.isNotEmpty ? '$street $house.' : street,
+            ].join(', ');
+            if (label.isEmpty || !seen.add(label)) continue;
+            _addressCache[label.toLowerCase()] = (lat: lat, lon: lon);
+            out.add(TransitStopResult(name: label, lat: lat, lon: lon));
+          }
+          return out;
+        }
+      }
+    } catch (_) {}
+    return const [];
+  }
+
+  /// Geocodes an exact street address (Nominatim / OpenStreetMap).
+  Future<({double lat, double lon})?> _geocodeAddress(String address) async {
+    final key = address.trim().toLowerCase();
+    final cached = _addressCache[key];
+    if (cached != null) return cached;
+    final list = await searchAddresses(address);
+    if (list.isNotEmpty) {
+      final first = list.first;
+      return _addressCache[key] = (lat: first.lat, lon: first.lon);
+    }
+    return null;
   }
 
   static bool isLessonCancelledStatic(Lesson lesson) {
@@ -412,23 +624,82 @@ class MenetrendService {
     final firstLesson = activeLessons.isNotEmpty ? activeLessons.first : null;
     final lastLesson = activeLessons.isNotEmpty ? activeLessons.last : null;
     final firstStartLocal = firstLesson?.start.toLocal();
-    final isMorning = firstStartLocal != null
-        ? now.isBefore(firstStartLocal.add(const Duration(minutes: 30)))
-        : now.hour < 12;
+
+    // Smart visibility window: outside of it the card stays hidden.
+    final window = commuteWindow(
+      now: now,
+      firstStart: firstStartLocal,
+      lastEnd: lastLesson?.end.toLocal(),
+    );
+    if (window == null) return null;
+    final isMorning = window;
 
     final effectiveWalk = calculateEffectiveWalkingMinutes(
       baseWalkingMinutes: prefs.walkingDurationMinutes,
       walkingSpeedKmh: prefs.walkingSpeedKmh,
     );
 
-    final fromName =
-        isMorning ? prefs.transitHomeStation : prefs.transitSchoolStation;
-    final toName =
-        isMorning ? prefs.transitSchoolStation : prefs.transitHomeStation;
+    final homeExact = prefs.homeAddress.isNotEmpty;
+    final schoolExact = prefs.schoolAddress.isNotEmpty;
+    final fromExact = isMorning ? homeExact : schoolExact;
+    final toExact = isMorning ? schoolExact : homeExact;
+
+    final fromStopName =
+        isMorning ? prefs.primaryHomeStop : prefs.primarySchoolStop;
+    final toStopName =
+        isMorning ? prefs.primarySchoolStop : prefs.primaryHomeStop;
+
+    final fromName = isMorning
+        ? (homeExact ? prefs.homeAddress : fromStopName)
+        : (schoolExact ? prefs.schoolAddress : fromStopName);
+    final toName = isMorning
+        ? (schoolExact ? prefs.schoolAddress : toStopName)
+        : (homeExact ? prefs.homeAddress : toStopName);
+
+    final dayPlan = prefs.commutePlanForWeekday(now.weekday);
+    final rawDirLine = isMorning
+        ? (dayPlan['morningLine'] ?? dayPlan['line'])
+        : (dayPlan['afternoonLine'] ?? dayPlan['line']);
+    final dayLine = (rawDirLine as String?)?.trim() ?? '';
+    final rawDirLocalBus = isMorning
+        ? (dayPlan['morningUseLocalBus'] ?? dayPlan['useLocalBus'])
+        : (dayPlan['afternoonUseLocalBus'] ?? dayPlan['useLocalBus']);
+    final dayUseLocalBus = rawDirLocalBus != false;
+    final walkScale = 4.8 / normalizeWalkingSpeed(prefs.walkingSpeedKmh);
 
     try {
-      final from = await _resolve(fromName);
-      final to = await _resolve(toName);
+      Future<({double lat, double lon})?> resolveOrigin() async {
+        if (isMorning &&
+            prefs.homeAddressLat != null &&
+            prefs.homeAddressLon != null) {
+          return (lat: prefs.homeAddressLat!, lon: prefs.homeAddressLon!);
+        }
+        if (!isMorning &&
+            prefs.schoolAddressLat != null &&
+            prefs.schoolAddressLon != null) {
+          return (lat: prefs.schoolAddressLat!, lon: prefs.schoolAddressLon!);
+        }
+        return fromExact
+            ? await _geocodeAddress(fromName)
+            : await _resolve(fromName);
+      }
+
+      Future<({double lat, double lon})?> resolveDestination() async {
+        if (isMorning &&
+            prefs.schoolAddressLat != null &&
+            prefs.schoolAddressLon != null) {
+          return (lat: prefs.schoolAddressLat!, lon: prefs.schoolAddressLon!);
+        }
+        if (!isMorning &&
+            prefs.homeAddressLat != null &&
+            prefs.homeAddressLon != null) {
+          return (lat: prefs.homeAddressLat!, lon: prefs.homeAddressLon!);
+        }
+        return toExact ? await _geocodeAddress(toName) : await _resolve(toName);
+      }
+
+      final from = await resolveOrigin();
+      final to = await resolveDestination();
       if (from == null || to == null) return null;
 
       final DateTime refTime;
@@ -489,12 +760,27 @@ class MenetrendService {
       final trips = <MenetrendTripOption>[];
       for (final it in itineraries) {
         if (it is! Map) continue;
-        final legs = (it['legs'] as List?)
-                ?.whereType<Map>()
-                .where((l) => l['mode'] != 'WALK')
-                .toList() ??
-            const [];
+        final allLegs = (it['legs'] as List?)?.whereType<Map>().toList() ??
+            const <Map>[];
+        final legs = allLegs.where((l) => l['mode'] != 'WALK').toList();
         if (legs.isEmpty) continue;
+        if (!dayUseLocalBus && legs.any(_isLocalBusLeg)) continue;
+        // Door-to-door walking legs reported by the planner (exact addresses).
+        int walkMinutesOf(Map? leg) {
+          if (leg == null) return 0;
+          final secs = (((leg['endTime'] as num).toInt() -
+                      (leg['startTime'] as num).toInt()) /
+                  1000)
+              .round();
+          return ((secs / 60) * walkScale).ceil().clamp(1, 90);
+        }
+
+        final leadWalk = allLegs.isNotEmpty && allLegs.first['mode'] == 'WALK'
+            ? allLegs.first
+            : null;
+        final tailWalk = allLegs.length > 1 && allLegs.last['mode'] == 'WALK'
+            ? allLegs.last
+            : null;
         final firstLeg = legs.first;
         final lastLeg = legs.last;
         final mode = _modeFor(firstLeg);
@@ -516,13 +802,14 @@ class MenetrendService {
         final tripLegs = <MenetrendLeg>[
           for (final l in legs)
             MenetrendLeg(
-              routeShortName: (l['route']?['shortName'] ??
+              routeShortName: HtmlSanitizer.clean((l['route']?['shortName'] ??
                       l['route']?['longName'] ??
                       '')
-                  .toString(),
+                  .toString()),
               mode: _modeFor(l),
-              fromName: (l['from']?['name'] ?? '').toString(),
-              toName: (l['to']?['name'] ?? '').toString(),
+              fromName:
+                  HtmlSanitizer.clean((l['from']?['name'] ?? '').toString()),
+              toName: HtmlSanitizer.clean((l['to']?['name'] ?? '').toString()),
               departure: ms(l['startTime']),
               arrival: ms(l['endTime']),
               platformCode: platformOf(l, 'from', _modeFor(l)),
@@ -535,7 +822,7 @@ class MenetrendService {
         final stops = <MenetrendStop>[
           for (final st in (firstLeg['intermediateStops'] as List? ?? const []))
             if (st is Map && st['name'] != null)
-              MenetrendStop(name: st['name'].toString()),
+              MenetrendStop(name: HtmlSanitizer.clean(st['name'].toString())),
         ];
         final delaySec = (firstLeg['departureDelay'] as num?)?.toInt() ?? 0;
         final fromTrain = mode == MenetrendTransportMode.rail;
@@ -561,27 +848,48 @@ class MenetrendService {
         trips.add(
           MenetrendTripOption(
             routeShortName: shortNames.isEmpty ? 'Járat' : shortNames,
-            routeLongName:
-                (firstLeg['route']?['longName'] ?? '').toString(),
+            routeLongName: HtmlSanitizer.clean(
+                (firstLeg['route']?['longName'] ?? '').toString()),
             mode: mode,
-            departureStation:
-                (firstLeg['from']?['name'] ?? fromName).toString(),
-            arrivalStation: toName,
+            departureStation: HtmlSanitizer.clean(
+                (firstLeg['from']?['name'] ?? fromName).toString()),
+            arrivalStation: HtmlSanitizer.clean(toName),
             scheduledDeparture: ms(firstLeg['startTime']),
             scheduledArrival: ms(it['endTime']),
             delayMinutes: (delaySec / 60).round().clamp(0, 180),
             platformCode: platformOf(firstLeg, 'from', mode),
             arrivalPlatformCode: platformOf(lastLeg, 'to', lastMode),
             intermediateStops: stops,
-            walkToStationMinutes: scaled(walkFromBase),
-            walkToDestinationMinutes: scaled(walkToBase),
+            walkToStationMinutes: fromExact && leadWalk != null
+                ? walkMinutesOf(leadWalk)
+                : (fromExact ? 1 : scaled(walkFromBase)),
+            walkToDestinationMinutes: toExact && tailWalk != null
+                ? walkMinutesOf(tailWalk)
+                : (toExact ? 0 : scaled(walkToBase)),
+            isFavorite: _matchesFavorite(
+              shortNames,
+              ms(firstLeg['startTime']),
+              [
+                dayLine,
+                if (dayLine.isEmpty) ...[
+                  prefs.favoriteRoute1stPeriod,
+                  prefs.favoriteRoute2ndPeriod,
+                ],
+              ],
+            ),
             legs: tripLegs,
           ),
         );
       }
 
+      // Only keep departures the user can physically catch (walking time +
+      // live delay). Nothing catchable => hide the card for now.
+      final catchable =
+          trips.where((t) => isTripCatchable(t, now)).toList();
+      if (catchable.isEmpty) return null;
+
       return buildEvaluation(
-        trips: trips,
+        trips: catchable,
         isMorning: isMorning,
         firstLesson: firstLesson,
         lastLesson: lastLesson,
@@ -591,6 +899,131 @@ class MenetrendService {
       );
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Fetches actual scheduled departures for a given weekday (`1..5`) and
+  /// direction (`isMorning`: true = Odafele, false = Hazafele) so the user can
+  /// pick a real departure/line in the Settings per-day commute selector.
+  Future<List<({String value, String label})>> fetchScheduledDepartureOptions({
+    required UserProfilePrefs prefs,
+    required bool isMorning,
+    required int weekday,
+    required bool useLocalBus,
+  }) async {
+    if (!prefs.transitConfigured) return const [];
+    final homeName = prefs.homeAddress.isNotEmpty
+        ? prefs.homeAddress
+        : prefs.primaryHomeStop;
+    final schoolName = prefs.schoolAddress.isNotEmpty
+        ? prefs.schoolAddress
+        : prefs.primarySchoolStop;
+    final fromName = isMorning ? homeName : schoolName;
+    final toName = isMorning ? schoolName : homeName;
+    if (fromName.isEmpty || toName.isEmpty) return const [];
+
+    try {
+      Future<({double lat, double lon})?> resolveEndpoint(
+        bool isHome,
+        String name,
+      ) async {
+        if (isHome &&
+            prefs.homeAddressLat != null &&
+            prefs.homeAddressLon != null) {
+          return (lat: prefs.homeAddressLat!, lon: prefs.homeAddressLon!);
+        }
+        if (!isHome &&
+            prefs.schoolAddressLat != null &&
+            prefs.schoolAddressLon != null) {
+          return (lat: prefs.schoolAddressLat!, lon: prefs.schoolAddressLon!);
+        }
+        final stopCoord = await _resolve(name);
+        if (stopCoord != null) return stopCoord;
+        return _geocodeAddress(name);
+      }
+
+      final from = await resolveEndpoint(isMorning, fromName);
+      final to = await resolveEndpoint(!isMorning, toName);
+      if (from == null || to == null) return const [];
+
+      final now = DateTime.now();
+      var targetDate = DateTime(now.year, now.month, now.day);
+      while (targetDate.weekday != weekday.clamp(1, 5)) {
+        targetDate = targetDate.add(const Duration(days: 1));
+      }
+      final timeStr = isMorning ? '06:30' : '13:45';
+      final query = '''
+      {
+        plan(
+          from: {lat: ${from.lat}, lon: ${from.lon}},
+          to: {lat: ${to.lat}, lon: ${to.lon}},
+          date: "${DateFormat('yyyy-MM-dd').format(targetDate)}",
+          time: "$timeStr",
+          arriveBy: false,
+          numItineraries: 8
+        ) {
+          itineraries {
+            startTime
+            endTime
+            legs {
+              mode
+              startTime
+              endTime
+              from { name }
+              to { name }
+              route { shortName longName }
+            }
+          }
+        }
+      }
+      ''';
+      final response = await _http
+          .post(
+            Uri.parse('$mavPluszBaseUrl/index/graphql'),
+            headers: mavHeaders,
+            body: jsonEncode({'query': query}),
+          )
+          .timeout(const Duration(seconds: 7));
+      if (response.statusCode != 200) return const [];
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final itineraries = decoded['data']?['plan']?['itineraries'];
+      if (itineraries is! List) return const [];
+
+      final fmt = DateFormat('HH:mm');
+      final seen = <String>{};
+      final out = <({String value, String label})>[];
+      for (final it in itineraries) {
+        if (it is! Map) continue;
+        final allLegs =
+            (it['legs'] as List?)?.whereType<Map>().toList() ?? const <Map>[];
+        final legs = allLegs.where((l) => l['mode'] != 'WALK').toList();
+        if (legs.isEmpty) continue;
+        if (!useLocalBus && legs.any(_isLocalBusLeg)) continue;
+        final dep = DateTime.fromMillisecondsSinceEpoch(
+          (legs.first['startTime'] as num).toInt(),
+        );
+        final arr = DateTime.fromMillisecondsSinceEpoch(
+          (it['endTime'] as num).toInt(),
+        );
+        final routeNames = legs
+            .map((l) => HtmlSanitizer.clean(
+                (l['route']?['shortName'] ?? l['route']?['longName'] ?? '')
+                    .toString()))
+            .where((s) => s.isNotEmpty)
+            .join(' → ');
+        final depTime = fmt.format(dep);
+        final arrTime = fmt.format(arr);
+        final lineCode = routeNames.isEmpty ? 'Járat' : routeNames;
+        final value = '$depTime / $lineCode';
+        if (!seen.add(value)) continue;
+        out.add((
+          value: value,
+          label: '$depTime → $arrTime  •  $lineCode',
+        ));
+      }
+      return out;
+    } catch (_) {
+      return const [];
     }
   }
 

@@ -112,7 +112,7 @@ void main() {
     );
   });
 
-  test('GreetingUtils resolves nickname or falls back to Milán / first name', () {
+  test('GreetingUtils resolves nickname or falls back to first name', () {
     expect(
       GreetingUtils.resolveDisplayName(
         customNickname: 'Mili',
@@ -132,7 +132,14 @@ void main() {
         customNickname: null,
         fullStudentName: null,
       ),
-      'Milán',
+      'Diák',
+    );
+    // 3-part names always use the 2nd token (primary first name).
+    expect(
+      GreetingUtils.resolveDisplayName(
+        fullStudentName: 'Albert Alexa Nikolett',
+      ),
+      'Alexa',
     );
   });
 
@@ -212,16 +219,16 @@ void main() {
   });
 
   test('GitHubUpdaterService compares semantic versions and build tags accurately', () {
-    expect(GitHubUpdaterService.fallbackAppVersion, '1.2.0');
-    expect(GitHubUpdaterService.fallbackBuildNumber, '4');
-    expect(GitHubUpdaterService.defaultApkFileName, 'reKRETA-v1.2.0.apk');
-    expect(GitHubUpdaterService.apkFileNameForTag('v1.2.0'), 'reKRETA-v1.2.0.apk');
+    expect(GitHubUpdaterService.fallbackAppVersion, '1.2.5');
+    expect(GitHubUpdaterService.fallbackBuildNumber, '7');
+    expect(GitHubUpdaterService.defaultApkFileName, 'reKRETA-v1.2.5.apk');
+    expect(GitHubUpdaterService.apkFileNameForTag('v1.2.5'), 'reKRETA-v1.2.5.apk');
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.2.0', 'v1.2.1'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.2.5', 'v1.2.6'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.2.0', 'v1.2.0'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.2.5', 'v1.2.5'),
       isFalse,
     );
     expect(
@@ -229,7 +236,7 @@ void main() {
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.0.0-alpha', 'v1.2.0-alpha'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.0.0-alpha', 'v1.2.5-alpha'),
       isTrue,
     );
     expect(
@@ -237,7 +244,7 @@ void main() {
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.2.0', 'v1.1.9'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.2.5', 'v1.1.9'),
       isFalse,
     );
   });
@@ -374,7 +381,8 @@ void main() {
 
     final shownWithToggleOn = filterLessonsForDisplay(
       lessonsStartingAtPeriod2,
-      showCancelledLessons: true,
+      hideCancelled: false,
+      hideFree: false,
     );
     expect(shownWithToggleOn.length, 2);
     expect(shownWithToggleOn.first.lessonNumber, 1);
@@ -382,7 +390,8 @@ void main() {
 
     final shownWithToggleOff = filterLessonsForDisplay(
       lessonsStartingAtPeriod2,
-      showCancelledLessons: false,
+      hideCancelled: false,
+      hideFree: true,
     );
     expect(shownWithToggleOff.length, 1);
     expect(shownWithToggleOff.first.lessonNumber, 2);

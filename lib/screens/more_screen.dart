@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
-import '../services/github_updater_service.dart';
 import '../services/kreta_client.dart';
 import '../services/menetrend_service.dart';
 import '../services/token_storage_service.dart';
@@ -15,6 +16,7 @@ import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 import '../widgets/frosted_inspection_modal.dart';
+import '../widgets/glass_card.dart';
 import 'about_app_screen.dart';
 
 enum _AttendanceFilter {
@@ -119,6 +121,16 @@ class MoreScreen extends StatefulWidget {
   final VoidCallback onLogout;
   final bool settingsOnly;
 
+  /// When `true` (and not [settingsOnly]) only the Kréta messages module is
+  /// shown; otherwise the non-settings view shows only absences (Hiányzások tab).
+  final bool messagesOnly;
+
+  /// Notified whenever the message list changes (refresh, read state).
+  final ValueChanged<List<KretaMessage>>? onMessagesChanged;
+
+  /// Whether this tab is currently visible in the bottom navigation IndexedStack.
+  final bool isActiveTab;
+
   const MoreScreen({
     super.key,
     required this.session,
@@ -131,6 +143,9 @@ class MoreScreen extends StatefulWidget {
     required this.onPrefsChanged,
     required this.onLogout,
     this.settingsOnly = false,
+    this.messagesOnly = false,
+    this.onMessagesChanged,
+    this.isActiveTab = true,
   });
 
   @override
@@ -143,29 +158,54 @@ class _MoreScreenState extends State<MoreScreen> {
   _AttendanceFilter _attendanceFilter = _AttendanceFilter.all;
   bool _showSentMessages = false;
   bool _isLoadingModules = false;
+  String _appVersion = '1.2.5';
+  bool _initialEntrancePlayed = false;
+  bool _entranceActive = false;
 
   late List<Omission> _omissions;
   late List<KretaMessage> _messages;
   final Set<String> _readMessageIds = {};
 
   late final TextEditingController _homeStationController;
+  late final TextEditingController _homeTrainStationController;
   late final TextEditingController _schoolStationController;
+  late final TextEditingController _schoolTrainStationController;
+  late final TextEditingController _homeAddressController;
+  late final TextEditingController _schoolAddressController;
   late final TextEditingController _fav1stController;
   late final TextEditingController _fav2ndController;
+  final ValueNotifier<int> _stateVersion = ValueNotifier<int>(0);
 
   final DateFormat _dateFormat = DateFormat('yyyy. MM. dd.');
   final DateFormat _dateTimeFormat = DateFormat('yyyy. MM. dd. HH:mm');
 
   @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    _stateVersion.value++;
+  }
+
+  @override
   void initState() {
     super.initState();
     _currentPrefs = widget.prefs;
+    PackageInfo.fromPlatform().then((info) {
+      if (mounted) setState(() => _appVersion = info.version);
+    }).catchError((_) {});
     _omissions = List<Omission>.from(widget.initialOmissions);
     _messages = List<KretaMessage>.from(widget.initialMessages);
     _homeStationController =
         TextEditingController(text: _currentPrefs.transitHomeStation);
+    _homeTrainStationController =
+        TextEditingController(text: _currentPrefs.homeTrainStation);
     _schoolStationController =
         TextEditingController(text: _currentPrefs.transitSchoolStation);
+    _schoolTrainStationController =
+        TextEditingController(text: _currentPrefs.schoolTrainStation);
+    _homeAddressController =
+        TextEditingController(text: _currentPrefs.homeAddress);
+    _schoolAddressController =
+        TextEditingController(text: _currentPrefs.schoolAddress);
     _fav1stController =
         TextEditingController(text: _currentPrefs.favoriteRoute1stPeriod);
     _fav2ndController =
@@ -175,7 +215,20 @@ class _MoreScreenState extends State<MoreScreen> {
         widget.kretaClient != null &&
         (_omissions.isEmpty && _messages.isEmpty)) {
       _refreshModules();
+    } else if (widget.isActiveTab) {
+      _armInitialEntranceIfNeeded();
     }
+  }
+
+  void _armInitialEntranceIfNeeded() {
+    if (_initialEntrancePlayed) return;
+    _initialEntrancePlayed = true;
+    _entranceActive = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _entranceActive = false;
+      }
+    });
   }
 
   @override
@@ -183,6 +236,7 @@ class _MoreScreenState extends State<MoreScreen> {
     super.didUpdateWidget(oldWidget);
     if (widget.prefs != oldWidget.prefs) {
       _currentPrefs = widget.prefs;
+      _stateVersion.value++;
     }
     if (widget.initialOmissions.isNotEmpty && _omissions.isEmpty) {
       _omissions = List<Omission>.from(widget.initialOmissions);
@@ -190,14 +244,24 @@ class _MoreScreenState extends State<MoreScreen> {
     if (widget.initialMessages.isNotEmpty && _messages.isEmpty) {
       _messages = List<KretaMessage>.from(widget.initialMessages);
     }
+    if (widget.isActiveTab && !oldWidget.isActiveTab && !_isLoadingModules) {
+      setState(() {
+        _armInitialEntranceIfNeeded();
+      });
+    }
   }
 
   @override
   void dispose() {
     _homeStationController.dispose();
+    _homeTrainStationController.dispose();
     _schoolStationController.dispose();
+    _schoolTrainStationController.dispose();
+    _homeAddressController.dispose();
+    _schoolAddressController.dispose();
     _fav1stController.dispose();
     _fav2ndController.dispose();
+    _stateVersion.dispose();
     super.dispose();
   }
 
@@ -220,10 +284,19 @@ class _MoreScreenState extends State<MoreScreen> {
         _omissions = results[0] as List<Omission>;
         _messages = results[1] as List<KretaMessage>;
         _isLoadingModules = false;
+        if (widget.isActiveTab) {
+          _armInitialEntranceIfNeeded();
+        }
       });
+      widget.onMessagesChanged?.call(List<KretaMessage>.of(_messages));
     } catch (_) {
       if (!mounted) return;
-      setState(() => _isLoadingModules = false);
+      setState(() {
+        _isLoadingModules = false;
+        if (widget.isActiveTab) {
+          _armInitialEntranceIfNeeded();
+        }
+      });
     }
   }
 
@@ -351,6 +424,12 @@ class _MoreScreenState extends State<MoreScreen> {
     if (result != null) {
       _setGradeColor(grade, result);
     }
+  }
+
+  void _previewRounding(GradeRoundingConfig nextConfig) {
+    setState(() {
+      _currentPrefs = _currentPrefs.copyWith(roundingConfig: nextConfig);
+    });
   }
 
   void _updateRounding(GradeRoundingConfig nextConfig) {
@@ -672,6 +751,7 @@ class _MoreScreenState extends State<MoreScreen> {
         _messages[idx] = _messages[idx].copyWith(isRead: true);
       }
     });
+    widget.onMessagesChanged?.call(List<KretaMessage>.of(_messages));
 
     showModalBottomSheet<void>(
       context: context,
@@ -1002,7 +1082,8 @@ class _MoreScreenState extends State<MoreScreen> {
                             body: body,
                             senderName: widget.student?.name ??
                                 _currentPrefs.nickname ??
-                                'Milán',
+                                widget.session.userName ??
+                                '',
                           );
                           if (dialogContext.mounted) {
                             Navigator.of(dialogContext).pop(created);
@@ -1048,7 +1129,6 @@ class _MoreScreenState extends State<MoreScreen> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final expFormat = DateFormat('yyyy. MM. dd. HH:mm');
-    final rounding = _currentPrefs.roundingConfig;
 
     // B6: On the 'Továbbiak' bottom tab (!widget.settingsOnly), render ONLY
     // the Attendance and Kréta Messages modules. Settings are accessible
@@ -1060,9 +1140,12 @@ class _MoreScreenState extends State<MoreScreen> {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
           children: [
-            _buildAttendanceModuleCard(theme, scheme).staggeredEntrance(0),
-            const SizedBox(height: 16),
-            _buildMessagesModuleCard(theme, scheme).staggeredEntrance(1),
+            if (widget.messagesOnly)
+              _buildMessagesModuleCard(theme, scheme)
+                  .staggeredEntrance(0, enabled: _entranceActive)
+            else
+              _buildAttendanceModuleCard(theme, scheme)
+                  .staggeredEntrance(0, enabled: _entranceActive),
           ],
         ),
       );
@@ -1073,17 +1156,74 @@ class _MoreScreenState extends State<MoreScreen> {
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 36),
       children: [
-        // Accordion 1: MenetrendGO Ingázás és Indulási Értesítések (Part A #4)
-        _buildMenetrendSettingsAccordion(theme, scheme),
+        _SettingsAccordionCard(
+          icon: Icons.manage_accounts_rounded,
+          title: 'Fiók és munkamenet',
+          subtitle:
+              widget.student?.name ?? widget.session.userName ?? '—',
+          christmasCap: _currentPrefs.christmasModeEnabled,
+          prefs: _currentPrefs,
+          stateListenable: _stateVersion,
+          prefsGetter: () => _currentPrefs,
+          childrenBuilder: () => [
+            _buildRow(
+              scheme,
+              'Tanuló neve',
+              widget.student?.name ?? widget.session.userName ?? '—',
+            ),
+            _buildRow(
+              scheme,
+              'Beállított becenév',
+              (_currentPrefs.nickname?.trim().isNotEmpty ?? false)
+                  ? _currentPrefs.nickname!
+                  : 'Alapértelmezett',
+            ),
+            _buildRow(
+              scheme,
+              'Intézménykód (iss)',
+              widget.session.instituteCode,
+            ),
+            if (widget.student != null)
+              _buildRow(scheme, 'Intézmény', widget.student!.instituteName),
+            _buildRow(
+              scheme,
+              'Token lejárat',
+              expFormat.format(widget.session.expiresAt.toLocal()),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFC62828),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: OledTheme.cardRadius,
+                ),
+              ),
+              onPressed: () async {
+                final rootNav = Navigator.of(context, rootNavigator: true);
+                await Future.sync(widget.onLogout);
+                rootNav.pushNamedAndRemoveUntil('/login', (route) => false);
+              },
+              icon: const Icon(Icons.logout_rounded),
+              label: Text(
+                uwu('Kijelentkezés (beállítások megtartásával)'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 12),
 
-        // Accordion 2: Megjelenés, Téma, Karácsonyi mód, Ikonok, Háttér & Ablakok
         _SettingsAccordionCard(
           icon: Icons.palette_rounded,
-          title: 'Megjelenés, Téma és Karácsonyi mód',
+          title: 'Megjelenés és témák',
           subtitle: 'OLED Fekete, Material You, Ikonok, Háttér és Ablakok',
           christmasCap: _currentPrefs.christmasModeEnabled,
-          children: [
+          prefs: _currentPrefs,
+          stateListenable: _stateVersion,
+          prefsGetter: () => _currentPrefs,
+          childrenBuilder: () => [
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
               title: const Text(
@@ -1458,13 +1598,15 @@ class _MoreScreenState extends State<MoreScreen> {
         ),
         const SizedBox(height: 12),
 
-        // Accordion 3: Érdemjegyek Színeinek Testreszabása
         _SettingsAccordionCard(
           icon: Icons.color_lens_rounded,
           title: 'Érdemjegyek Színeinek Testreszabása',
           subtitle: 'Egyedi színek és HEX kódok az 1–5 jegyekhez',
           christmasCap: _currentPrefs.christmasModeEnabled,
-          children: [
+          prefs: _currentPrefs,
+          stateListenable: _stateVersion,
+          prefsGetter: () => _currentPrefs,
+          childrenBuilder: () => [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1574,29 +1716,52 @@ class _MoreScreenState extends State<MoreScreen> {
         ),
         const SizedBox(height: 12),
 
-        // Accordion 4: Kerekítési Határok és Órarend Beállítások
+        _buildMenetrendSettingsAccordion(theme, scheme),
+        const SizedBox(height: 12),
+
         _SettingsAccordionCard(
           icon: Icons.tune_rounded,
-          title: 'Kerekítési Határok és Órarend',
+          title: 'Órarend',
           subtitle: 'Átlag küszöbök, elmaradt/nulladik órák és hétvége',
           christmasCap: _currentPrefs.christmasModeEnabled,
-          children: [
+          prefs: _currentPrefs,
+          stateListenable: _stateVersion,
+          prefsGetter: () => _currentPrefs,
+          childrenBuilder: () => [
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
               title: const Text(
-                'Elmaradt/nulladik órák mutatása',
+                'Elmaradó órák elrejtése',
                 style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
               ),
               subtitle: Text(
-                'Ha be van kapcsolva, későbbi kezdésnél az inaktív 1. óra is megjelenik szürkítve',
+                'Az elmaradt tanórák nem jelennek meg az órarendben',
                 style: TextStyle(
                   fontSize: 12,
                   color: scheme.onSurface.withValues(alpha: 0.65),
                 ),
               ),
-              value: _currentPrefs.showCancelledLessons,
+              value: _currentPrefs.hideCancelledLessons,
               onChanged: (val) => _updatePrefs(
-                _currentPrefs.copyWith(showCancelledLessons: val),
+                _currentPrefs.withExtra('hideCancelledLessons', val),
+              ),
+            ),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text(
+                'Lyukas / szabad órák elrejtése',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+              subtitle: Text(
+                'A szabad sávok (nulladik óra, lyukasóra) nem jelennek meg',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: scheme.onSurface.withValues(alpha: 0.65),
+                ),
+              ),
+              value: _currentPrefs.hideFreeLessons,
+              onChanged: (val) => _updatePrefs(
+                _currentPrefs.withExtra('hideFreeLessons', val),
               ),
             ),
             SwitchListTile.adaptive(
@@ -1665,11 +1830,16 @@ class _MoreScreenState extends State<MoreScreen> {
               scheme: scheme,
               gradeLabel: 'Jeles (5) határ',
               color: _currentPrefs.colorForGrade(5),
-              value: rounding.threshold5,
+              value: _currentPrefs.roundingConfig.threshold5,
               min: 4.00,
               max: 4.95,
-              onChanged: (v) => _updateRounding(
-                rounding.copyWith(
+              onChanged: (v) => _previewRounding(
+                _currentPrefs.roundingConfig.copyWith(
+                  threshold5: double.parse(v.toStringAsFixed(2)),
+                ),
+              ),
+              onChangeEnd: (v) => _updateRounding(
+                _currentPrefs.roundingConfig.copyWith(
                   threshold5: double.parse(v.toStringAsFixed(2)),
                 ),
               ),
@@ -1679,11 +1849,16 @@ class _MoreScreenState extends State<MoreScreen> {
               scheme: scheme,
               gradeLabel: 'Jó (4) határ',
               color: _currentPrefs.colorForGrade(4),
-              value: rounding.threshold4,
+              value: _currentPrefs.roundingConfig.threshold4,
               min: 3.00,
               max: 3.95,
-              onChanged: (v) => _updateRounding(
-                rounding.copyWith(
+              onChanged: (v) => _previewRounding(
+                _currentPrefs.roundingConfig.copyWith(
+                  threshold4: double.parse(v.toStringAsFixed(2)),
+                ),
+              ),
+              onChangeEnd: (v) => _updateRounding(
+                _currentPrefs.roundingConfig.copyWith(
                   threshold4: double.parse(v.toStringAsFixed(2)),
                 ),
               ),
@@ -1693,11 +1868,16 @@ class _MoreScreenState extends State<MoreScreen> {
               scheme: scheme,
               gradeLabel: 'Közepes (3) határ',
               color: _currentPrefs.colorForGrade(3),
-              value: rounding.threshold3,
+              value: _currentPrefs.roundingConfig.threshold3,
               min: 2.00,
               max: 2.95,
-              onChanged: (v) => _updateRounding(
-                rounding.copyWith(
+              onChanged: (v) => _previewRounding(
+                _currentPrefs.roundingConfig.copyWith(
+                  threshold3: double.parse(v.toStringAsFixed(2)),
+                ),
+              ),
+              onChangeEnd: (v) => _updateRounding(
+                _currentPrefs.roundingConfig.copyWith(
                   threshold3: double.parse(v.toStringAsFixed(2)),
                 ),
               ),
@@ -1707,11 +1887,16 @@ class _MoreScreenState extends State<MoreScreen> {
               scheme: scheme,
               gradeLabel: 'Elégséges (2) határ',
               color: _currentPrefs.colorForGrade(2),
-              value: rounding.threshold2,
+              value: _currentPrefs.roundingConfig.threshold2,
               min: 1.10,
               max: 2.20,
-              onChanged: (v) => _updateRounding(
-                rounding.copyWith(
+              onChanged: (v) => _previewRounding(
+                _currentPrefs.roundingConfig.copyWith(
+                  threshold2: double.parse(v.toStringAsFixed(2)),
+                ),
+              ),
+              onChangeEnd: (v) => _updateRounding(
+                _currentPrefs.roundingConfig.copyWith(
                   threshold2: double.parse(v.toStringAsFixed(2)),
                 ),
               ),
@@ -1720,13 +1905,125 @@ class _MoreScreenState extends State<MoreScreen> {
         ),
         const SizedBox(height: 12),
 
-        // Accordion 5: Beállítások exportálása / importálása
+        _SettingsAccordionCard(
+          icon: Icons.school_rounded,
+          title: 'Ösztöndíj kalkulátor',
+          subtitle: _currentPrefs.scholarshipBasicEducation
+              ? 'Ágazati alapoktatás (9–10. évf.)'
+              : 'Szakirányú oktatás (11. évfolyamtól)',
+          christmasCap: _currentPrefs.christmasModeEnabled,
+          prefs: _currentPrefs,
+          stateListenable: _stateVersion,
+          prefsGetter: () => _currentPrefs,
+          childrenBuilder: () => [
+            Text(
+              'Szakképzési ösztöndíj',
+              style: theme.textTheme.labelLarge
+                  ?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Képzési szakasz:',
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: scheme.onSurface.withValues(alpha: 0.72),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  showCheckmark: false,
+                  label: const Text('Szakirányú oktatás'),
+                  selected: !_currentPrefs.scholarshipBasicEducation,
+                  onSelected: (_) => _updatePrefs(
+                    _currentPrefs.withExtra('scholarshipBasic', false),
+                  ),
+                ),
+                ChoiceChip(
+                  showCheckmark: false,
+                  label: const Text('Ágazati alapoktatás (9–10. évf.)'),
+                  selected: _currentPrefs.scholarshipBasicEducation,
+                  onSelected: (_) => _updatePrefs(
+                    _currentPrefs.withExtra('scholarshipBasic', true),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'Iskolatípus:',
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: scheme.onSurface.withValues(alpha: 0.72),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  showCheckmark: false,
+                  label: const Text('Technikum (8 000 Ft / hó)'),
+                  selected: _currentPrefs.scholarshipSchoolType == 'technikum',
+                  onSelected: (_) => _updatePrefs(
+                    _currentPrefs.withExtra('scholarshipSchoolType', 'technikum'),
+                  ),
+                ),
+                ChoiceChip(
+                  showCheckmark: false,
+                  label: const Text('Szakképző (16 000 Ft / hó)'),
+                  selected: _currentPrefs.scholarshipSchoolType == 'szakkepzo',
+                  onSelected: (_) => _updatePrefs(
+                    _currentPrefs.withExtra('scholarshipSchoolType', 'szakkepzo'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            for (final (range, amount) in const [
+              ('2,00 – 2,99', '8 000 Ft / hó'),
+              ('3,00 – 3,99', '25 000 Ft / hó'),
+              ('4,00 – 4,49', '42 000 Ft / hó'),
+              ('4,50 – 5,00', '59 000 Ft / hó'),
+            ])
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      '$range:',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      amount,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.primary,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
         _SettingsAccordionCard(
           icon: Icons.import_export_rounded,
           title: 'Beállítások exportálása / importálása',
           subtitle: 'JSON biztonsági mentés készítése és visszaállítása',
           christmasCap: _currentPrefs.christmasModeEnabled,
-          children: [
+          prefs: _currentPrefs,
+          stateListenable: _stateVersion,
+          prefsGetter: () => _currentPrefs,
+          childrenBuilder: () => [
             Text(
               'Minden testreszabás (színek, becenév, tantárgy- és tanár-átnevezések, kerekítési határok, MenetrendGO beállítások) automatikusan megmarad kijelentkezés után is, vagy JSON fájlba exportálható:',
               style: theme.textTheme.bodySmall?.copyWith(
@@ -1757,71 +2054,19 @@ class _MoreScreenState extends State<MoreScreen> {
         ),
         const SizedBox(height: 12),
 
-        // Accordion 6: Fiók és munkamenet
-        _SettingsAccordionCard(
-          icon: Icons.manage_accounts_rounded,
-          title: 'Fiók és munkamenet',
-          subtitle:
-              widget.student?.name ?? widget.session.userName ?? 'Milán',
-          christmasCap: _currentPrefs.christmasModeEnabled,
-          children: [
-            _buildRow(
-              scheme,
-              'Tanuló neve',
-              widget.student?.name ?? widget.session.userName ?? 'Milán',
-            ),
-            _buildRow(
-              scheme,
-              'Beállított becenév',
-              _currentPrefs.nickname ?? 'Alapértelmezett (Milán)',
-            ),
-            _buildRow(
-              scheme,
-              'Intézménykód (iss)',
-              widget.session.instituteCode,
-            ),
-            if (widget.student != null)
-              _buildRow(scheme, 'Intézmény', widget.student!.instituteName),
-            _buildRow(
-              scheme,
-              'Token lejárat',
-              expFormat.format(widget.session.expiresAt.toLocal()),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFC62828),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: OledTheme.cardRadius,
-                ),
-              ),
-              onPressed: widget.onLogout,
-              icon: const Icon(Icons.logout_rounded),
-              label: Text(
-                uwu('Kijelentkezés (beállítások megtartásával)'),
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-
-        // Accordion 7: Rendszer / Névjegy (Developer Options live strictly inside AboutAppScreen)
         _SettingsAccordionCard(
           icon: Icons.info_outline_rounded,
           title: uwu('Rendszer / Névjegy'),
-          subtitle:
-              'reKRETA v${GitHubUpdaterService.fallbackAppVersion}+${GitHubUpdaterService.fallbackBuildNumber} • GitHub OTA frissítő',
+          subtitle: 'reKRETA v$_appVersion • GitHub OTA frissítő',
           christmasCap: _currentPrefs.christmasModeEnabled,
-          children: [
+          prefs: _currentPrefs,
+          stateListenable: _stateVersion,
+          prefsGetter: () => _currentPrefs,
+          childrenBuilder: () => [
             _buildRow(
               scheme,
               uwu('Alkalmazás'),
-              uwu(
-                'reKRETA • v${GitHubUpdaterService.fallbackAppVersion}+${GitHubUpdaterService.fallbackBuildNumber}',
-              ),
+              uwu('reKRETA v$_appVersion'),
             ),
             _buildRow(scheme, uwu('GitHub'), 'github.com/mlnlbrt10/reKRETA'),
             const SizedBox(height: 12),
@@ -1886,24 +2131,19 @@ class _MoreScreenState extends State<MoreScreen> {
     ThemeData theme,
     ColorScheme scheme,
   ) {
-    final speedKmh = _currentPrefs.walkingSpeedKmh.clamp(3.5, 5.5);
-    String speedLabel;
-    if (speedKmh <= 3.8) {
-      speedLabel = 'Lassú (${speedKmh.toStringAsFixed(1)} km/h)';
-    } else if (speedKmh >= 5.0) {
-      speedLabel = 'Gyors / Sietős (${speedKmh.toStringAsFixed(1)} km/h)';
-    } else {
-      speedLabel = 'Normál (${speedKmh.toStringAsFixed(1)} km/h)';
-    }
+    final speedKmh = _currentPrefs.walkingSpeedKmh;
 
     return _SettingsAccordionCard(
       icon: Icons.directions_railway_filled_rounded,
-      title: 'MenetrendGO Ingázás & Értesítések',
+      title: 'MenetrendGO',
       subtitle: _currentPrefs.transitConfigured
-          ? '${_currentPrefs.transitHomeStation} ↔ ${_currentPrefs.transitSchoolStation}'
+          ? '${_currentPrefs.primaryHomeStop} ↔ ${_currentPrefs.primarySchoolStop}'
           : 'Nincs beállítva',
       christmasCap: _currentPrefs.christmasModeEnabled,
-      children: [
+      prefs: _currentPrefs,
+      stateListenable: _stateVersion,
+      prefsGetter: () => _currentPrefs,
+      childrenBuilder: () => [
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
           secondary: const Icon(Icons.directions_railway_filled_rounded),
@@ -1916,20 +2156,166 @@ class _MoreScreenState extends State<MoreScreen> {
             _currentPrefs.copyWith(transitCardEnabled: v),
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Text(
-          'Állomások és útvonal (MenetrendGO):',
+          '1. Otthoni cím (pontos lakcím automatikus sétaszámítással):',
           style: theme.textTheme.labelMedium?.copyWith(
             fontWeight: FontWeight.w800,
             color: scheme.primary,
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
+        _TransitStopSearchField(
+          controller: _homeAddressController,
+          label: 'Otthoni cím',
+          hint: 'Kezdd el gépelni a címed (pl. Szolnok, Kossuth tér 1.)',
+          icon: Icons.home_work_rounded,
+          isAddressSearch: true,
+          onSelectedResult: (r) {
+            var next = _currentPrefs.withExtras({
+              'homeAddress': r.name,
+              'homeAddressLat': r.lat,
+              'homeAddressLon': r.lon,
+            });
+            final busLat = (next.extras['homeBusLat'] as num?)?.toDouble();
+            final busLon = (next.extras['homeBusLon'] as num?)?.toDouble();
+            if (busLat != null && busLon != null) {
+              final walkMins = MenetrendService.estimateWalkingMinutesBetween(
+                lat1: r.lat,
+                lon1: r.lon,
+                lat2: busLat,
+                lon2: busLon,
+                walkingSpeedKmh: next.walkingSpeedKmh,
+              );
+              next = next.copyWith(
+                walkHomeToBusMinutes: walkMins,
+                walkingDurationMinutes: walkMins,
+              );
+            }
+            final trainLat = (next.extras['homeTrainLat'] as num?)?.toDouble();
+            final trainLon = (next.extras['homeTrainLon'] as num?)?.toDouble();
+            if (trainLat != null && trainLon != null) {
+              next = next.copyWith(
+                walkHomeToTrainMinutes:
+                    MenetrendService.estimateWalkingMinutesBetween(
+                  lat1: r.lat,
+                  lon1: r.lon,
+                  lat2: trainLat,
+                  lon2: trainLon,
+                  walkingSpeedKmh: next.walkingSpeedKmh,
+                ),
+              );
+            }
+            _updatePrefs(next);
+          },
+          onSelected: (name) => _updatePrefs(
+            _currentPrefs.withExtra('homeAddress', name),
+          ),
+          onCleared: () => _updatePrefs(
+            _currentPrefs.withExtras({
+              'homeAddress': null,
+              'homeAddressLat': null,
+              'homeAddressLon': null,
+            }),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          '2. Iskola címe (pontos iskolacím automatikus sétaszámítással):',
+          style: theme.textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: scheme.primary,
+          ),
+        ),
+        const SizedBox(height: 8),
+        _TransitStopSearchField(
+          controller: _schoolAddressController,
+          label: 'Iskola címe',
+          hint: 'Kezdd el gépelni az iskola címét (pl. Szolnok, Ady Endre út)',
+          icon: Icons.apartment_rounded,
+          isAddressSearch: true,
+          onSelectedResult: (r) {
+            var next = _currentPrefs.withExtras({
+              'schoolAddress': r.name,
+              'schoolAddressLat': r.lat,
+              'schoolAddressLon': r.lon,
+            });
+            final busLat = (next.extras['schoolBusLat'] as num?)?.toDouble();
+            final busLon = (next.extras['schoolBusLon'] as num?)?.toDouble();
+            if (busLat != null && busLon != null) {
+              next = next.copyWith(
+                walkSchoolToBusMinutes:
+                    MenetrendService.estimateWalkingMinutesBetween(
+                  lat1: r.lat,
+                  lon1: r.lon,
+                  lat2: busLat,
+                  lon2: busLon,
+                  walkingSpeedKmh: next.walkingSpeedKmh,
+                ),
+              );
+            }
+            final trainLat =
+                (next.extras['schoolTrainLat'] as num?)?.toDouble();
+            final trainLon =
+                (next.extras['schoolTrainLon'] as num?)?.toDouble();
+            if (trainLat != null && trainLon != null) {
+              next = next.copyWith(
+                walkSchoolToTrainMinutes:
+                    MenetrendService.estimateWalkingMinutesBetween(
+                  lat1: r.lat,
+                  lon1: r.lon,
+                  lat2: trainLat,
+                  lon2: trainLon,
+                  walkingSpeedKmh: next.walkingSpeedKmh,
+                ),
+              );
+            }
+            _updatePrefs(next);
+          },
+          onSelected: (name) => _updatePrefs(
+            _currentPrefs.withExtra('schoolAddress', name),
+          ),
+          onCleared: () => _updatePrefs(
+            _currentPrefs.withExtras({
+              'schoolAddress': null,
+              'schoolAddressLat': null,
+              'schoolAddressLon': null,
+            }),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          '3. Otthoni megálló (Buszmegálló & Vasútállomás):',
+          style: theme.textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: scheme.primary,
+          ),
+        ),
+        const SizedBox(height: 8),
         _TransitStopSearchField(
           controller: _homeStationController,
-          label: 'Otthoni megálló / lakóhely',
-          hint: 'Keress megállót vagy állomást',
-          icon: Icons.home_rounded,
+          label: 'Otthoni buszmegálló',
+          hint: 'Keress buszmegállót vagy állomást',
+          icon: Icons.directions_bus_rounded,
+          onSelectedResult: (r) {
+            var next = _currentPrefs
+                .copyWith(transitHomeStation: r.name)
+                .withExtras({'homeBusLat': r.lat, 'homeBusLon': r.lon});
+            if (next.homeAddressLat != null && next.homeAddressLon != null) {
+              final walkMins = MenetrendService.estimateWalkingMinutesBetween(
+                lat1: next.homeAddressLat!,
+                lon1: next.homeAddressLon!,
+                lat2: r.lat,
+                lon2: r.lon,
+                walkingSpeedKmh: next.walkingSpeedKmh,
+              );
+              next = next.copyWith(
+                walkHomeToBusMinutes: walkMins,
+                walkingDurationMinutes: walkMins,
+              );
+            }
+            _updatePrefs(next);
+          },
           onSelected: (name) => _updatePrefs(
             _currentPrefs.copyWith(transitHomeStation: name),
           ),
@@ -1937,17 +2323,118 @@ class _MoreScreenState extends State<MoreScreen> {
             _currentPrefs.copyWith(transitHomeStation: ''),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
+        _TransitStopSearchField(
+          controller: _homeTrainStationController,
+          label: 'Otthoni vasútállomás',
+          hint: 'Keress vasútállomást (opcionális)',
+          icon: Icons.train_rounded,
+          onSelectedResult: (r) {
+            var next = _currentPrefs.withExtras({
+              'homeTrainStation': r.name,
+              'homeTrainLat': r.lat,
+              'homeTrainLon': r.lon,
+            });
+            if (next.homeAddressLat != null && next.homeAddressLon != null) {
+              next = next.copyWith(
+                walkHomeToTrainMinutes:
+                    MenetrendService.estimateWalkingMinutesBetween(
+                  lat1: next.homeAddressLat!,
+                  lon1: next.homeAddressLon!,
+                  lat2: r.lat,
+                  lon2: r.lon,
+                  walkingSpeedKmh: next.walkingSpeedKmh,
+                ),
+              );
+            }
+            _updatePrefs(next);
+          },
+          onSelected: (name) => _updatePrefs(
+            _currentPrefs.withExtra('homeTrainStation', name),
+          ),
+          onCleared: () => _updatePrefs(
+            _currentPrefs.withExtra('homeTrainStation', null),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          '4. Iskolai megálló (Buszmegálló & Vasútállomás):',
+          style: theme.textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: scheme.primary,
+          ),
+        ),
+        const SizedBox(height: 8),
         _TransitStopSearchField(
           controller: _schoolStationController,
-          label: 'Iskola megállója / címe',
-          hint: 'Keress megállót vagy állomást',
-          icon: Icons.school_rounded,
+          label: 'Iskolai buszmegálló',
+          hint: 'Keress iskolai buszmegállót vagy állomást',
+          icon: Icons.directions_bus_filled_rounded,
+          onSelectedResult: (r) {
+            var next = _currentPrefs
+                .copyWith(transitSchoolStation: r.name)
+                .withExtras({'schoolBusLat': r.lat, 'schoolBusLon': r.lon});
+            if (next.schoolAddressLat != null &&
+                next.schoolAddressLon != null) {
+              next = next.copyWith(
+                walkSchoolToBusMinutes:
+                    MenetrendService.estimateWalkingMinutesBetween(
+                  lat1: next.schoolAddressLat!,
+                  lon1: next.schoolAddressLon!,
+                  lat2: r.lat,
+                  lon2: r.lon,
+                  walkingSpeedKmh: next.walkingSpeedKmh,
+                ),
+              );
+            }
+            _updatePrefs(next);
+          },
           onSelected: (name) => _updatePrefs(
             _currentPrefs.copyWith(transitSchoolStation: name),
           ),
           onCleared: () => _updatePrefs(
             _currentPrefs.copyWith(transitSchoolStation: ''),
+          ),
+        ),
+        const SizedBox(height: 8),
+        _TransitStopSearchField(
+          controller: _schoolTrainStationController,
+          label: 'Iskolai vasútállomás',
+          hint: 'Keress vasútállomást az iskola közelében (opcionális)',
+          icon: Icons.directions_railway_rounded,
+          onSelectedResult: (r) {
+            var next = _currentPrefs.withExtras({
+              'schoolTrainStation': r.name,
+              'schoolTrainLat': r.lat,
+              'schoolTrainLon': r.lon,
+            });
+            if (next.schoolAddressLat != null &&
+                next.schoolAddressLon != null) {
+              next = next.copyWith(
+                walkSchoolToTrainMinutes:
+                    MenetrendService.estimateWalkingMinutesBetween(
+                  lat1: next.schoolAddressLat!,
+                  lon1: next.schoolAddressLon!,
+                  lat2: r.lat,
+                  lon2: r.lon,
+                  walkingSpeedKmh: next.walkingSpeedKmh,
+                ),
+              );
+            }
+            _updatePrefs(next);
+          },
+          onSelected: (name) => _updatePrefs(
+            _currentPrefs.withExtra('schoolTrainStation', name),
+          ),
+          onCleared: () => _updatePrefs(
+            _currentPrefs.withExtra('schoolTrainStation', null),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'A gyaloglási idő automatikusan kiszámolódik a megadott címek és megállók távolságából.',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: scheme.onSurface.withValues(alpha: 0.6),
           ),
         ),
         const SizedBox(height: 14),
@@ -1996,48 +2483,28 @@ class _MoreScreenState extends State<MoreScreen> {
           ),
         ),
         const Divider(height: 20),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        Text(
+          'Gyaloglási tempó:',
+          style: theme.textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
-            Text(
-              'Gyaloglási tempó:',
-              style: theme.textTheme.labelMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-              decoration: BoxDecoration(
-                color: scheme.primary.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Text(
-                speedLabel,
-                style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w800,
-                  color: scheme.primary,
+            for (final kmh in const [4.0, 5.0, 6.0])
+              ChoiceChip(
+                showCheckmark: false,
+                label: Text(MenetrendService.walkingSpeedLabel(kmh)),
+                selected:
+                    MenetrendService.normalizeWalkingSpeed(speedKmh) == kmh,
+                onSelected: (_) => _updatePrefs(
+                  _currentPrefs.copyWith(walkingSpeedKmh: kmh),
                 ),
               ),
-            ),
           ],
-        ),
-        Slider(
-          value: speedKmh,
-          min: 3.5,
-          max: 5.5,
-          divisions: 2,
-          label: speedLabel,
-          onChanged: (val) {
-            final snapped = val < 4.0
-                ? 3.5
-                : val > 5.0
-                    ? 5.5
-                    : 4.5;
-            _updatePrefs(
-              _currentPrefs.copyWith(walkingSpeedKmh: snapped),
-            );
-          },
         ),
         const SizedBox(height: 8),
         Text(
@@ -2078,6 +2545,19 @@ class _MoreScreenState extends State<MoreScreen> {
           ],
         ),
         const Divider(height: 24),
+        Text(
+          'Napi ingázási beállítások (Hétfő–Péntek • Odafele & Hazafele):',
+          style: theme.textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: scheme.primary,
+          ),
+        ),
+        const SizedBox(height: 8),
+        _DayCommuteEditor(
+          prefs: _currentPrefs,
+          onChanged: _updatePrefs,
+        ),
+        const Divider(height: 20),
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
           title: const Text(
@@ -2103,70 +2583,6 @@ class _MoreScreenState extends State<MoreScreen> {
             );
           },
         ),
-        const SizedBox(height: 6),
-        for (final (label, currentVal, onChanged) in <(
-          String,
-          int,
-          ValueChanged<int>,
-        )>[
-          (
-            'Otthon -> Buszmegálló séta',
-            _currentPrefs.walkHomeToBusMinutes,
-            (v) => _updatePrefs(
-                  _currentPrefs.copyWith(walkHomeToBusMinutes: v),
-                ),
-          ),
-          (
-            'Otthon -> Vasútállomás séta',
-            _currentPrefs.walkHomeToTrainMinutes,
-            (v) => _updatePrefs(
-                  _currentPrefs.copyWith(walkHomeToTrainMinutes: v),
-                ),
-          ),
-          (
-            'Iskola -> Buszmegálló séta',
-            _currentPrefs.walkSchoolToBusMinutes,
-            (v) => _updatePrefs(
-                  _currentPrefs.copyWith(walkSchoolToBusMinutes: v),
-                ),
-          ),
-          (
-            'Iskola -> Vasútállomás séta',
-            _currentPrefs.walkSchoolToTrainMinutes,
-            (v) => _updatePrefs(
-                  _currentPrefs.copyWith(walkSchoolToTrainMinutes: v),
-                ),
-          ),
-        ]) ...[
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              Text(
-                '$currentVal perc',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w900,
-                  color: scheme.primary,
-                ),
-              ),
-            ],
-          ),
-          Slider(
-            value: currentVal.clamp(1, 45).toDouble(),
-            min: 1,
-            max: 45,
-            divisions: 44,
-            label: '$currentVal perc',
-            onChanged: (v) => onChanged(v.round()),
-          ),
-        ],
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -2404,8 +2820,10 @@ class _MoreScreenState extends State<MoreScreen> {
                 ),
               )
             else
-              ...filtered.take(5).map((omission) {
-                return _buildOmissionTile(theme, scheme, omission);
+              ...List.generate(filtered.take(5).length, (idx) {
+                final omission = filtered[idx];
+                return _buildOmissionTile(theme, scheme, omission)
+                    .staggeredEntrance(idx + 1, enabled: _entranceActive);
               }),
             const SizedBox(height: 8),
             // B5: Prominent "Összes hiányzás megtekintése" button
@@ -2894,9 +3312,9 @@ class _MoreScreenState extends State<MoreScreen> {
     required double min,
     required double max,
     required ValueChanged<double> onChanged,
+    ValueChanged<double>? onChangeEnd,
   }) {
     final clamped = value.clamp(min, max);
-    final divisions = ((max - min) * 20).round();
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -2945,10 +3363,9 @@ class _MoreScreenState extends State<MoreScreen> {
             value: clamped,
             min: min,
             max: max,
-            divisions: divisions > 0 ? divisions : null,
             activeColor: color,
-            label: clamped.toStringAsFixed(2),
             onChanged: onChanged,
+            onChangeEnd: onChangeEnd,
           ),
         ],
       ),
@@ -3230,20 +3647,29 @@ class _AllOmissionsScreenState extends State<AllOmissionsScreen> {
   }
 }
 
-/// Collapsible Accordion Card for Settings categories (collapsed by default).
+/// Settings category row. Tapping it pushes a dedicated, full-screen
+/// sub-screen (no cramped inline accordions). The sub-screen stays reactive:
+/// whenever [stateListenable] fires, [childrenBuilder] and [prefsGetter] are
+/// re-evaluated immediately inside the open route.
 class _SettingsAccordionCard extends StatefulWidget {
   final IconData icon;
   final String title;
   final String subtitle;
-  final List<Widget> children;
+  final List<Widget> Function()? childrenBuilder;
+  final ValueListenable<int>? stateListenable;
+  final UserProfilePrefs Function()? prefsGetter;
   final bool christmasCap;
+  final UserProfilePrefs? prefs;
 
   const _SettingsAccordionCard({
     required this.icon,
     required this.title,
     required this.subtitle,
-    required this.children,
+    this.childrenBuilder,
+    this.stateListenable,
+    this.prefsGetter,
     this.christmasCap = false,
+    this.prefs,
   });
 
   @override
@@ -3251,120 +3677,480 @@ class _SettingsAccordionCard extends StatefulWidget {
 }
 
 class _SettingsAccordionCardState extends State<_SettingsAccordionCard> {
-  bool _isExpanded = false;
+  Future<void> _openSubScreen() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(
+      SmoothSharedAxisRoute(
+        page: _SettingsSubScreen(
+          title: widget.title,
+          prefs: widget.prefs,
+          prefsGetter: widget.prefsGetter,
+          stateListenable: widget.stateListenable,
+          childrenBuilder: widget.childrenBuilder,
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
+    final activePrefs =
+        widget.prefsGetter?.call() ?? widget.prefs ?? const UserProfilePrefs();
+
     return ChristmasSnowCap(
       enabled: widget.christmasCap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-        decoration: BoxDecoration(
-          color: theme.cardTheme.color,
-          borderRadius: OledTheme.largeRadius,
-          border: Border.all(
-            color: _isExpanded
-                ? scheme.primary.withValues(alpha: 0.65)
-                : theme.dividerColor,
-            width: _isExpanded ? 1.5 : 1.0,
+      child: SoftGlassCard(
+        prefs: activePrefs,
+        padding: EdgeInsets.zero,
+        borderRadius: OledTheme.largeRadius,
+        child: TactileBounce(
+          pressedScale: 0.98,
+          onTap: _openSubScreen,
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: scheme.primary.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(widget.icon, size: 20, color: scheme.primary),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.title,
+                        style: theme.textTheme.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        widget.subtitle,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurface.withValues(alpha: 0.62),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: scheme.onSurface.withValues(alpha: 0.72),
+                ),
+              ],
+            ),
           ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            TactileBounce(
-              pressedScale: 0.98,
-              onTap: () => setState(() => _isExpanded = !_isExpanded),
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: scheme.primary.withValues(alpha: 0.16),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Icon(
-                        widget.icon,
-                        size: 20,
-                        color: scheme.primary,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.title,
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            widget.subtitle,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: scheme.onSurface.withValues(alpha: 0.62),
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    AnimatedRotation(
-                      turns: _isExpanded ? 0.5 : 0.0,
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      child: Icon(
-                        Icons.expand_more_rounded,
-                        color: scheme.onSurface.withValues(alpha: 0.72),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            AnimatedCrossFade(
-              firstChild: const SizedBox.shrink(),
-              secondChild: Padding(
-                padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Divider(color: theme.dividerColor, height: 16),
-                    ...widget.children,
-                  ],
-                ),
-              ),
-              crossFadeState: _isExpanded
-                  ? CrossFadeState.showSecond
-                  : CrossFadeState.showFirst,
-              duration: const Duration(milliseconds: 220),
-            ),
-          ],
         ),
       ),
     );
   }
 }
 
+/// Dedicated settings sub-screen pushed by [_SettingsAccordionCard].
+class _SettingsSubScreen extends StatelessWidget {
+  final String title;
+  final UserProfilePrefs? prefs;
+  final UserProfilePrefs Function()? prefsGetter;
+  final ValueListenable<int>? stateListenable;
+  final List<Widget> Function()? childrenBuilder;
 
-/// Text field with live stop/station search against the real transit service.
+  const _SettingsSubScreen({
+    required this.title,
+    required this.prefs,
+    this.prefsGetter,
+    this.stateListenable,
+    this.childrenBuilder,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final listenable = stateListenable ?? ValueNotifier<int>(0);
+    return ValueListenableBuilder<int>(
+      valueListenable: listenable,
+      builder: (context, _, _) {
+        final currentPrefs = prefsGetter?.call() ?? prefs;
+        final currentChildren = childrenBuilder != null
+            ? childrenBuilder!()
+            : const <Widget>[];
+        Widget body = ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
+          children: [
+            SoftGlassCard(
+              prefs: currentPrefs ?? const UserProfilePrefs(),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              borderRadius: OledTheme.largeRadius,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: currentChildren,
+              ),
+            ),
+          ],
+        );
+        if (currentPrefs != null) {
+          body = ChristmasAndBackgroundOverlay(
+            prefs: currentPrefs,
+            child: body,
+          );
+        }
+        return Scaffold(
+          appBar: AppBar(title: Text(uwu(title))),
+          body: body,
+        );
+      },
+    );
+  }
+}
+
+/// Bidirectional per-weekday commute preferences (Hétfő–Péntek):
+/// - Direction selector: "Odafele (Reggeli bejárás)" vs "Hazafele (Délutáni hazaút)"
+/// - Scheduled departure picker fetched from the real timetable
+/// - Per-direction/day toggle between "Helyi járat használata" vs "Gyaloglás"
+class _DayCommuteEditor extends StatefulWidget {
+  final UserProfilePrefs prefs;
+  final ValueChanged<UserProfilePrefs> onChanged;
+
+  const _DayCommuteEditor({required this.prefs, required this.onChanged});
+
+  @override
+  State<_DayCommuteEditor> createState() => _DayCommuteEditorState();
+}
+
+class _DayCommuteEditorState extends State<_DayCommuteEditor> {
+  static const _days = ['Hétfő', 'Kedd', 'Szerda', 'Csütörtök', 'Péntek'];
+  final MenetrendService _service = MenetrendService();
+  int _selected = (DateTime.now().weekday - 1).clamp(0, 4);
+  bool _isMorning = true;
+  late final TextEditingController _lineController;
+  List<({String value, String label})> _scheduledOptions = const [];
+  bool _loadingOptions = false;
+
+  Map<String, dynamic> get _plan =>
+      widget.prefs.commutePlanForWeekday(_selected + 1);
+
+  String get _currentLine {
+    final key = _isMorning ? 'morningLine' : 'afternoonLine';
+    final specific = (_plan[key] as String?)?.trim() ?? '';
+    if (specific.isNotEmpty) return specific;
+    return _isMorning ? ((_plan['line'] as String?)?.trim() ?? '') : '';
+  }
+
+  bool get _currentUseLocalBus {
+    final key = _isMorning ? 'morningUseLocalBus' : 'afternoonUseLocalBus';
+    if (_plan.containsKey(key)) {
+      return _plan[key] != false;
+    }
+    return _plan['useLocalBus'] != false;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _lineController = TextEditingController(text: _currentLine);
+    _fetchOptions();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DayCommuteEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.prefs.primaryHomeStop != widget.prefs.primaryHomeStop ||
+        oldWidget.prefs.primarySchoolStop != widget.prefs.primarySchoolStop) {
+      _fetchOptions();
+    }
+  }
+
+  @override
+  void dispose() {
+    _lineController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _fetchOptions() async {
+    if (!widget.prefs.transitConfigured) {
+      if (mounted) {
+        setState(() {
+          _scheduledOptions = const [];
+          _loadingOptions = false;
+        });
+      }
+      return;
+    }
+    setState(() => _loadingOptions = true);
+    try {
+      final opts = await _service.fetchScheduledDepartureOptions(
+        prefs: widget.prefs,
+        isMorning: _isMorning,
+        weekday: _selected + 1,
+        useLocalBus: _currentUseLocalBus,
+      );
+      if (!mounted) return;
+      setState(() {
+        _scheduledOptions = opts;
+        _loadingOptions = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _scheduledOptions = const [];
+        _loadingOptions = false;
+      });
+    }
+  }
+
+  void _syncTextController() {
+    final text = _currentLine;
+    if (_lineController.text != text) {
+      _lineController.text = text;
+    }
+  }
+
+  void _save({String? line, bool? useLocalBus}) {
+    final plan = Map<String, dynamic>.from(_plan);
+    if (line != null) {
+      if (_isMorning) {
+        plan['morningLine'] = line;
+        plan['line'] = line;
+      } else {
+        plan['afternoonLine'] = line;
+      }
+    }
+    if (useLocalBus != null) {
+      if (_isMorning) {
+        plan['morningUseLocalBus'] = useLocalBus;
+        plan['useLocalBus'] = useLocalBus;
+      } else {
+        plan['afternoonUseLocalBus'] = useLocalBus;
+      }
+    }
+    widget.onChanged(widget.prefs.withCommutePlan(_selected + 1, plan));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final useLocalBus = _currentUseLocalBus;
+    final selectedLine = _currentLine;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Weekday selector (Hétfő – Péntek)
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (var i = 0; i < _days.length; i++)
+              ChoiceChip(
+                showCheckmark: false,
+                label: Text(_days[i]),
+                selected: _selected == i,
+                onSelected: (_) {
+                  setState(() => _selected = i);
+                  _syncTextController();
+                  _fetchOptions();
+                },
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        // Direction selector: Odafele vs Hazafele
+        Row(
+          children: [
+            Expanded(
+              child: ChoiceChip(
+                showCheckmark: false,
+                avatar: const Icon(Icons.wb_sunny_rounded, size: 16),
+                label: const Text('Odafele (Reggeli bejárás)'),
+                selected: _isMorning,
+                onSelected: (_) {
+                  if (_isMorning) return;
+                  setState(() => _isMorning = true);
+                  _syncTextController();
+                  _fetchOptions();
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ChoiceChip(
+                showCheckmark: false,
+                avatar: const Icon(Icons.home_rounded, size: 16),
+                label: const Text('Hazafele (Délutáni hazaút)'),
+                selected: !_isMorning,
+                onSelected: (_) {
+                  if (!_isMorning) return;
+                  setState(() => _isMorning = false);
+                  _syncTextController();
+                  _fetchOptions();
+                },
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // Connecting local transit vs walking toggle
+        Text(
+          'Csatlakozás módja (${_days[_selected]} • ${_isMorning ? "Odafele" : "Hazafele"})',
+          style: theme.textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: scheme.onSurface.withValues(alpha: 0.78),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: ChoiceChip(
+                showCheckmark: false,
+                avatar: const Icon(Icons.directions_bus_rounded, size: 16),
+                label: const Text('Helyi járat használata'),
+                selected: useLocalBus,
+                onSelected: (_) {
+                  _save(useLocalBus: true);
+                  setState(() {});
+                  _fetchOptions();
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ChoiceChip(
+                showCheckmark: false,
+                avatar: const Icon(Icons.directions_walk_rounded, size: 16),
+                label: const Text('Gyaloglás'),
+                selected: !useLocalBus,
+                onSelected: (_) {
+                  _save(useLocalBus: false);
+                  setState(() {});
+                  _fetchOptions();
+                },
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Menetrend szerinti indulások (${_isMorning ? "Reggel" : "Délután"})',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurface.withValues(alpha: 0.78),
+                ),
+              ),
+            ),
+            if (_loadingOptions)
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Járatok frissítése',
+                onPressed: _fetchOptions,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+              ),
+          ],
+        ),
+        if (_scheduledOptions.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              ChoiceChip(
+                showCheckmark: false,
+                label: const Text('Automatikus (legjobb)'),
+                selected: selectedLine.isEmpty,
+                onSelected: (_) {
+                  _lineController.clear();
+                  _save(line: '');
+                  setState(() {});
+                },
+              ),
+              for (final opt in _scheduledOptions)
+                ChoiceChip(
+                  showCheckmark: false,
+                  label: Text(opt.label),
+                  selected: selectedLine == opt.value ||
+                      (selectedLine.isNotEmpty &&
+                          opt.value.contains(selectedLine)),
+                  onSelected: (_) {
+                    _lineController.text = opt.value;
+                    _save(line: opt.value);
+                    setState(() {});
+                  },
+                ),
+            ],
+          ),
+        ] else if (!_loadingOptions) ...[
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Text(
+              widget.prefs.transitConfigured
+                  ? 'Nincs lekérdezhető menetrendi indulás erre az időszakra, vagy add meg kézzel alább.'
+                  : 'Állítsd be fent az otthoni és iskolai megállót a menetrendi indulások betöltéséhez.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurface.withValues(alpha: 0.6),
+                fontSize: 11.5,
+              ),
+            ),
+          ),
+        ],
+        const SizedBox(height: 8),
+        TextField(
+          controller: _lineController,
+          decoration: InputDecoration(
+            labelText:
+                '${_days[_selected]} (${_isMorning ? "Odafele" : "Hazafele"}): kiválasztott indulás / járat',
+            hintText: 'pl. 07:09 S150',
+            prefixIcon: const Icon(Icons.schedule_rounded, size: 18),
+            suffixIcon: _lineController.text.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.clear_rounded, size: 18),
+                    onPressed: () {
+                      _lineController.clear();
+                      _save(line: '');
+                      setState(() {});
+                    },
+                  )
+                : null,
+          ),
+          onChanged: (v) {
+            _save(line: v.trim());
+            setState(() {});
+          },
+        ),
+      ],
+    );
+  }
+}
+
+/// Text field with live stop/station or street address search.
 class _TransitStopSearchField extends StatefulWidget {
   final TextEditingController controller;
   final String label;
   final String hint;
   final IconData icon;
+  final bool isAddressSearch;
   final ValueChanged<String> onSelected;
+  final ValueChanged<TransitStopResult>? onSelectedResult;
   final VoidCallback onCleared;
 
   const _TransitStopSearchField({
@@ -3372,7 +4158,9 @@ class _TransitStopSearchField extends StatefulWidget {
     required this.label,
     required this.hint,
     required this.icon,
+    this.isAddressSearch = false,
     required this.onSelected,
+    this.onSelectedResult,
     required this.onCleared,
   });
 
@@ -3405,13 +4193,15 @@ class _TransitStopSearchFieldState extends State<_TransitStopSearchField> {
       widget.onCleared();
       return;
     }
-    _debounce = Timer(const Duration(milliseconds: 450), () async {
+    _debounce = Timer(const Duration(milliseconds: 420), () async {
       setState(() {
         _searching = true;
         _error = null;
       });
       try {
-        final res = await _service.searchStops(q);
+        final res = widget.isAddressSearch
+            ? await _service.searchAddresses(q)
+            : await _service.searchStops(q);
         if (!mounted) return;
         setState(() {
           _results = res.take(6).toList();
@@ -3450,18 +4240,40 @@ class _TransitStopSearchFieldState extends State<_TransitStopSearchField> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                   )
-                : null,
+                : (widget.controller.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear_rounded, size: 18),
+                        onPressed: () {
+                          widget.controller.clear();
+                          setState(() {
+                            _results = const [];
+                            _error = null;
+                          });
+                          widget.onCleared();
+                        },
+                      )
+                    : null),
           ),
         ),
         for (final r in _results)
           ListTile(
             dense: true,
-            leading: const Icon(Icons.place_rounded, size: 18),
-            title: Text(r.name),
+            leading: Icon(
+              widget.isAddressSearch
+                  ? Icons.location_on_rounded
+                  : Icons.directions_transit_rounded,
+              size: 18,
+            ),
+            title: Text(
+              r.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
             onTap: () {
               widget.controller.text = r.name;
               setState(() => _results = const []);
               widget.onSelected(r.name);
+              widget.onSelectedResult?.call(r);
               FocusScope.of(context).unfocus();
             },
           ),

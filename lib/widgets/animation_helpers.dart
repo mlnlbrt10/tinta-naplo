@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 
 /// Custom 120Hz-ready Shared-Axis / Predictive-Back style page route transition
 /// using `Curves.easeOutCubic` / `Curves.easeInOutCubic` (280ms forward, 240ms reverse).
@@ -202,28 +201,137 @@ class AnimatedNumberText extends StatelessWidget {
   }
 }
 
-/// Extension applying `flutter_animate` staggered fade + slideY entrance
-/// (`.fadeIn(duration: 250.ms).slideY(begin: 0.1, end: 0, curve: Curves.easeOutCubic)`).
+/// Lightweight, GPU-friendly one-shot entrance animation (`240ms`,
+/// `Curves.easeOutCubic`, fade `0.0 -> 1.0` + `14px` upward translation with a
+/// `35ms` stagger for initial visible items).
+///
+/// Runs at most once per initial load and never re-triggers during vertical
+/// scrolling or tab switching. Once completed, renders [child] directly with
+/// zero compositing overhead.
+class StaggeredEntranceItem extends StatefulWidget {
+  final Widget child;
+  final int index;
+  final bool enabled;
+  final int stepMs;
+  final int maxStaggerIndex;
+  final double slideOffsetPx;
+  final int durationMs;
+
+  const StaggeredEntranceItem({
+    super.key,
+    required this.child,
+    required this.index,
+    this.enabled = true,
+    this.stepMs = 35,
+    this.maxStaggerIndex = 8,
+    this.slideOffsetPx = 14.0,
+    this.durationMs = 240,
+  });
+
+  @override
+  State<StaggeredEntranceItem> createState() => _StaggeredEntranceItemState();
+}
+
+class _StaggeredEntranceItemState extends State<StaggeredEntranceItem>
+    with SingleTickerProviderStateMixin {
+  AnimationController? _controller;
+  Animation<double>? _curved;
+  bool _hasAnimated = false;
+  bool _completed = true;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.enabled && widget.index <= widget.maxStaggerIndex) {
+      _startEntrance();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant StaggeredEntranceItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.enabled &&
+        !oldWidget.enabled &&
+        !_hasAnimated &&
+        widget.index <= widget.maxStaggerIndex) {
+      _startEntrance();
+    }
+  }
+
+  void _startEntrance() {
+    _hasAnimated = true;
+    _completed = false;
+    final effectiveIdx = widget.index.clamp(0, widget.maxStaggerIndex);
+    final delayMs = effectiveIdx * widget.stepMs;
+    final totalMs = delayMs + widget.durationMs;
+
+    _controller?.dispose();
+    final ctrl = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: totalMs),
+    );
+    _controller = ctrl;
+    final beginFraction =
+        totalMs > 0 ? (delayMs / totalMs).clamp(0.0, 0.92) : 0.0;
+    _curved = CurvedAnimation(
+      parent: ctrl,
+      curve: Interval(beginFraction, 1.0, curve: Curves.easeOutCubic),
+    );
+    ctrl.addStatusListener((status) {
+      if (status == AnimationStatus.completed && mounted) {
+        setState(() => _completed = true);
+      }
+    });
+    ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_completed || _curved == null) {
+      return widget.child;
+    }
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _curved!,
+        child: widget.child,
+        builder: (context, child) {
+          final t = _curved!.value.clamp(0.0, 1.0);
+          return Opacity(
+            opacity: t,
+            child: Transform.translate(
+              offset: Offset(0.0, (1.0 - t) * widget.slideOffsetPx),
+              child: child,
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Extension applying the 120fps one-shot staggered fade (`0.0 -> 1.0`) +
+/// `14px` upward translation (`240ms`, `Curves.easeOutCubic`, `35ms` stagger).
 extension StaggeredListEntrance on Widget {
   Widget staggeredEntrance(
     int index, {
     Key? animationKey,
+    bool enabled = true,
     int stepMs = 35,
-    int maxStaggerIndex = 12,
+    int maxStaggerIndex = 8,
   }) {
-    final effectiveIdx = index.clamp(0, maxStaggerIndex);
-    final delay = Duration(milliseconds: effectiveIdx * stepMs);
-
-    return animate(key: animationKey, delay: delay)
-        .fadeIn(
-          duration: 250.ms,
-          curve: Curves.easeOutCubic,
-        )
-        .slideY(
-          begin: 0.1,
-          end: 0.0,
-          duration: 250.ms,
-          curve: Curves.easeOutCubic,
-        );
+    return StaggeredEntranceItem(
+      key: animationKey,
+      index: index,
+      enabled: enabled,
+      stepMs: stepMs,
+      maxStaggerIndex: maxStaggerIndex,
+      child: this,
+    );
   }
 }

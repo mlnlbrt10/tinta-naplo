@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/material.dart' show DateUtils;
+
 import 'package:http/http.dart' as http;
 import 'package:kreta_api/kreta_api.dart';
 
@@ -505,8 +507,17 @@ class KretaClient {
     StoredSession session, {
     DateTime? date,
   }) async {
-    final target = date ?? DateTime.now();
-    return fetchTimetableForRange(session, from: target, to: target);
+    final target = DateUtils.dateOnly(date ?? DateTime.now());
+    // Query a two-day window (the upstream upper bound is exclusive-ish and
+    // timezone sensitive) and keep only entries that fall on the target day.
+    final lessons = await fetchTimetableForRange(
+      session,
+      from: target,
+      to: target.add(const Duration(days: 1)),
+    );
+    return lessons
+        .where((l) => DateUtils.dateOnly(l.start.toLocal()) == target)
+        .toList();
   }
 
   /// Fetches all student evaluations via [KretaEndpoints.getGrades] sorted

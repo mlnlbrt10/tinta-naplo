@@ -1,10 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
-import 'package:ota_update/ota_update.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -84,20 +84,20 @@ class GitHubUpdaterService {
   static const String repoUrl = 'https://github.com/mlnlbrt10/reKRETA';
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/mlnlbrt10/reKRETA/releases/latest';
-  static const String fallbackAppVersion = '1.2.0';
-  static const String fallbackBuildNumber = '4';
-  static const String defaultApkFileName = 'reKRETA-v1.2.0.apk';
+  static const String fallbackAppVersion = '1.2.5';
+  static const String fallbackBuildNumber = '7';
+  static const String defaultApkFileName = 'reKRETA-v1.2.5.apk';
 
   static bool _hasCheckedOnStartup = false;
 
-  /// Resolves the target APK file name for a given release tag (`reKRETA-v1.2.0.apk`).
+  /// Resolves the target APK file name for a given release tag (`reKRETA-v1.2.5.apk`).
   static String apkFileNameForTag(String tagName) {
     final clean = _stripPrefix(tagName);
     if (clean.isEmpty) return defaultApkFileName;
     return 'reKRETA-v$clean.apk';
   }
 
-  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.2.0`.
+  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.2.5`.
   static Future<String> fetchLatestReleaseTag({http.Client? httpClient}) async {
     final client = httpClient ?? http.Client();
     try {
@@ -376,49 +376,54 @@ class _FrostedUpdateDialogContentState
     });
 
     try {
-      OtaUpdate()
-          .execute(apkUrl, destinationFilename: targetApkFileName)
-          .listen(
-        (OtaEvent event) {
-          if (!mounted) return;
-          switch (event.status) {
-            case OtaStatus.DOWNLOADING:
-              final pct = double.tryParse(event.value ?? '');
-              setState(() {
-                _downloadProgress = pct != null ? (pct / 100.0).clamp(0.0, 1.0) : null;
-                _statusMessage = pct != null
-                    ? uwu('Letöltés folyamatban: ${pct.toStringAsFixed(0)}%')
-                    : uwu('Letöltés folyamatban...');
-              });
-              break;
-            case OtaStatus.INSTALLING:
-              setState(() {
-                _downloadProgress = 1.0;
-                _statusMessage = uwu('Android csomagtelepítő indítása...');
-              });
-              break;
-            case OtaStatus.ALREADY_RUNNING_ERROR:
-            case OtaStatus.PERMISSION_NOT_GRANTED_ERROR:
-            case OtaStatus.INTERNAL_ERROR:
-            case OtaStatus.DOWNLOAD_ERROR:
-            case OtaStatus.CHECKSUM_ERROR:
-            case OtaStatus.INSTALLATION_DONE:
-            case OtaStatus.INSTALLATION_ERROR:
-            case OtaStatus.CANCELED:
-              if (event.status != OtaStatus.INSTALLATION_DONE) {
-                _showInstallError(
-                  'A telepítés nem indítható el (${event.status.name}'
-                  '${event.value != null ? ': ${event.value}' : ''}).',
-                  apkUrl,
-                );
-              }
-              break;
+      final client = HttpClient();
+      final request = await client.getUrl(Uri.parse(apkUrl));
+      request.headers.set('User-Agent', 'reKRETA-Android-Updater');
+      final response = await request.close();
+      if (response.statusCode != 200) {
+        client.close();
+        await _showInstallError(
+            'A letöltés sikertelen (HTTP ${response.statusCode}).', apkUrl);
+        return;
+      }
+      final total = response.contentLength;
+      final file = File('${Directory.systemTemp.path}/$targetApkFileName');
+      if (await file.exists()) await file.delete();
+      final sink = file.openWrite();
+      var received = 0;
+      var lastPct = -1;
+      await for (final chunk in response) {
+        sink.add(chunk);
+        received += chunk.length;
+        if (total > 0 && mounted) {
+          final pct = (received * 100 / total).floor();
+          if (pct != lastPct) {
+            lastPct = pct;
+            setState(() {
+              _downloadProgress = (pct / 100.0).clamp(0.0, 1.0);
+              _statusMessage = uwu('Letöltés folyamatban: $pct%');
+            });
           }
-        },
-        onError: (e) {
-          _showInstallError('Hiba a frissítés közben: $e', apkUrl);
-        },
-      );
+        }
+      }
+      await sink.flush();
+      await sink.close();
+      client.close();
+      if (!mounted) return;
+      setState(() {
+        _downloadProgress = 1.0;
+        _statusMessage = uwu('Android csomagtelepítő indítása...');
+      });
+      final res = await const MethodChannel('hu.rekreta.rekreta_app/updater')
+          .invokeMethod<String>('installApk', {'filePath': file.path});
+      if (!mounted) return;
+      setState(() {
+        _isDownloading = false;
+        _downloadProgress = null;
+        _statusMessage = res == 'permission_required'
+            ? uwu('Engedélyezd az ismeretlen források telepítését, majd próbáld újra.')
+            : null;
+      });
     } catch (e) {
       await _showInstallError('Hiba a frissítés közben: $e', apkUrl);
     }

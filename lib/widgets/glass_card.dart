@@ -1,12 +1,10 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
 import '../services/token_storage_service.dart';
 
-/// Card container that optionally renders as soft frosted glass
-/// (`Kártyák soft blur & áttetszőség` setting): a lightweight
-/// [BackdropFilter] with a tinted, translucent surface colour.
+/// Card container that optionally renders as a 120fps hardware-accelerated
+/// semi-transparent frosted glass surface (`Kártyák soft blur & áttetszőség`)
+/// without per-item `BackdropFilter` shader overhead inside scrolling lists.
 class SoftGlassCard extends StatelessWidget {
   final UserProfilePrefs prefs;
   final Widget child;
@@ -33,33 +31,49 @@ class SoftGlassCard extends StatelessWidget {
     final borderSide = border ?? Border.all(color: theme.dividerColor);
 
     if (!prefs.cardBlurEnabled) {
-      return Container(
-        padding: padding,
-        decoration: BoxDecoration(
-          color: surfaceColor,
-          borderRadius: borderRadius,
-          border: borderSide,
-        ),
-        child: child,
-      );
-    }
-
-    final blurSigma = prefs.cardBlurSigma.clamp(2.0, 8.0);
-    final cardOpacity = prefs.cardOpacity.clamp(0.60, 0.85);
-
-    return ClipRRect(
-      borderRadius: borderRadius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
+      return RepaintBoundary(
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
-            color: surfaceColor.withValues(alpha: cardOpacity),
+            color: surfaceColor,
             borderRadius: borderRadius,
             border: borderSide,
           ),
           child: child,
         ),
+      );
+    }
+
+    final isDark = theme.brightness == Brightness.dark;
+    final userOpacity = (prefs.cardOpacity >= 0.85
+            ? 0.44
+            : (prefs.cardOpacity * 0.62))
+        .clamp(0.35, 0.55);
+    final glassBorder = border ??
+        Border.all(
+          color: Colors.white.withValues(alpha: isDark ? 0.12 : 0.36),
+          width: 1.0,
+        );
+    final topSheen = Color.alphaBlend(
+      Colors.white.withValues(alpha: isDark ? 0.06 : 0.18),
+      surfaceColor,
+    ).withValues(alpha: userOpacity);
+    final bottomTint = surfaceColor.withValues(alpha: userOpacity);
+
+    return RepaintBoundary(
+      child: Container(
+        padding: padding,
+        decoration: BoxDecoration(
+          color: surfaceColor.withValues(alpha: userOpacity),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [topSheen, bottomTint],
+          ),
+          borderRadius: borderRadius,
+          border: glassBorder,
+        ),
+        child: child,
       ),
     );
   }

@@ -32,6 +32,20 @@ class _ReKretaAppState extends State<ReKretaApp> {
   final TextEditingController _instituteController = TextEditingController();
   final TextEditingController _usernameController = TextEditingController();
 
+  /// Bumped on every state change so routes created via named navigation
+  /// (e.g. `/login`) always render the up-to-date root content.
+  final ValueNotifier<int> _rootRevision = ValueNotifier<int>(0);
+
+  void _set(VoidCallback fn) {
+    setState(fn);
+    _rootRevision.value++;
+  }
+
+  Widget _rootRoute() => ValueListenableBuilder<int>(
+        valueListenable: _rootRevision,
+        builder: (_, __, ___) => _buildRootScreen(),
+      );
+
   @override
   void initState() {
     super.initState();
@@ -42,6 +56,7 @@ class _ReKretaAppState extends State<ReKretaApp> {
   void dispose() {
     _instituteController.dispose();
     _usernameController.dispose();
+    _rootRevision.dispose();
     super.dispose();
   }
 
@@ -52,19 +67,19 @@ class _ReKretaAppState extends State<ReKretaApp> {
         _tokenStorage.loadProfilePrefs(),
       ]);
       if (!mounted) return;
-      setState(() {
+      _set(() {
         _session = results[0] as StoredSession?;
         _prefs = results[1] as UserProfilePrefs;
         _isRestoringSession = false;
       });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _isRestoringSession = false);
+      _set(() => _isRestoringSession = false);
     }
   }
 
   Future<void> _updatePrefs(UserProfilePrefs nextPrefs) async {
-    setState(() => _prefs = nextPrefs);
+    _set(() => _prefs = nextPrefs);
     // Persist first: the alias swap may restart the process.
     await _tokenStorage.saveProfilePrefs(nextPrefs);
     await DynamicIconService.syncIconWithPrefs(nextPrefs);
@@ -82,14 +97,14 @@ class _ReKretaAppState extends State<ReKretaApp> {
     );
 
     if (session != null && mounted) {
-      setState(() => _session = session);
+      _set(() => _session = session);
     }
   }
 
   Future<void> _handleLogout() async {
     await _tokenStorage.clearSession();
     if (!mounted) return;
-    setState(() => _session = null);
+    _set(() => _session = null);
   }
 
   @override
@@ -108,7 +123,8 @@ class _ReKretaAppState extends State<ReKretaApp> {
           theme: activeTheme,
           darkTheme: activeTheme,
           themeMode: isLight ? ThemeMode.light : ThemeMode.dark,
-          home: _buildRootScreen(),
+          home: _rootRoute(),
+          routes: {'/login': (_) => _rootRoute()},
         );
       },
     );

@@ -222,7 +222,11 @@ void main() {
 
     final tierIdx = ScholarshipTier.currentTierIndex(4.25);
     expect(tierIdx, 2);
-    expect(ScholarshipTier.tiers[tierIdx!].rangeLabel, '4.00 - 4.49');
+    expect(ScholarshipTier.tiers[tierIdx!].estimatedMonthlyForint, 42000);
+    expect(ScholarshipTier.tiers.map((t) => t.percent).toList(), [8, 25, 42, 59]);
+    expect(ScholarshipTier.basicEducationMonthlyForint('technikum'), 8000);
+    expect(ScholarshipTier.basicEducationMonthlyForint('szakkepzo'), 16000);
+    expect(ScholarshipTier.tiers[tierIdx].rangeLabel, '4,00 – 4,49');
 
     final recs = SubjectGradeSummary.buildScholarshipRecommendations(
       allGrades: grades,
@@ -359,6 +363,6 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.textContaining('Karácsonyi OLED'), findsOneWidget);
-    expect(find.text('v1.2.0'), findsOneWidget);
+    expect(find.text('v1.2.5'), findsOneWidget);
   });
 }
