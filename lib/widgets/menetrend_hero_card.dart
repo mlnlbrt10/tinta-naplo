@@ -185,6 +185,33 @@ class MenetrendHeroCard extends StatelessWidget {
                         ),
                       ),
                     ),
+                    const SizedBox(width: 6),
+                    Tooltip(
+                      message: 'Megnyitás MenetrendGO-ban',
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: () => MenetrendService.openInMenetrendGo(
+                          trip: trip,
+                          evaluation: evaluation,
+                          prefs: prefs,
+                        ),
+                        child: Container(
+                          padding: const EdgeInsets.all(5),
+                          decoration: BoxDecoration(
+                            color: primary.withValues(alpha: 0.16),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: primary.withValues(alpha: 0.4),
+                            ),
+                          ),
+                          child: Icon(
+                            Icons.open_in_new_rounded,
+                            size: 13.5,
+                            color: primary,
+                          ),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
                 if (trip.isFavorite) ...[
@@ -792,6 +819,8 @@ class _MenetrendDetailsModalSheetState
                                   onPressed: () =>
                                       MenetrendService.openInMenetrendGo(
                                     trip: trip,
+                                    evaluation: widget.evaluation,
+                                    prefs: widget.prefs,
                                   ),
                                   icon: const Icon(
                                     Icons.open_in_new_rounded,

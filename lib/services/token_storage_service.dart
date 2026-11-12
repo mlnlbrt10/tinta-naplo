@@ -161,7 +161,7 @@ class UserProfilePrefs {
   final Map<String, String> subjectCustomNames;
   final Map<String, String> teacherCustomNames;
 
-  /// Forward-compatible bag for v1.2.5 settings (timetable filters, scholarship
+  /// Forward-compatible bag for v1.2.6 settings (timetable filters, scholarship
   /// mode, exact commute addresses, per-day commute plans). Persisted as JSON.
   final Map<String, dynamic> extras;
 
@@ -219,7 +219,7 @@ class UserProfilePrefs {
     this.extras = const {},
   });
 
-  // ---- v1.2.5 typed accessors over [extras] --------------------------------
+  // ---- v1.2.6 typed accessors over [extras] --------------------------------
   /// "Elmaradó órák elrejtése" (falls back to the legacy single filter).
   bool get hideCancelledLessons =>
       (extras['hideCancelledLessons'] as bool?) ?? !showCancelledLessons;

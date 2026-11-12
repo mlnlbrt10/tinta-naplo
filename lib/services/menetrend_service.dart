@@ -105,6 +105,10 @@ class MenetrendTripOption {
   final int walkToDestinationMinutes;
   final bool isFavorite;
   final List<MenetrendLeg> legs;
+  final double? fromLat;
+  final double? fromLon;
+  final double? toLat;
+  final double? toLon;
 
   const MenetrendTripOption({
     required this.routeShortName,
@@ -123,6 +127,10 @@ class MenetrendTripOption {
     this.walkToDestinationMinutes = 0,
     this.isFavorite = false,
     this.legs = const [],
+    this.fromLat,
+    this.fromLon,
+    this.toLat,
+    this.toLon,
   });
 
   DateTime get effectiveDeparture =>
@@ -172,6 +180,10 @@ class MenetrendTripOption {
       walkToDestinationMinutes: walkToDestinationMinutes,
       isFavorite: isFavorite ?? this.isFavorite,
       legs: legs,
+      fromLat: fromLat,
+      fromLon: fromLon,
+      toLat: toLat,
+      toLon: toLon,
     );
   }
 }
@@ -264,7 +276,7 @@ class MenetrendService {
         'Content-Type': 'application/json; charset=utf-8',
         'Origin': 'https://mavplusz.hu',
         'Referer': 'https://mavplusz.hu/',
-        'User-Agent': 'MenetrendGO/1.2.5 (Android)',
+        'User-Agent': 'MenetrendGO/1.2.6 (Android)',
       };
 
   /// Snaps any stored walking speed to one of the three supported presets:
@@ -456,7 +468,7 @@ class MenetrendService {
         'addressdetails': '1',
       });
       final response = await _http.get(uri, headers: const {
-        'User-Agent': 'reKRETA-Android/1.2.5',
+        'User-Agent': 'reKRETA-Android/1.2.6',
         'Accept': 'application/json',
       }).timeout(const Duration(seconds: 6));
       if (response.statusCode == 200) {
@@ -494,7 +506,7 @@ class MenetrendService {
         'limit': '6',
       });
       final res = await _http
-          .get(photonUri, headers: const {'User-Agent': 'reKRETA-Android/1.2.5'})
+          .get(photonUri, headers: const {'User-Agent': 'reKRETA-Android/1.2.6'})
           .timeout(const Duration(seconds: 6));
       if (res.statusCode == 200) {
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));
@@ -878,6 +890,10 @@ class MenetrendService {
               ],
             ),
             legs: tripLegs,
+            fromLat: from.lat,
+            fromLon: from.lon,
+            toLat: to.lat,
+            toLon: to.lon,
           ),
         );
       }
@@ -1108,44 +1124,134 @@ class MenetrendService {
     } catch (_) {}
   }
 
-  /// Launches the native MenetrendGO Android app (`hu.matepazy.menetrendgo`),
-  /// or falls back to `https://github.com/matepazy/menetrend-go/releases` if not installed.
+  /// Launches the native MenetrendGO Android app (`hu.matepazy.menetrendgo`)
+  /// with pre-filled Origin -> Destination route search parameters (`from`, `to`,
+  /// coordinates, date/time) across `menetrendgo://`, `https://menetrendgo.hu/...`,
+  /// and Android Intent data URI/extras, falling back cleanly to launching the
+  /// app or website normally if parameters are not handled.
   static Future<void> openInMenetrendGo({
     MenetrendTripOption? trip,
+    CommuteEvaluation? evaluation,
+    UserProfilePrefs? prefs,
   }) async {
+    final effectiveTrip = trip ?? evaluation?.recommendedTrip;
+    final isMorning = evaluation?.isMorningMode ?? true;
+    final fallbackFrom = prefs != null
+        ? (isMorning ? prefs.primaryHomeStop : prefs.primarySchoolStop)
+        : '';
+    final fallbackTo = prefs != null
+        ? (isMorning ? prefs.primarySchoolStop : prefs.primaryHomeStop)
+        : '';
+
+    final fromStation = (effectiveTrip?.departureStation ?? fallbackFrom).trim();
+    final toStation = (effectiveTrip?.arrivalStation ?? fallbackTo).trim();
+    final fromLat = effectiveTrip?.fromLat ??
+        (isMorning ? prefs?.homeAddressLat : prefs?.schoolAddressLat);
+    final fromLon = effectiveTrip?.fromLon ??
+        (isMorning ? prefs?.homeAddressLon : prefs?.schoolAddressLon);
+    final toLat = effectiveTrip?.toLat ??
+        (isMorning ? prefs?.schoolAddressLat : prefs?.homeAddressLat);
+    final toLon = effectiveTrip?.toLon ??
+        (isMorning ? prefs?.schoolAddressLon : prefs?.homeAddressLon);
+
+    final depDateTime = effectiveTrip?.scheduledDeparture ?? DateTime.now();
+    final timeStr = DateFormat('HH:mm').format(depDateTime);
+    final dateStr = DateFormat('yyyy-MM-dd').format(depDateTime);
+    final routeName = effectiveTrip?.routeShortName ?? '';
+
+    final queryParams = <String, String>{
+      if (fromStation.isNotEmpty) ...{
+        'from': fromStation,
+        'origin': fromStation,
+        'indulas': fromStation,
+      },
+      if (toStation.isNotEmpty) ...{
+        'to': toStation,
+        'destination': toStation,
+        'erkezes': toStation,
+      },
+      if (fromLat != null && fromLon != null) ...{
+        'fromLat': fromLat.toString(),
+        'fromLon': fromLon.toString(),
+        'fromCoord': '$fromLat,$fromLon',
+      },
+      if (toLat != null && toLon != null) ...{
+        'toLat': toLat.toString(),
+        'toLon': toLon.toString(),
+        'toCoord': '$toLat,$toLon',
+      },
+      'time': timeStr,
+      'date': dateStr,
+      if (routeName.isNotEmpty) 'route': routeName,
+    };
+
+    final candidateDeepLinkUris = <String>[
+      if (fromStation.isNotEmpty && toStation.isNotEmpty) ...[
+        Uri(
+          scheme: 'menetrendgo',
+          host: 'search',
+          queryParameters: queryParams,
+        ).toString(),
+        Uri(
+          scheme: 'menetrendgo',
+          host: 'route',
+          queryParameters: queryParams,
+        ).toString(),
+        Uri(
+          scheme: 'menetrendgo',
+          host: 'trip',
+          queryParameters: queryParams,
+        ).toString(),
+        Uri.https('menetrendgo.hu', '/search', queryParams).toString(),
+        Uri.https('menetrendgo.hu', '/', queryParams).toString(),
+      ],
+    ];
+
     try {
       final launched = await _transitChannel.invokeMethod<bool>(
         'launchMenetrendGo',
         {
-          'tab': trip != null ? 'trip' : 'search',
-          if (trip != null) ...{
-            'from': trip.departureStation,
-            'to': trip.arrivalStation,
-            'origin': trip.departureStation,
-            'destination': trip.arrivalStation,
-            'fromStation': trip.departureStation,
-            'toStation': trip.arrivalStation,
-            'routeShortName': trip.routeShortName,
-            'time': DateFormat('HH:mm').format(trip.scheduledDeparture),
-            'departureTime': DateFormat('HH:mm').format(trip.scheduledDeparture),
-            'date': DateFormat('yyyy-MM-dd').format(trip.scheduledDeparture),
-            'departureDate':
-                DateFormat('yyyy-MM-dd').format(trip.scheduledDeparture),
-            'departureIso': trip.scheduledDeparture.toIso8601String(),
-            'departureEpochMs':
-                trip.scheduledDeparture.millisecondsSinceEpoch.toString(),
-            'autoSearch': 'true',
-            'deepLinkUri': Uri(
-              scheme: 'menetrendgo',
-              host: 'trip',
-              queryParameters: {
-                'from': trip.departureStation,
-                'to': trip.arrivalStation,
-                'time': DateFormat('HH:mm').format(trip.scheduledDeparture),
-                'date': DateFormat('yyyy-MM-dd').format(trip.scheduledDeparture),
-                'route': trip.routeShortName,
-              },
-            ).toString(),
+          'tab': effectiveTrip != null ? 'trip' : 'search',
+          if (fromStation.isNotEmpty) ...{
+            'from': fromStation,
+            'origin': fromStation,
+            'fromStation': fromStation,
+            'fromName': fromStation,
+            'startStation': fromStation,
+            'indulas': fromStation,
+          },
+          if (toStation.isNotEmpty) ...{
+            'to': toStation,
+            'destination': toStation,
+            'toStation': toStation,
+            'toName': toStation,
+            'endStation': toStation,
+            'erkezes': toStation,
+          },
+          if (fromStation.isNotEmpty && toStation.isNotEmpty)
+            'query': '$fromStation -> $toStation',
+          if (fromLat != null && fromLon != null) ...{
+            'fromLat': fromLat,
+            'fromLon': fromLon,
+          },
+          if (toLat != null && toLon != null) ...{
+            'toLat': toLat,
+            'toLon': toLon,
+          },
+          if (routeName.isNotEmpty) ...{
+            'route': routeName,
+            'routeShortName': routeName,
+          },
+          'time': timeStr,
+          'departureTime': timeStr,
+          'date': dateStr,
+          'departureDate': dateStr,
+          'departureIso': depDateTime.toIso8601String(),
+          'departureEpochMs': depDateTime.millisecondsSinceEpoch.toString(),
+          'autoSearch': 'true',
+          if (candidateDeepLinkUris.isNotEmpty) ...{
+            'deepLinkUri': candidateDeepLinkUris.first,
+            'deepLinkUris': candidateDeepLinkUris,
           },
         },
       );

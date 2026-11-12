@@ -236,10 +236,18 @@ open class MainActivity : FlutterActivity() {
                 result.success("permission_required")
                 return
             }
+            val sourceFile = File(filePath)
+            val targetFile = File(cacheDir, sourceFile.name)
+            val apkFile = if (sourceFile.canonicalPath.startsWith(cacheDir.canonicalPath + File.separator)) {
+                sourceFile
+            } else {
+                sourceFile.copyTo(targetFile, overwrite = true)
+                targetFile
+            }
             val uri = FileProvider.getUriForFile(
                 this,
                 "${applicationContext.packageName}.fileprovider",
-                File(filePath)
+                apkFile
             )
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/vnd.android.package-archive")
@@ -350,16 +358,43 @@ open class MainActivity : FlutterActivity() {
                 try {
                     val pm = applicationContext.packageManager
                     val args = call.arguments as? Map<*, *>
-                    val deepLinkStr = args?.get("deepLinkUri") as? String
-                    if (!deepLinkStr.isNullOrBlank()) {
-                        val deepIntent = Intent(Intent.ACTION_VIEW, Uri.parse(deepLinkStr)).apply {
-                            setPackage(MENETRENDGO_PACKAGE)
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            args.forEach { (k, v) ->
-                                if (k is String && v != null) {
-                                    putExtra(k, v.toString())
+
+                    fun populateExtras(intent: Intent) {
+                        args?.forEach { (k, v) ->
+                            if (k is String && v != null && k != "deepLinkUris") {
+                                when (v) {
+                                    is Double -> intent.putExtra(k, v)
+                                    is Float -> intent.putExtra(k, v)
+                                    is Int -> intent.putExtra(k, v)
+                                    is Long -> intent.putExtra(k, v)
+                                    is Boolean -> intent.putExtra(k, v)
+                                    else -> intent.putExtra(k, v.toString())
                                 }
                             }
+                        }
+                        val query = args?.get("query")?.toString()
+                        if (!query.isNullOrBlank()) {
+                            intent.putExtra(android.app.SearchManager.QUERY, query)
+                            intent.putExtra(Intent.EXTRA_TEXT, query)
+                        }
+                    }
+
+                    val candidateUris = mutableListOf<String>()
+                    (args?.get("deepLinkUris") as? List<*>)?.forEach { item ->
+                        val s = item?.toString()
+                        if (!s.isNullOrBlank()) candidateUris.add(s)
+                    }
+                    val singleUri = args?.get("deepLinkUri") as? String
+                    if (!singleUri.isNullOrBlank() && !candidateUris.contains(singleUri)) {
+                        candidateUris.add(0, singleUri)
+                    }
+
+                    // 1. Try each candidate deep-link URI (menetrendgo://search?..., https://menetrendgo.hu/...)
+                    for (uriStr in candidateUris) {
+                        val deepIntent = Intent(Intent.ACTION_VIEW, Uri.parse(uriStr)).apply {
+                            setPackage(MENETRENDGO_PACKAGE)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                            populateExtras(this)
                         }
                         if (deepIntent.resolveActivity(pm) != null) {
                             startActivity(deepIntent)
@@ -367,14 +402,24 @@ open class MainActivity : FlutterActivity() {
                             return
                         }
                     }
+
+                    // 2. Try ACTION_SEARCH intent targeted at MenetrendGO
+                    val searchIntent = Intent(Intent.ACTION_SEARCH).apply {
+                        setPackage(MENETRENDGO_PACKAGE)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        populateExtras(this)
+                    }
+                    if (searchIntent.resolveActivity(pm) != null) {
+                        startActivity(searchIntent)
+                        result.success(true)
+                        return
+                    }
+
+                    // 3. Fallback to package launcher intent with pre-populated route search extras
                     val launchIntent = pm.getLaunchIntentForPackage(MENETRENDGO_PACKAGE)
                     if (launchIntent != null) {
-                        args?.forEach { (k, v) ->
-                            if (k is String && v != null) {
-                                launchIntent.putExtra(k, v.toString())
-                            }
-                        }
-                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        populateExtras(launchIntent)
+                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                         startActivity(launchIntent)
                         result.success(true)
                     } else {

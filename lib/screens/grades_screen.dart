@@ -614,8 +614,8 @@ class SubjectGradeSummary {
     for (final entry in map.entries) {
       final list = List<Grade>.from(entry.value)
         ..sort((a, b) {
-          final cmp = b.recordDate.compareTo(a.recordDate);
-          return cmp != 0 ? cmp : b.creationDate.compareTo(a.creationDate);
+          final cmp = b.recordedAt.compareTo(a.recordedAt);
+          return cmp != 0 ? cmp : b.recordDate.compareTo(a.recordDate);
         });
       final first = list.first;
       summaries.add(
@@ -689,7 +689,11 @@ class GradesScreen extends StatefulWidget {
   State<GradesScreen> createState() => _GradesScreenState();
 }
 
-class _GradesScreenState extends State<GradesScreen> {
+class _GradesScreenState extends State<GradesScreen>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   final List<GhostGrade> _overallGhostGrades = [];
   bool _showSimulatorPanel = false;
   int _selectedGhostWeight = 100;
@@ -777,6 +781,7 @@ class _GradesScreenState extends State<GradesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final subjects = SubjectGradeSummary.groupBySubject(
@@ -837,9 +842,14 @@ class _GradesScreenState extends State<GradesScreen> {
         ),
       ),
       body: RefreshIndicator(
+        displacement: 44,
+        edgeOffset: 8,
+        strokeWidth: 2.6,
         onRefresh: widget.onRefresh,
         child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
+          physics: const BouncingScrollPhysics(
+            parent: AlwaysScrollableScrollPhysics(),
+          ),
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 160),
           children: [
             _enter(
@@ -2646,6 +2656,9 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
         ],
       ),
       body: ListView(
+        physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics(),
+        ),
         padding: EdgeInsets.fromLTRB(16, 12, 16, bottomSafePadding),
         children: [
           Hero(

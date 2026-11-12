@@ -100,11 +100,11 @@ flutter run
 
 ```
 flutter build apk --release
-adb install build/app/outputs/flutter-apk/reKRETA-v1.2.5.apk
+adb install build/app/outputs/flutter-apk/reKRETA-v1.2.6.apk
 ```
 
 A lefordított telepítőfájl helye:
-`build/app/outputs/flutter-apk/reKRETA-v1.2.5.apk`
+`build/app/outputs/flutter-apk/reKRETA-v1.2.6.apk`
 
 ## Technikai Stack
 

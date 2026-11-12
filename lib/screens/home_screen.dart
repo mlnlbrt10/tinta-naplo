@@ -206,7 +206,7 @@ class _ActivityItem {
   final Test? test;
 
   _ActivityItem.grade(Grade this.grade)
-      : sortDate = grade.recordDate,
+      : sortDate = grade.recordedAt,
         homework = null,
         test = null;
 
@@ -216,14 +216,78 @@ class _ActivityItem {
         test = null;
 
   _ActivityItem.test(Test this.test)
-      : sortDate = test.reportDate,
+      : sortDate = test.date,
         grade = null,
         homework = null;
+
+  bool matchesFilter(ActivityFeedFilter filter) {
+    switch (filter) {
+      case ActivityFeedFilter.all:
+        return true;
+      case ActivityFeedFilter.grades:
+        return grade != null;
+      case ActivityFeedFilter.homeworks:
+        return homework != null;
+      case ActivityFeedFilter.tests:
+        return test != null;
+    }
+  }
 
   String get uniqueKey {
     if (grade != null) return 'g-${grade!.uid}';
     if (homework != null) return 'hw-${homework!.uid}';
     return 't-${test!.uid}';
+  }
+}
+
+class _KeepAliveTabWrapper extends StatefulWidget {
+  final Widget child;
+
+  const _KeepAliveTabWrapper({super.key, required this.child});
+
+  @override
+  State<_KeepAliveTabWrapper> createState() => _KeepAliveTabWrapperState();
+}
+
+class _KeepAliveTabWrapperState extends State<_KeepAliveTabWrapper>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
+  }
+}
+
+class _AnimatedFeedCollapse extends StatelessWidget {
+  final bool visible;
+  final Widget child;
+
+  const _AnimatedFeedCollapse({
+    super.key,
+    required this.visible,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRect(
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.topCenter,
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          opacity: visible ? 1.0 : 0.0,
+          child: visible
+              ? child
+              : const SizedBox(width: double.infinity, height: 0),
+        ),
+      ),
+    );
   }
 }
 
@@ -256,6 +320,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
+  late final PageController _tabPageController =
+      PageController(initialPage: _selectedIndex);
   final int _tabSwitchEpoch = 0;
   bool _homeInitialEntrancePlayed = false;
   bool _homeEntranceActive = false;
@@ -269,7 +335,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _countdownTimer;
 
   final DateFormat _timeFormat = DateFormat('HH:mm');
-  final DateFormat _dateFormat = DateFormat('yyyy. MM. dd.');
 
   @override
   void initState() {
@@ -332,6 +397,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _countdownTimer?.cancel();
+    _tabPageController.dispose();
     super.dispose();
   }
 
@@ -430,6 +496,13 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       _selectedIndex = idx;
     });
+    if (_tabPageController.hasClients) {
+      _tabPageController.animateToPage(
+        idx,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+      );
+    }
   }
 
   void _openMessagesScreen() {
@@ -652,8 +725,12 @@ class _HomeScreenState extends State<HomeScreen> {
     Student? student,
   ) {
     final tabs = <Widget>[
-      _buildHomeTab(theme, scheme),
+      _KeepAliveTabWrapper(
+        key: const PageStorageKey<String>('tab-home'),
+        child: _buildHomeTab(theme, scheme),
+      ),
       GradesScreen(
+        key: const PageStorageKey<String>('tab-grades'),
         allGrades: _data?.allGrades ?? const <Grade>[],
         prefs: widget.prefs,
         onPrefsChanged: widget.onPrefsChanged,
@@ -662,9 +739,11 @@ class _HomeScreenState extends State<HomeScreen> {
         entranceEpoch: _tabSwitchEpoch,
       ),
       TimetableScreen(
+        key: const PageStorageKey<String>('tab-timetable'),
         session: _session,
         kretaClient: widget.kretaClient,
         initialTodaysLessons: _data?.todaysLessons ?? const <Lesson>[],
+        homeworks: _data?.homeworks ?? const <Homework>[],
         prefs: widget.prefs,
         onPrefsChanged: widget.onPrefsChanged,
         onImmersiveWeeklyModeChanged: (immersive) {
@@ -676,6 +755,7 @@ class _HomeScreenState extends State<HomeScreen> {
         entranceEpoch: _tabSwitchEpoch,
       ),
       MoreScreen(
+        key: const PageStorageKey<String>('tab-more'),
         session: _session,
         student: student,
         kretaClient: widget.kretaClient,
@@ -695,8 +775,9 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ];
 
-    return IndexedStack(
-      index: _selectedIndex,
+    return PageView(
+      controller: _tabPageController,
+      physics: const NeverScrollableScrollPhysics(),
       children: tabs,
     );
   }
@@ -891,42 +972,87 @@ class _HomeScreenState extends State<HomeScreen> {
     'Vasárnap',
   ];
 
+  String _formatFeedCardDate(DateTime dt) {
+    final local = dt.toLocal();
+    final month = _shortMonthsHu[(local.month - 1).clamp(0, 11)].toLowerCase();
+    return '$month ${local.day}.';
+  }
+
   String _formatDaySectionTitle(DateTime day, DateTime today) {
+    final month = _shortMonthsHu[(day.month - 1).clamp(0, 11)];
+    final weekday = _weekdayNamesHu[day.weekday.clamp(1, 7)];
+    if (day == today.add(const Duration(days: 1))) {
+      return 'Holnap • $month ${day.day}.';
+    }
+    if (day.isAfter(today.add(const Duration(days: 1)))) {
+      return '$month ${day.day}. • $weekday';
+    }
     if (day == today) return 'Ma';
     if (day == today.subtract(const Duration(days: 1))) return 'Tegnap';
-    if (day == today.add(const Duration(days: 1))) return 'Holnap';
-    final month = _shortMonthsHu[(day.month - 1).clamp(0, 11)];
-    if (day.year != today.year) {
-      return '${day.year}. $month ${day.day}.';
-    }
     return '$month ${day.day}.';
   }
 
   List<({DateTime day, List<_ActivityItem> items})> _groupFeedItemsByDay(
     List<_ActivityItem> items,
+    DateTime today,
   ) {
-    final groups = <({DateTime day, List<_ActivityItem> items})>[];
+    final byDay = <DateTime, List<_ActivityItem>>{};
     for (final item in items) {
       final day = DateUtils.dateOnly(item.sortDate.toLocal());
-      if (groups.isEmpty || groups.last.day != day) {
-        groups.add((day: day, items: <_ActivityItem>[item]));
+      byDay.putIfAbsent(day, () => <_ActivityItem>[]).add(item);
+    }
+
+    final futureDays = <DateTime>[];
+    final currentAndPastDays = <DateTime>[];
+    for (final day in byDay.keys) {
+      if (day.isAfter(today)) {
+        futureDays.add(day);
       } else {
-        groups.last.items.add(item);
+        currentAndPastDays.add(day);
       }
+    }
+
+    // Nearest upcoming exam date first at the very top of Főoldal (above "Ma")
+    futureDays.sort((a, b) => a.compareTo(b));
+    // Today ("Ma") and past dates sorted reverse-chronologically below
+    currentAndPastDays.sort((a, b) => b.compareTo(a));
+
+    final groups = <({DateTime day, List<_ActivityItem> items})>[];
+    for (final day in futureDays) {
+      final dayItems = byDay[day]!
+        ..sort((a, b) {
+          final aLesson = a.test?.lessonNumber ?? 99;
+          final bLesson = b.test?.lessonNumber ?? 99;
+          final cmp = aLesson.compareTo(bLesson);
+          return cmp != 0 ? cmp : a.sortDate.compareTo(b.sortDate);
+        });
+      groups.add((day: day, items: dayItems));
+    }
+    for (final day in currentAndPastDays) {
+      final dayItems = byDay[day]!
+        ..sort((a, b) => b.sortDate.compareTo(a.sortDate));
+      groups.add((day: day, items: dayItems));
     }
     return groups;
   }
 
   Widget _buildHomeTab(ThemeData theme, ColorScheme scheme) {
     final lessons = _data?.todaysLessons ?? const <Lesson>[];
-    final feedItems = _buildFilteredFeedItems();
-    final dayGroups = _groupFeedItemsByDay(feedItems);
+    final allFeedItems = _buildAllFeedItems();
     final today = DateUtils.dateOnly(DateTime.now());
+    final allDayGroups = _groupFeedItemsByDay(allFeedItems, today);
+    final hasAnyMatching =
+        allFeedItems.any((item) => item.matchesFilter(_feedFilter));
 
     return RefreshIndicator(
+      displacement: 44,
+      edgeOffset: 8,
+      strokeWidth: 2.6,
       onRefresh: _loadDashboard,
       child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
+        physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics(),
+        ),
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 116),
         children: [
           if (_error != null) ...[
@@ -961,36 +1087,32 @@ class _HomeScreenState extends State<HomeScreen> {
             key: const ValueKey('home-chips'),
           ),
           const SizedBox(height: 18),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 160),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            child: dayGroups.isEmpty
-                ? _buildEmptyStateCard(
-                    theme,
-                    scheme,
-                    icon: Icons.inbox_rounded,
-                    message: uwu(
-                      'Nincs megjeleníthető elem ebben a kategóriában.',
-                    ),
-                  )
-                : Column(
-                    key: ValueKey<String>('feed-${_feedFilter.name}'),
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      for (int gIdx = 0; gIdx < dayGroups.length; gIdx++) ...[
-                        if (gIdx > 0) const SizedBox(height: 22),
-                        _buildDayGroupSection(
-                          theme,
-                          scheme,
-                          dayGroups[gIdx].day,
-                          dayGroups[gIdx].items,
-                          today,
-                          gIdx,
-                        ),
-                      ],
-                    ],
+          Column(
+            key: const ValueKey<String>('feed-reflow-list'),
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _AnimatedFeedCollapse(
+                key: const ValueKey<String>('feed-empty-collapse'),
+                visible: !hasAnyMatching,
+                child: _buildEmptyStateCard(
+                  theme,
+                  scheme,
+                  icon: Icons.inbox_rounded,
+                  message: uwu(
+                    'Nincs megjeleníthető elem ebben a kategóriában.',
                   ),
+                ),
+              ),
+              for (int gIdx = 0; gIdx < allDayGroups.length; gIdx++)
+                _buildDayGroupSection(
+                  theme,
+                  scheme,
+                  allDayGroups[gIdx].day,
+                  allDayGroups[gIdx].items,
+                  today,
+                  gIdx,
+                ),
+            ],
           ),
         ],
       ),
@@ -1005,61 +1127,98 @@ class _HomeScreenState extends State<HomeScreen> {
     DateTime today,
     int groupIndex,
   ) {
+    final matchingCount =
+        items.where((it) => it.matchesFilter(_feedFilter)).length;
+    final groupVisible = matchingCount > 0;
+    final isUpcomingDay = day.isAfter(today);
+    final isTomorrow = day == today.add(const Duration(days: 1));
     final title = _formatDaySectionTitle(day, today);
     final weekday = _weekdayNamesHu[day.weekday.clamp(1, 7)];
+    // For later future days ("Nov. 16. • Hétfő"), weekday is already in title;
+    // for tomorrow ("Holnap • Nov. 13.") and today/past, show weekday alongside.
+    final showSecondaryWeekday = !isUpcomingDay || isTomorrow;
 
-    final section = Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
-          child: Row(
-            children: [
-              Text(
-                uwu(title),
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
-                  color: scheme.onSurface,
-                  letterSpacing: 0.2,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                weekday,
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: scheme.onSurface.withValues(alpha: 0.52),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHigh.withValues(alpha: 0.65),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  '${items.length}',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: scheme.onSurface.withValues(alpha: 0.72),
-                    fontWeight: FontWeight.w800,
+    final section = Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
+            child: Row(
+              children: [
+                if (isUpcomingDay) ...[
+                  const Icon(
+                    Icons.upcoming_rounded,
+                    size: 16,
+                    color: Color(0xFFFF7043),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                Text(
+                  uwu(title),
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    color: isUpcomingDay
+                        ? const Color(0xFFFF7043)
+                        : scheme.onSurface,
+                    letterSpacing: 0.2,
                   ),
                 ),
-              ),
-            ],
+                if (showSecondaryWeekday) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    weekday,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: scheme.onSurface.withValues(alpha: 0.52),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+                const Spacer(),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: isUpcomingDay
+                        ? const Color(0xFFFF7043).withValues(alpha: 0.18)
+                        : scheme.surfaceContainerHigh.withValues(alpha: 0.65),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '$matchingCount',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: isUpcomingDay
+                          ? const Color(0xFFFF7043)
+                          : scheme.onSurface.withValues(alpha: 0.72),
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        for (int i = 0; i < items.length; i++) ...[
-          if (i > 0) const SizedBox(height: 2),
-          _buildActivityFeedTile(theme, scheme, items[i]),
+          for (int i = 0; i < items.length; i++)
+            _AnimatedFeedCollapse(
+              key: ValueKey<String>('item-collapse-${items[i].uniqueKey}'),
+              visible: items[i].matchesFilter(_feedFilter),
+              child: Padding(
+                padding: EdgeInsets.only(top: i > 0 ? 2 : 0),
+                child: _buildActivityFeedTile(theme, scheme, items[i]),
+              ),
+            ),
         ],
-      ],
+      ),
     );
-    return _maybeHomeEntrance(
-      section,
-      groupIndex + 2,
-      key: ValueKey('day-${day.toIso8601String()}'),
+    return _AnimatedFeedCollapse(
+      key: ValueKey<String>('day-collapse-${day.toIso8601String()}'),
+      visible: groupVisible,
+      child: _maybeHomeEntrance(
+        section,
+        groupIndex + 2,
+        key: ValueKey('day-${day.toIso8601String()}'),
+      ),
     );
   }
 
@@ -1104,6 +1263,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 currentOrNext,
                 heroTag: heroTag,
                 prefs: widget.prefs,
+                homework: KretaClient.findHomeworkForLesson(
+                  currentOrNext,
+                  _data?.homeworks ?? const <Homework>[],
+                ),
               )
           : () => _selectBottomTab(_timetableTabIndex),
       child: ChristmasSnowCap(
@@ -1652,27 +1815,16 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  List<_ActivityItem> _buildFilteredFeedItems() {
+  List<_ActivityItem> _buildAllFeedItems() {
     final grades = _data?.allGrades ?? const <Grade>[];
     final homeworks = _data?.homeworks ?? const <Homework>[];
     final tests = _data?.tests ?? const <Test>[];
 
-    final items = <_ActivityItem>[];
-    if (_feedFilter == ActivityFeedFilter.all ||
-        _feedFilter == ActivityFeedFilter.grades) {
-      items.addAll(grades.map(_ActivityItem.grade));
-    }
-    if (_feedFilter == ActivityFeedFilter.all ||
-        _feedFilter == ActivityFeedFilter.homeworks) {
-      items.addAll(homeworks.map(_ActivityItem.homework));
-    }
-    if (_feedFilter == ActivityFeedFilter.all ||
-        _feedFilter == ActivityFeedFilter.tests) {
-      items.addAll(tests.map(_ActivityItem.test));
-    }
-
-    items.sort((a, b) => b.sortDate.compareTo(a.sortDate));
-    return items;
+    return <_ActivityItem>[
+      ...grades.map(_ActivityItem.grade),
+      ...homeworks.map(_ActivityItem.homework),
+      ...tests.map(_ActivityItem.test),
+    ];
   }
 
   Widget _buildActivityFeedTile(
@@ -1743,7 +1895,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                         color: badgeColor,
-                        borderRadius: BorderRadius.circular(11),
+                        shape: BoxShape.circle,
                       ),
                       child: Text(
                         badgeText,
@@ -1777,7 +1929,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            _dateFormat.format(grade.recordDate.toLocal()),
+                            _formatFeedCardDate(grade.recordedAt),
                             style: TextStyle(
                               fontSize: 11,
                               color: scheme.onSurface.withValues(alpha: 0.56),
@@ -1821,10 +1973,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     final teacherDisplay =
         widget.prefs.resolveTeacherName(homework.teacherName);
-    final cleanText = homework.description
-        .replaceAll(RegExp(r'<[^>]*>'), ' ')
-        .replaceAll('&nbsp;', ' ')
-        .trim();
+    final cleanText = Homework.stripHtmlTags(homework.description);
     final heroTag = 'home_hw_${homework.uid}';
 
     return Padding(
@@ -1884,7 +2033,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           Text(
-                            'Határidő: ${_dateFormat.format(homework.dueDate.toLocal())}',
+                            'Határidő: ${_formatFeedCardDate(homework.dueDate)}',
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: hwColor,
                               fontWeight: FontWeight.w700,
@@ -2006,7 +2155,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            '$weekdayName ${_dateFormat.format(testLocal)}',
+                            '$weekdayName, ${_formatFeedCardDate(testLocal)}',
                             textAlign: TextAlign.right,
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: testColor,

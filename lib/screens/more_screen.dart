@@ -152,13 +152,17 @@ class MoreScreen extends StatefulWidget {
   State<MoreScreen> createState() => _MoreScreenState();
 }
 
-class _MoreScreenState extends State<MoreScreen> {
+class _MoreScreenState extends State<MoreScreen>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   late UserProfilePrefs _currentPrefs;
   int _selectedGradeToCustomize = 5;
   _AttendanceFilter _attendanceFilter = _AttendanceFilter.all;
   bool _showSentMessages = false;
   bool _isLoadingModules = false;
-  String _appVersion = '1.2.5';
+  String _appVersion = '1.2.6';
   bool _initialEntrancePlayed = false;
   bool _entranceActive = false;
 
@@ -1126,6 +1130,7 @@ class _MoreScreenState extends State<MoreScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final expFormat = DateFormat('yyyy. MM. dd. HH:mm');
@@ -1135,9 +1140,14 @@ class _MoreScreenState extends State<MoreScreen> {
     // EXCLUSIVELY via the top-right Profile sheet (`AppSettingsScreen`).
     if (!widget.settingsOnly) {
       return RefreshIndicator(
+        displacement: 44,
+        edgeOffset: 8,
+        strokeWidth: 2.6,
         onRefresh: _refreshModules,
         child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
+          physics: const BouncingScrollPhysics(
+            parent: AlwaysScrollableScrollPhysics(),
+          ),
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
           children: [
             if (widget.messagesOnly)
@@ -1153,7 +1163,9 @@ class _MoreScreenState extends State<MoreScreen> {
 
     // Main Settings view (`widget.settingsOnly == true`):
     return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
+      physics: const BouncingScrollPhysics(
+        parent: AlwaysScrollableScrollPhysics(),
+      ),
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 36),
       children: [
         _SettingsAccordionCard(

@@ -20,10 +20,12 @@ Future<void> showFrostedModal({
   required String title,
   String? subtitleTimeSpan,
   String? badgeText,
+  BoxShape badgeShape = BoxShape.rectangle,
   String? heroTag,
   required List<FrostedDetailRow> rows,
   String? topicTitle,
   String? topicBody,
+  Widget? extraBottomSection,
   String? tsundereNote,
   ModalCloseButtonMode? closeMode,
 }) {
@@ -61,7 +63,9 @@ Future<void> showFrostedModal({
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: accentColor,
-              borderRadius: OledTheme.badgeRadius,
+              shape: badgeShape,
+              borderRadius:
+                  badgeShape == BoxShape.circle ? null : OledTheme.badgeRadius,
             ),
             child: Material(
               type: MaterialType.transparency,
@@ -346,6 +350,10 @@ Future<void> showFrostedModal({
                                 ),
                               ),
                             ],
+                            if (extraBottomSection != null) ...[
+                              const SizedBox(height: 14),
+                              extraBottomSection,
+                            ],
                             if (effectiveCloseMode.showBottomButton) ...[
                               const SizedBox(height: 18),
                               TactileBounce(
@@ -442,6 +450,7 @@ Future<void> showGradeInspectionModal(
     accentColor: color,
     title: subjectDisplay,
     badgeText: badge,
+    badgeShape: BoxShape.circle,
     heroTag: heroTag,
     tsundereNote: tsundereNote,
     closeMode: prefs?.modalCloseMode,
@@ -473,7 +482,7 @@ Future<void> showGradeInspectionModal(
       FrostedDetailRow(
         icon: Icons.calendar_today_rounded,
         label: 'Rögzítés ideje',
-        value: dtFormat.format(grade.recordDate.toLocal()),
+        value: dtFormat.format(grade.recordedAt),
       ),
       FrostedDetailRow(
         icon: Icons.person_rounded,
@@ -643,6 +652,7 @@ Future<void> showLessonInspectionModal(
   Lesson lesson, {
   String? heroTag,
   UserProfilePrefs? prefs,
+  Homework? homework,
 }) {
   final dayFormat = DateFormat('yyyy. MM. dd.');
   final timeFormat = DateFormat('HH:mm');
@@ -674,6 +684,90 @@ Future<void> showLessonInspectionModal(
       prefs != null && lesson.substituteTeacher != null
           ? prefs.resolveTeacherName(lesson.substituteTeacher)
           : lesson.substituteTeacher;
+
+  const hwTeal = Color(0xFF00BFA5);
+  final hasHomeworkFlag = homework != null ||
+      (lesson.homeworkUid != null && lesson.homeworkUid!.trim().isNotEmpty);
+
+  Widget? homeworkSection;
+  if (hasHomeworkFlag) {
+    final hwDesc = homework != null
+        ? Homework.stripHtmlTags(homework.description)
+        : '';
+    final dueText = homework != null
+        ? 'Határidő: ${DateFormat('MM. dd. HH:mm').format(homework.dueDate.toLocal())}'
+        : null;
+    homeworkSection = Builder(
+      builder: (innerContext) {
+        final theme = Theme.of(innerContext);
+        final scheme = theme.colorScheme;
+        return TactileBounce(
+          onTap: homework != null
+              ? () {
+                  Navigator.of(innerContext).pop();
+                  showHomeworkInspectionModal(
+                    context,
+                    homework,
+                    prefs: prefs,
+                  );
+                }
+              : null,
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: hwTeal.withValues(alpha: 0.12),
+              borderRadius: OledTheme.cardRadius,
+              border: Border.all(
+                color: hwTeal.withValues(alpha: 0.55),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.menu_book_rounded,
+                      size: 17,
+                      color: hwTeal,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Házi feladat ehhez az órához',
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: hwTeal,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    if (dueText != null)
+                      Text(
+                        dueText,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: hwTeal,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  hwDesc.isNotEmpty
+                      ? hwDesc
+                      : 'Házi feladat rögzítve ehhez a tanórához.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurface,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   return showFrostedModal(
     context: context,
@@ -728,5 +822,6 @@ Future<void> showLessonInspectionModal(
     topicBody: (lesson.theme != null && lesson.theme!.trim().isNotEmpty)
         ? lesson.theme!
         : 'Még nem lett tananyag rögzítve ehhez az órához.',
+    extraBottomSection: homeworkSection,
   );
 }

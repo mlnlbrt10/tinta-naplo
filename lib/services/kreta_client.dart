@@ -520,8 +520,18 @@ class KretaClient {
         .toList();
   }
 
+  /// Returns September 1 of the current school year (matching Firka's `getFirstSchoolDay()`).
+  static DateTime getFirstSchoolDay([DateTime? reference]) {
+    final now = reference ?? DateTime.now();
+    final sept1 = DateTime(now.year, 9, 1);
+    if (now.isBefore(sept1)) {
+      return DateTime(now.year - 1, 9, 1);
+    }
+    return sept1;
+  }
+
   /// Fetches all student evaluations via [KretaEndpoints.getGrades] sorted
-  /// newest-first by `recordDate` / `creationDate`.
+  /// newest-first by `recordedAt` (`KeszitesDatuma` / `RogzitesDatuma`).
   Future<List<Grade>> fetchAllGrades(StoredSession session) async {
     final url = KretaEndpoints.getGrades(session.instituteCode);
     final raw = await _getAuthenticatedJson(session, url);
@@ -529,34 +539,54 @@ class KretaClient {
       return const [];
     }
 
-    final grades = raw
-        .whereType<Map<String, dynamic>>()
-        .map(Grade.fromJson)
-        .toList()
-      ..sort((a, b) {
-        final cmp = b.recordDate.compareTo(a.recordDate);
-        return cmp != 0 ? cmp : b.creationDate.compareTo(a.creationDate);
-      });
+    final grades = <Grade>[];
+    for (final item in raw) {
+      if (item is Map<String, dynamic>) {
+        try {
+          grades.add(Grade.fromJson(item));
+        } catch (_) {}
+      }
+    }
+    grades.sort((a, b) {
+      final cmp = b.recordedAt.compareTo(a.recordedAt);
+      if (cmp != 0) return cmp;
+      return b.recordDate.compareTo(a.recordDate);
+    });
 
     return grades;
   }
 
-  /// Fetches homework assignments via [KretaEndpoints.getHomework] for the
-  /// recent/upcoming window, sorted newest-first.
-  Future<List<Homework>> fetchHomeworks(StoredSession session) async {
+  /// Fetches homework assignments via [KretaEndpoints.getHomework] using
+  /// Firka's exact query parameters (`datumTol` = first school day, `datumIg` = null),
+  /// sorted newest-first.
+  Future<List<Homework>> fetchHomeworks(
+    StoredSession session, {
+    DateTime? from,
+    DateTime? to,
+  }) async {
     try {
-      final now = DateTime.now();
-      final from = now.subtract(const Duration(days: 30));
-      final to = now.add(const Duration(days: 30));
-      final url = KretaEndpoints.getHomework(session.instituteCode, from, to);
+      DateTime? effectiveFrom = from;
+      final DateTime? effectiveTo = to;
+      if (effectiveFrom == null && effectiveTo == null) {
+        effectiveFrom = getFirstSchoolDay();
+      }
+      final url = KretaEndpoints.getHomework(
+        session.instituteCode,
+        effectiveFrom,
+        effectiveTo,
+      );
       final raw = await _getAuthenticatedJson(session, url);
       if (raw is! List) return const [];
 
-      final list = raw
-          .whereType<Map<String, dynamic>>()
-          .map(Homework.fromJson)
-          .toList()
-        ..sort((a, b) => b.creationDate.compareTo(a.creationDate));
+      final list = <Homework>[];
+      for (final item in raw) {
+        if (item is Map<String, dynamic>) {
+          try {
+            list.add(Homework.fromJson(item));
+          } catch (_) {}
+        }
+      }
+      list.sort((a, b) => b.creationDate.compareTo(a.creationDate));
       return list;
     } on TokenExpiredException {
       rethrow;
@@ -567,6 +597,74 @@ class KretaClient {
     }
   }
 
+  /// Fetches a single homework entry by its `HaziFeladatUid` (`/ellenorzo/v3/sajat/HaziFeladatok/{uid}`)
+  /// when referenced by a timetable [Lesson].
+  Future<Homework?> fetchHomeworkByUid(
+    StoredSession session,
+    String homeworkUid,
+  ) async {
+    final trimmed = homeworkUid.trim();
+    if (trimmed.isEmpty) return null;
+    final cleanId = trimmed.split(',').first.trim();
+    if (cleanId.isEmpty) return null;
+    try {
+      final base = KretaEndpoints.getHomework(session.instituteCode);
+      final url = '$base/${Uri.encodeComponent(cleanId)}';
+      final raw = await _getAuthenticatedJson(session, url);
+      if (raw is Map<String, dynamic>) {
+        return Homework.fromJson(raw);
+      }
+    } on TokenExpiredException {
+      rethrow;
+    } on InvalidGrantException {
+      rethrow;
+    } catch (_) {}
+    return null;
+  }
+
+  /// Matches a [Lesson] to its corresponding [Homework] from [homeworks]
+  /// using Firka's `UidObj.id` (`homeworkUid`) or subject+date matching.
+  static Homework? findHomeworkForLesson(
+    Lesson lesson,
+    Iterable<Homework> homeworks,
+  ) {
+    final hwUid = lesson.homeworkUid?.trim() ?? '';
+    if (hwUid.isNotEmpty) {
+      final targetId = UidObj(uid: hwUid).id;
+      final targetLead = hwUid.split(',').first.trim();
+      for (final hw in homeworks) {
+        final hwLead = hw.uid.split(',').first.trim();
+        if (hw.uid == hwUid ||
+            (targetLead.isNotEmpty && hwLead == targetLead) ||
+            hw.id == targetId) {
+          return hw;
+        }
+      }
+    }
+
+    // Fallback: match by subject and lesson date (assigned on or due on this lesson's date)
+    final lessonDay = DateUtils.dateOnly(lesson.start.toLocal());
+    final lessonSubjUid = lesson.subject?.uid.trim() ?? '';
+    final lessonSubjName =
+        (lesson.subject?.name ?? lesson.name).trim().toLowerCase();
+    if (lessonSubjUid.isEmpty && lessonSubjName.isEmpty) return null;
+
+    for (final hw in homeworks) {
+      final sameSubj = (lessonSubjUid.isNotEmpty &&
+              hw.subject.uid.trim() == lessonSubjUid) ||
+          (lessonSubjName.isNotEmpty &&
+              (hw.subject.name.trim().toLowerCase() == lessonSubjName ||
+                  hw.subjectName.trim().toLowerCase() == lessonSubjName));
+      if (!sameSubj) continue;
+      final startDay = DateUtils.dateOnly(hw.startDate.toLocal());
+      final dueDay = DateUtils.dateOnly(hw.dueDate.toLocal());
+      if (startDay == lessonDay || dueDay == lessonDay) {
+        return hw;
+      }
+    }
+    return null;
+  }
+
   /// Fetches announced tests/exams via [KretaEndpoints.getTests], sorted newest-first.
   Future<List<Test>> fetchTests(StoredSession session) async {
     try {
@@ -574,11 +672,15 @@ class KretaClient {
       final raw = await _getAuthenticatedJson(session, url);
       if (raw is! List) return const [];
 
-      final list = raw
-          .whereType<Map<String, dynamic>>()
-          .map(Test.fromJson)
-          .toList()
-        ..sort((a, b) => b.date.compareTo(a.date));
+      final list = <Test>[];
+      for (final item in raw) {
+        if (item is Map<String, dynamic>) {
+          try {
+            list.add(Test.fromJson(item));
+          } catch (_) {}
+        }
+      }
+      list.sort((a, b) => b.date.compareTo(a.date));
       return list;
     } on TokenExpiredException {
       rethrow;
@@ -738,13 +840,36 @@ class KretaClient {
       fetchMessages(session),
     ]);
 
+    final todaysLessons = results[0] as List<Lesson>;
     final allGrades = results[1] as List<Grade>;
+    final homeworks = List<Homework>.from(results[3] as List<Homework>);
+
+    // Ensure any homeworkUid referenced on today's lessons is hydrated
+    final missingHwUids = <String>{};
+    for (final lesson in todaysLessons) {
+      final hwUid = lesson.homeworkUid?.trim() ?? '';
+      if (hwUid.isNotEmpty && findHomeworkForLesson(lesson, homeworks) == null) {
+        missingHwUids.add(hwUid);
+      }
+    }
+    if (missingHwUids.isNotEmpty) {
+      final fetched = await Future.wait(
+        missingHwUids.map((uid) => fetchHomeworkByUid(session, uid)),
+      );
+      for (final hw in fetched) {
+        if (hw != null && !homeworks.any((h) => h.uid == hw.uid || h.id == hw.id)) {
+          homeworks.add(hw);
+        }
+      }
+      homeworks.sort((a, b) => b.creationDate.compareTo(a.creationDate));
+    }
+
     return DashboardData(
-      todaysLessons: results[0] as List<Lesson>,
+      todaysLessons: todaysLessons,
       allGrades: allGrades,
       latestGrades: allGrades.take(5).toList(),
       student: results[2] as Student?,
-      homeworks: results[3] as List<Homework>,
+      homeworks: homeworks,
       tests: results[4] as List<Test>,
       omissions: results[5] as List<Omission>,
       messages: results[6] as List<KretaMessage>,

@@ -133,6 +133,7 @@ class TimetableScreen extends StatefulWidget {
   final StoredSession session;
   final KretaClient kretaClient;
   final List<Lesson> initialTodaysLessons;
+  final List<Homework> homeworks;
   final UserProfilePrefs prefs;
   final ValueChanged<UserProfilePrefs> onPrefsChanged;
   final ValueChanged<bool>? onImmersiveWeeklyModeChanged;
@@ -144,6 +145,7 @@ class TimetableScreen extends StatefulWidget {
     required this.session,
     required this.kretaClient,
     required this.initialTodaysLessons,
+    this.homeworks = const [],
     required this.prefs,
     required this.onPrefsChanged,
     this.onImmersiveWeeklyModeChanged,
@@ -155,7 +157,11 @@ class TimetableScreen extends StatefulWidget {
   State<TimetableScreen> createState() => _TimetableScreenState();
 }
 
-class _TimetableScreenState extends State<TimetableScreen> {
+class _TimetableScreenState extends State<TimetableScreen>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   Timer? _minuteTicker;
 
   static const List<String> _weekdayShortNames = [
@@ -188,6 +194,15 @@ class _TimetableScreenState extends State<TimetableScreen> {
   bool _isLoading = false;
   String? _error;
   List<Lesson> _weekLessons = const [];
+  final List<Homework> _extraHomeworks = [];
+
+  List<Homework> get _allHomeworks => [
+        ...widget.homeworks,
+        ..._extraHomeworks,
+      ];
+
+  Homework? _resolveHomeworkForLesson(Lesson lesson) =>
+      KretaClient.findHomeworkForLesson(lesson, _allHomeworks);
 
   final DateFormat _timeFormat = DateFormat('HH:mm');
   final DateFormat _dayFormat = DateFormat('MM. dd.');
@@ -356,6 +371,34 @@ class _TimetableScreenState extends State<TimetableScreen> {
         _error = null;
         _armInitialEntranceIfNeeded();
       });
+
+      // Hydrate any lesson homeworkUid not yet present in _allHomeworks
+      final missingUids = <String>{};
+      for (final lesson in lessons) {
+        final hwUid = lesson.homeworkUid?.trim() ?? '';
+        if (hwUid.isNotEmpty && _resolveHomeworkForLesson(lesson) == null) {
+          missingUids.add(hwUid);
+        }
+      }
+      if (missingUids.isNotEmpty) {
+        final fetched = await Future.wait(
+          missingUids.map(
+            (uid) => widget.kretaClient.fetchHomeworkByUid(widget.session, uid),
+          ),
+        );
+        if (!mounted) return;
+        bool added = false;
+        for (final hw in fetched) {
+          if (hw != null &&
+              !_allHomeworks.any((h) => h.uid == hw.uid || h.id == hw.id)) {
+            _extraHomeworks.add(hw);
+            added = true;
+          }
+        }
+        if (added && mounted) {
+          setState(() {});
+        }
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -463,6 +506,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final monday = _mondayOf(_selectedDate);
@@ -556,10 +600,15 @@ class _TimetableScreenState extends State<TimetableScreen> {
                       itemBuilder: (context, pageIdx) {
                         final day = monday.add(Duration(days: pageIdx));
                         return RefreshIndicator(
+                          displacement: 44,
+                          edgeOffset: 8,
+                          strokeWidth: 2.6,
                           onRefresh: () =>
                               _loadCurrentWeek(showFullSpinner: false),
                           child: ListView(
-                            physics: const AlwaysScrollableScrollPhysics(),
+                            physics: const BouncingScrollPhysics(
+                              parent: AlwaysScrollableScrollPhysics(),
+                            ),
                             padding:
                                 const EdgeInsets.fromLTRB(16, 2, 16, 100),
                             children: _buildDailyList(theme, scheme, day),
@@ -964,6 +1013,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
             lesson,
             _timeFormat,
             prefs: widget.prefs,
+            homework: _resolveHomeworkForLesson(lesson),
           ).staggeredEntrance(idx + 2, enabled: _entranceActive);
         }),
     ];
@@ -1091,6 +1141,11 @@ class _TimetableScreenState extends State<TimetableScreen> {
     final rawSubject = lesson.subject?.name ?? lesson.name;
     final subjectDisplay =
         widget.prefs.resolveSubjectName(rawSubject, lesson.subject?.uid);
+    final homework = _resolveHomeworkForLesson(lesson);
+    final hasHomework = !isPlaceholder &&
+        (homework != null ||
+            (lesson.homeworkUid != null &&
+                lesson.homeworkUid!.trim().isNotEmpty));
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 3),
@@ -1101,6 +1156,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
           lesson,
           heroTag: heroTag,
           prefs: widget.prefs,
+          homework: homework,
         ),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1114,7 +1170,9 @@ class _TimetableScreenState extends State<TimetableScreen> {
                   ? const Color(0xFFC62828)
                   : hasSub
                       ? const Color(0xFFF9A825)
-                      : theme.dividerColor,
+                      : hasHomework
+                          ? const Color(0xFF00BFA5).withValues(alpha: 0.65)
+                          : theme.dividerColor,
               width: 0.8,
             ),
           ),
@@ -1149,6 +1207,15 @@ class _TimetableScreenState extends State<TimetableScreen> {
                   ),
                 ),
               ),
+              if (hasHomework)
+                const Padding(
+                  padding: EdgeInsets.only(right: 3),
+                  child: Icon(
+                    Icons.menu_book_rounded,
+                    size: 10,
+                    color: Color(0xFF00BFA5),
+                  ),
+                ),
               if (lesson.roomName != null &&
                   lesson.roomName!.trim().isNotEmpty &&
                   !isPlaceholder)
@@ -1217,12 +1284,20 @@ Widget buildOledLessonCard(
   DateFormat timeFormat, {
   String? heroPrefix,
   UserProfilePrefs? prefs,
+  Homework? homework,
 }) {
   final scheme = theme.colorScheme;
   final isPlaceholder = isInactivePlaceholderLesson(lesson);
   final isCancelled = isLessonCancelled(lesson) && !isPlaceholder;
   final hasSubstitute = lesson.substituteTeacher != null &&
       lesson.substituteTeacher!.trim().isNotEmpty;
+  final hasHomework = !isPlaceholder &&
+      (homework != null ||
+          (lesson.homeworkUid != null &&
+              lesson.homeworkUid!.trim().isNotEmpty));
+  final hwSummary = homework != null
+      ? Homework.stripHtmlTags(homework.description)
+      : '';
 
   final startLocal = lesson.start.toLocal();
   final endLocal = lesson.end.toLocal();
@@ -1274,6 +1349,7 @@ Widget buildOledLessonCard(
         lesson,
         heroTag: heroTag,
         prefs: prefs,
+        homework: homework,
       ),
       child: ChristmasSnowCap(
         enabled: prefs?.christmasModeEnabled == true,
@@ -1390,6 +1466,42 @@ Widget buildOledLessonCard(
                               ),
                             ),
                           ),
+                        ] else if (hasHomework) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00BFA5)
+                                  .withValues(alpha: 0.18),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: const Color(0xFF00BFA5)
+                                    .withValues(alpha: 0.55),
+                              ),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.menu_book_rounded,
+                                  size: 10.5,
+                                  color: Color(0xFF00BFA5),
+                                ),
+                                SizedBox(width: 3),
+                                Text(
+                                  'Házi',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF00BFA5),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ],
                       ],
                     ),
@@ -1478,6 +1590,31 @@ Widget buildOledLessonCard(
                           ),
                       ],
                     ),
+                    if (hasHomework && hwSummary.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.menu_book_rounded,
+                            size: 11.5,
+                            color: Color(0xFF00BFA5),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              hwSummary,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFF00BFA5),
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),

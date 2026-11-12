@@ -39,27 +39,56 @@ class Grade extends UidObj {
     required this.sortIndex,
   });
 
+  /// Returns the actual timestamp when the grade was created/recorded in Kréta
+  /// (`KeszitesDatuma` / [creationDate], matching Firka's `createdAt`), falling
+  /// back to [recordDate] only if [creationDate] has a `00:00:00` time while
+  /// [recordDate] has a non-zero time component.
+  DateTime get recordedAt {
+    final createdLocal = creationDate.toLocal();
+    final recordLocal = recordDate.toLocal();
+    if (createdLocal.hour == 0 &&
+        createdLocal.minute == 0 &&
+        createdLocal.second == 0 &&
+        (recordLocal.hour != 0 ||
+            recordLocal.minute != 0 ||
+            recordLocal.second != 0)) {
+      return recordLocal;
+    }
+    return createdLocal;
+  }
+
   factory Grade.fromJson(Map<String, dynamic> json) {
+    final rawCreation = json['KeszitesDatuma'] != null
+        ? DateTime.parse(json['KeszitesDatuma'] as String).toLocal()
+        : null;
+    final rawRecord = json['RogzitesDatuma'] != null
+        ? DateTime.parse(json['RogzitesDatuma'] as String).toLocal()
+        : null;
+    final creationDate = rawCreation ?? rawRecord ?? DateTime.now();
+    final recordDate = rawRecord ?? rawCreation ?? DateTime.now();
+
     return Grade(
-      uid: json['Uid'],
-      recordDate: DateTime.parse(json['RogzitesDatuma']).toLocal(),
-      creationDate: DateTime.parse(json['KeszitesDatuma']).toLocal(),
+      uid: (json['Uid'] ?? '').toString(),
+      recordDate: recordDate,
+      creationDate: creationDate,
       ackDate: json['LattamozasDatuma'] != null
-          ? DateTime.parse(json['LattamozasDatuma']).toLocal()
+          ? DateTime.parse(json['LattamozasDatuma'] as String).toLocal()
           : null,
-      subject: Subject.fromJson(json['Tantargy']),
-      topic: json['Tema'],
-      type: json.nameUidDesc('Tipus')!,
+      subject: Subject.fromJson(
+        (json['Tantargy'] as Map<String, dynamic>?) ?? const <String, dynamic>{},
+      ),
+      topic: json['Tema'] as String?,
+      type: json.nameUidDesc('Tipus') ?? NameUidDesc.EMPTY,
       mode: json.nameUidDesc('Mod'),
-      valueType: json.nameUidDesc('ErtekFajta')!,
-      teacher: json['ErtekeloTanarNeve'],
-      kind: json['Jelleg'],
-      numericValue: json['SzamErtek'],
-      strValue: json['SzovegesErtek'],
-      weightPercentage: json['SulySzazalekErteke'],
-      shortStrValue: json['SzovegesErtekelesRovidNev'],
-      classGroup: json.uid('OsztalyCsoport')!,
-      sortIndex: json['SortIndex'],
+      valueType: json.nameUidDesc('ErtekFajta') ?? NameUidDesc.EMPTY,
+      teacher: (json['ErtekeloTanarNeve'] ?? '').toString(),
+      kind: json['Jelleg'] as String?,
+      numericValue: (json['SzamErtek'] as num?)?.toInt(),
+      strValue: (json['SzovegesErtek'] ?? '').toString(),
+      weightPercentage: (json['SulySzazalekErteke'] as num?)?.toInt(),
+      shortStrValue: json['SzovegesErtekelesRovidNev'] as String?,
+      classGroup: json.uid('OsztalyCsoport') ?? UidObj(uid: ''),
+      sortIndex: (json['SortIndex'] as num?)?.toInt() ?? 0,
     );
   }
 

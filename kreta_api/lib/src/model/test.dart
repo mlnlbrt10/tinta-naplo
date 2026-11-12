@@ -27,17 +27,39 @@ class Test extends UidObj {
   });
 
   factory Test.fromJson(Map<String, dynamic> json) {
+    final rawSubject = json['Tantargy'];
+    final fallbackSubjectName = (json['TantargyNeve'] ??
+            (rawSubject is Map ? rawSubject['Nev'] : null) ??
+            '')
+        .toString();
+    final subject = rawSubject is Map<String, dynamic>
+        ? Subject.fromJson(rawSubject)
+        : Subject(
+            uid: fallbackSubjectName,
+            name: fallbackSubjectName,
+            category: NameUidDesc(
+              uid: fallbackSubjectName,
+              name: fallbackSubjectName,
+              description: fallbackSubjectName,
+            ),
+            sortIndex: 0,
+          );
+    final date =
+        json.localDate('Datum') ?? json.localDate('BejelentesDatuma') ?? DateTime.now();
+    final reportDate = json.localDate('BejelentesDatuma') ?? date;
+
     return Test(
-      uid: json['Uid'],
-      date: json.localDate('Datum')!,
-      reportDate: json.localDate('BejelentesDatuma')!,
-      teacherName: json['RogzitoTanarNeve'],
-      lessonNumber: json['OrarendiOraOraszama'],
-      subject: Subject.fromJson(json['Tantargy']),
-      subjectName: json['TantargyNeve'],
-      theme: json['Temaja'],
-      method: json.nameUidDesc('Modja')!,
-      classGroup: json.uid('OsztalyCsoport')!,
+      uid: (json['Uid'] ?? '').toString(),
+      date: date,
+      reportDate: reportDate,
+      teacherName: (json['RogzitoTanarNeve'] ?? '').toString(),
+      lessonNumber: (json['OrarendiOraOraszama'] as num?)?.toInt() ?? 0,
+      subject: subject,
+      subjectName:
+          fallbackSubjectName.isNotEmpty ? fallbackSubjectName : subject.name,
+      theme: json['Temaja'] as String?,
+      method: json.nameUidDesc('Modja') ?? NameUidDesc.EMPTY,
+      classGroup: json.uid('OsztalyCsoport') ?? UidObj(uid: ''),
     );
   }
 

@@ -12,11 +12,14 @@ class Subject extends NameUid {
   });
 
   factory Subject.fromJson(Map<String, dynamic> json) {
+    final uid = (json['Uid'] ?? '').toString();
+    final name = (json['Nev'] ?? '').toString();
     return Subject(
-      uid: json['Uid'],
-      name: json['Nev'],
-      category: json.nameUidDesc('Kategoria')!,
-      sortIndex: json['SortIndex'],
+      uid: uid,
+      name: name,
+      category: json.nameUidDesc('Kategoria') ??
+          NameUidDesc(uid: uid, name: name, description: name),
+      sortIndex: (json['SortIndex'] as num?)?.toInt() ?? 0,
     );
   }
 

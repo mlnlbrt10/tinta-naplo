@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../theme/oled_theme.dart';
@@ -84,20 +85,20 @@ class GitHubUpdaterService {
   static const String repoUrl = 'https://github.com/mlnlbrt10/reKRETA';
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/mlnlbrt10/reKRETA/releases/latest';
-  static const String fallbackAppVersion = '1.2.5';
-  static const String fallbackBuildNumber = '7';
-  static const String defaultApkFileName = 'reKRETA-v1.2.5.apk';
+  static const String fallbackAppVersion = '1.2.6';
+  static const String fallbackBuildNumber = '9';
+  static const String defaultApkFileName = 'reKRETA-v1.2.6.apk';
 
   static bool _hasCheckedOnStartup = false;
 
-  /// Resolves the target APK file name for a given release tag (`reKRETA-v1.2.5.apk`).
+  /// Resolves the target APK file name for a given release tag (`reKRETA-v1.2.6.apk`).
   static String apkFileNameForTag(String tagName) {
     final clean = _stripPrefix(tagName);
     if (clean.isEmpty) return defaultApkFileName;
     return 'reKRETA-v$clean.apk';
   }
 
-  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.2.5`.
+  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.2.6`.
   static Future<String> fetchLatestReleaseTag({http.Client? httpClient}) async {
     final client = httpClient ?? http.Client();
     try {
@@ -387,7 +388,13 @@ class _FrostedUpdateDialogContentState
         return;
       }
       final total = response.contentLength;
-      final file = File('${Directory.systemTemp.path}/$targetApkFileName');
+      Directory cacheDir;
+      try {
+        cacheDir = await getTemporaryDirectory();
+      } catch (_) {
+        cacheDir = Directory.systemTemp;
+      }
+      final file = File('${cacheDir.path}/$targetApkFileName');
       if (await file.exists()) await file.delete();
       final sink = file.openWrite();
       var received = 0;

@@ -363,6 +363,6 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.textContaining('Karácsonyi OLED'), findsOneWidget);
-    expect(find.text('v1.2.5'), findsOneWidget);
+    expect(find.text('v1.2.6'), findsOneWidget);
   });
 }

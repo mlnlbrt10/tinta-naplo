@@ -219,16 +219,16 @@ void main() {
   });
 
   test('GitHubUpdaterService compares semantic versions and build tags accurately', () {
-    expect(GitHubUpdaterService.fallbackAppVersion, '1.2.5');
-    expect(GitHubUpdaterService.fallbackBuildNumber, '7');
-    expect(GitHubUpdaterService.defaultApkFileName, 'reKRETA-v1.2.5.apk');
-    expect(GitHubUpdaterService.apkFileNameForTag('v1.2.5'), 'reKRETA-v1.2.5.apk');
+    expect(GitHubUpdaterService.fallbackAppVersion, '1.2.6');
+    expect(GitHubUpdaterService.fallbackBuildNumber, '9');
+    expect(GitHubUpdaterService.defaultApkFileName, 'reKRETA-v1.2.6.apk');
+    expect(GitHubUpdaterService.apkFileNameForTag('v1.2.6'), 'reKRETA-v1.2.6.apk');
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.2.5', 'v1.2.6'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.2.6', 'v1.2.7'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.2.5', 'v1.2.5'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.2.6', 'v1.2.6'),
       isFalse,
     );
     expect(
@@ -236,7 +236,7 @@ void main() {
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.0.0-alpha', 'v1.2.5-alpha'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.0.0-alpha', 'v1.2.6-alpha'),
       isTrue,
     );
     expect(
@@ -244,7 +244,7 @@ void main() {
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.2.5', 'v1.1.9'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.2.6', 'v1.1.9'),
       isFalse,
     );
   });
@@ -464,5 +464,81 @@ void main() {
     expect(storage.savedSession?.accessToken, 'fresh_token_123');
     expect(storage.savedSession?.refreshToken, 'fresh_refresh_456');
     expect(const TokenExpiredException().toString(), isNot(contains('Instance of')));
+  });
+
+  test('Grade.recordedAt uses KeszitesDatuma real timestamp instead of 00:00 RogzitesDatuma', () {
+    final grade = Grade.fromJson({
+      'Uid': 'g_time_1',
+      'RogzitesDatuma': '2026-11-12T00:00:00',
+      'KeszitesDatuma': '2026-11-12T13:42:00',
+      'Tantargy': {
+        'Uid': 'sub_math',
+        'Nev': 'Matematika',
+        'Kategoria': {'Uid': 'c1', 'Nev': 'Matematika', 'Leiras': 'Matematika'},
+        'SortIndex': 1,
+      },
+      'Tema': 'Röpdolgozat',
+      'Tipus': {
+        'Uid': 'evkozi_jegy_ertekeles',
+        'Nev': 'evkozi_jegy_ertekeles',
+        'Leiras': 'Évközi jegy',
+      },
+      'Mod': {'Uid': 'm1', 'Nev': 'Írásbeli', 'Leiras': 'Írásbeli'},
+      'ErtekFajta': {'Uid': '1', 'Nev': 'Otfokozatu', 'Leiras': 'Ötfokozatú'},
+      'ErtekeloTanarNeve': 'Teszt Tanár',
+      'SzamErtek': 5,
+      'SzovegesErtek': 'Jeles(5)',
+      'SulySzazalekErteke': 100,
+      'OsztalyCsoport': {'Uid': 'g1'},
+      'SortIndex': 1,
+    });
+
+    expect(grade.recordedAt.hour, 13);
+    expect(grade.recordedAt.minute, 42);
+  });
+
+  test('Homework.fromJson handles null TantargyNeve & HTML Szoveg and links to Lesson', () {
+    final hw = Homework.fromJson({
+      'Uid': '987654,TanarHaziFeladat',
+      'Tantargy': {
+        'Uid': 'sub_hist',
+        'Nev': 'Történelem',
+        'Kategoria': {'Uid': 'c2', 'Nev': 'Történelem', 'Leiras': 'Történelem'},
+        'SortIndex': 2,
+      },
+      'TantargyNeve': null,
+      'RogzitoTanarNeve': 'Kovács Tanárnő',
+      'Szoveg': '<p>Olvasd el a <b>45. oldalt</b>!&nbsp;</p>',
+      'FeladasDatuma': '2026-11-11T00:00:00Z',
+      'HataridoDatuma': '2026-11-13T23:59:00Z',
+      'RogzitesIdopontja': '2026-11-11T10:15:00Z',
+      'IsTanarRogzitette': true,
+      'IsMegoldva': false,
+      'IsBeadhato': false,
+      'OsztalyCsoport': {'Uid': 'cg1'},
+      'IsCsatolasEngedelyezes': false,
+    });
+
+    expect(hw.subject.name, 'Történelem');
+    expect(hw.subjectName, 'Történelem');
+    expect(hw.description, 'Olvasd el a 45. oldalt!');
+
+    final lesson = _makeLesson(
+      lessonNumber: 3,
+      start: DateTime(2026, 11, 11, 10, 0),
+      end: DateTime(2026, 11, 11, 10, 45),
+    );
+    final lessonWithHwUid = Lesson.fromJson({
+      ...lesson.toJson(),
+      'HaziFeladatUid': '987654',
+    });
+
+    final matched = KretaClient.findHomeworkForLesson(lessonWithHwUid, [hw]);
+    expect(matched, isNotNull);
+    expect(matched!.uid, hw.uid);
+    expect(
+      KretaClient.getFirstSchoolDay(DateTime(2026, 11, 12)),
+      DateTime(2026, 9, 1),
+    );
   });
 }

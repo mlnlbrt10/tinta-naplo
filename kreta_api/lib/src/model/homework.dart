@@ -33,21 +33,76 @@ class Homework extends UidObj {
   });
 
   factory Homework.fromJson(Map<String, dynamic> json) {
+    final rawSubject = json["Tantargy"];
+    final fallbackSubjectName = (json["TantargyNeve"] ??
+            (rawSubject is Map ? rawSubject["Nev"] : null) ??
+            "")
+        .toString();
+    final subject = rawSubject is Map<String, dynamic>
+        ? Subject.fromJson(rawSubject)
+        : Subject(
+            uid: fallbackSubjectName,
+            name: fallbackSubjectName,
+            category: NameUidDesc(
+              uid: fallbackSubjectName,
+              name: fallbackSubjectName,
+              description: fallbackSubjectName,
+            ),
+            sortIndex: 0,
+          );
+    final subjectName =
+        fallbackSubjectName.isNotEmpty ? fallbackSubjectName : subject.name;
+
+    final startDate = json.localDate("FeladasDatuma") ??
+        json.localDate("RogzitesIdopontja") ??
+        json.localDate("HataridoDatuma") ??
+        DateTime.now();
+    final dueDate = json.localDate("HataridoDatuma") ?? startDate;
+    final creationDate = json.localDate("RogzitesIdopontja") ?? startDate;
+
+    final rawText = (json["Szoveg"] ?? "").toString();
+
     return Homework(
-      uid: json["Uid"],
-      subject: Subject.fromJson(json["Tantargy"]),
-      subjectName: json["TantargyNeve"],
-      teacherName: json["RogzitoTanarNeve"],
-      description: json["Szoveg"],
-      startDate: json.localDate("FeladasDatuma")!,
-      dueDate: json.localDate("HataridoDatuma")!,
-      creationDate: json.localDate("RogzitesIdopontja")!,
-      isCreatedByTeacher: json["IsTanarRogzitette"],
-      isDone: json["IsMegoldva"],
-      canBeSubmitted: json["IsBeadhato"],
-      classGroup: json.uid("OsztalyCsoport")!,
-      canAttach: json["IsCsatolasEngedelyezes"],
+      uid: (json["Uid"] ?? json["Id"] ?? "").toString(),
+      subject: subject,
+      subjectName: subjectName,
+      teacherName: (json["RogzitoTanarNeve"] ?? "").toString(),
+      description: stripHtmlTags(rawText),
+      startDate: startDate,
+      dueDate: dueDate,
+      creationDate: creationDate,
+      isCreatedByTeacher: (json["IsTanarRogzitette"] as bool?) ?? true,
+      isDone: (json["IsMegoldva"] as bool?) ?? false,
+      canBeSubmitted: (json["IsBeadhato"] as bool?) ?? false,
+      classGroup: json.uid("OsztalyCsoport") ?? UidObj(uid: ""),
+      canAttach: (json["IsCsatolasEngedelyezes"] as bool?) ?? false,
     );
+  }
+
+  static String stripHtmlTags(String input) {
+    if (input.isEmpty) return '';
+    final withLineBreaks = input
+        .replaceAll(RegExp(r'<\s*br\s*/?\s*>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'</\s*(p|div|li)\s*>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'<\s*li[^>]*>', caseSensitive: false), '• ');
+    final withoutTags = withLineBreaks.replaceAll(RegExp(r'<[^>]*>'), '');
+    final decoded = withoutTags
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&apos;', "'")
+        .replaceAll('&ndash;', '–')
+        .replaceAll('&mdash;', '—');
+    return decoded
+        .split('\n')
+        .map((line) => line.trim())
+        .toList()
+        .join('\n')
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
   }
 
   @override

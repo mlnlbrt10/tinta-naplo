@@ -41,7 +41,7 @@ android {
 
     applicationVariants.all {
         val variant = this
-        val versionLabel = variant.versionName ?: "1.2.5"
+        val versionLabel = variant.versionName ?: "1.2.6"
         val customApkName = "reKRETA-v${versionLabel}.apk"
         variant.outputs
             .map { it as com.android.build.gradle.internal.api.BaseVariantOutputImpl }
