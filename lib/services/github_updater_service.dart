@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,8 +11,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
+import '../widgets/glass_card.dart';
 
-/// Parsed metadata from `https://api.github.com/repos/mlnlbrt10/reKRETA/releases/latest`.
+/// Parsed metadata from `https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest`.
 class GitHubReleaseInfo {
   final String tagName;
   final String title;
@@ -34,7 +34,7 @@ class GitHubReleaseInfo {
     final name = (json['name'] ?? tag).toString().trim();
     final body = (json['body'] ?? '').toString().trim();
     final html = (json['html_url'] ??
-            'https://github.com/mlnlbrt10/reKRETA/releases')
+            'https://github.com/mlnlbrt10/tinta-naplo/releases')
         .toString()
         .trim();
 
@@ -43,28 +43,34 @@ class GitHubReleaseInfo {
     if (assets is List) {
       final cleanVer = GitHubUpdaterService._stripPrefix(tag).toLowerCase();
       final expectedVersionedApk = cleanVer.isNotEmpty
-          ? 'rekreta-v$cleanVer.apk'
+          ? 'tinta-naplo-v$cleanVer.apk'
           : GitHubUpdaterService.defaultApkFileName.toLowerCase();
+      String? brandedApkUrl;
+      String? appReleaseApkUrl;
+      String? anyApkUrl;
       for (final item in assets) {
         if (item is Map<String, dynamic>) {
           final assetName = (item['name'] ?? '').toString().toLowerCase();
           final downloadUrl =
               (item['browser_download_url'] ?? '').toString().trim();
           if (downloadUrl.isEmpty) continue;
-          if (assetName == expectedVersionedApk ||
-              (assetName.startsWith('rekreta-v') &&
-                  assetName.endsWith('.apk'))) {
+          if (assetName == expectedVersionedApk) {
             apkUrl = downloadUrl;
             break;
           }
-          if (assetName == 'app-release.apk') {
-            apkUrl ??= downloadUrl;
-          }
-          if (assetName.endsWith('.apk')) {
-            apkUrl ??= downloadUrl;
+          if ((assetName.startsWith('tinta-naplo-v') ||
+                  assetName.startsWith('tinta_naplo') ||
+                  assetName.startsWith('tinta')) &&
+              assetName.endsWith('.apk')) {
+            brandedApkUrl ??= downloadUrl;
+          } else if (assetName == 'app-release.apk') {
+            appReleaseApkUrl ??= downloadUrl;
+          } else if (assetName.endsWith('.apk')) {
+            anyApkUrl ??= downloadUrl;
           }
         }
       }
+      apkUrl ??= brandedApkUrl ?? appReleaseApkUrl ?? anyApkUrl;
     }
 
     return GitHubReleaseInfo(
@@ -79,26 +85,26 @@ class GitHubReleaseInfo {
   }
 }
 
-/// Service that checks GitHub Releases for `mlnlbrt10/reKRETA` and presents
-/// an in-app frosted-glass OTA APK updater dialog.
+/// Service that checks GitHub Releases for `mlnlbrt10/tinta-naplo` and presents
+/// an in-app frosted-glass OTA APK updater dialog for Tinta Napló.
 class GitHubUpdaterService {
-  static const String repoUrl = 'https://github.com/mlnlbrt10/reKRETA';
+  static const String repoUrl = 'https://github.com/mlnlbrt10/tinta-naplo';
   static const String latestReleaseApiUrl =
-      'https://api.github.com/repos/mlnlbrt10/reKRETA/releases/latest';
-  static const String fallbackAppVersion = '1.2.6';
-  static const String fallbackBuildNumber = '9';
-  static const String defaultApkFileName = 'reKRETA-v1.2.6.apk';
+      'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest';
+  static const String fallbackAppVersion = '1.0.0';
+  static const String fallbackBuildNumber = '11';
+  static const String defaultApkFileName = 'Tinta-Naplo-v1.0.0.apk';
 
   static bool _hasCheckedOnStartup = false;
 
-  /// Resolves the target APK file name for a given release tag (`reKRETA-v1.2.6.apk`).
+  /// Resolves the target APK file name for a given release tag (`Tinta-Naplo-v1.0.0.apk`).
   static String apkFileNameForTag(String tagName) {
     final clean = _stripPrefix(tagName);
     if (clean.isEmpty) return defaultApkFileName;
-    return 'reKRETA-v$clean.apk';
+    return 'Tinta-Naplo-v$clean.apk';
   }
 
-  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.2.6`.
+  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.0.0`.
   static Future<String> fetchLatestReleaseTag({http.Client? httpClient}) async {
     final client = httpClient ?? http.Client();
     try {
@@ -107,7 +113,7 @@ class GitHubUpdaterService {
             Uri.parse(latestReleaseApiUrl),
             headers: const {
               'Accept': 'application/vnd.github+json',
-              'User-Agent': 'reKRETA-Android-Updater',
+              'User-Agent': 'TintaNaplo-Android-Updater',
             },
           )
           .timeout(const Duration(seconds: 8));
@@ -144,9 +150,28 @@ class GitHubUpdaterService {
     }
   }
 
+  static bool _hasTintaBranding(GitHubReleaseInfo release) {
+    final titleLower = release.title.toLowerCase();
+    final notesLower = release.releaseNotes.toLowerCase();
+    final apkLower = (release.apkDownloadUrl ?? '').toLowerCase();
+    return titleLower.contains('tinta napl') ||
+        notesLower.contains('tinta napl') ||
+        apkLower.contains('tinta-naplo') ||
+        apkLower.contains('tinta_naplo') ||
+        apkLower.contains('tinta');
+  }
+
   /// Returns `true` if [remoteTag] represents a strictly newer semantic version
   /// than [currentVersion].
-  static bool isRemoteVersionNewer(String currentVersion, String remoteTag) {
+  ///
+  /// After the v1.0.0 rebrand to Tinta Napló, legacy pre-rebrand `v1.1.x` and
+  /// `v1.2.x` releases (or unbranded `reKRETA-*.apk` releases) are ignored so
+  /// `v1.0.0` users are not prompted to install legacy pre-rebrand builds.
+  static bool isRemoteVersionNewer(
+    String currentVersion,
+    String remoteTag, {
+    GitHubReleaseInfo? release,
+  }) {
     final cleanCurrent = _stripPrefix(currentVersion);
     final cleanRemote = _stripPrefix(remoteTag);
     if (cleanRemote.isEmpty || cleanRemote == cleanCurrent) {
@@ -155,6 +180,33 @@ class GitHubUpdaterService {
 
     final curParts = _parseNumericParts(cleanCurrent);
     final remParts = _parseNumericParts(cleanRemote);
+    final curMajor = curParts.isNotEmpty ? curParts[0] : 0;
+    final curMinor = curParts.length > 1 ? curParts[1] : 0;
+    final remMajor = remParts.isNotEmpty ? remParts[0] : 0;
+    final remMinor = remParts.length > 1 ? remParts[1] : 0;
+
+    if (release != null) {
+      final hasTinta = _hasTintaBranding(release);
+      final titleLower = release.title.toLowerCase();
+      final apkLower = (release.apkDownloadUrl ?? '').toLowerCase();
+      final looksLegacyReKreta = !hasTinta &&
+          (apkLower.contains('rekreta-v') ||
+              (titleLower.contains('rekreta') &&
+                  !titleLower.contains('tinta')));
+      if (looksLegacyReKreta) {
+        return false;
+      }
+    }
+
+    final hasExplicitTintaRelease =
+        release != null && _hasTintaBranding(release);
+    if (!hasExplicitTintaRelease &&
+        curMajor == 1 &&
+        curMinor == 0 &&
+        remMajor == 1 &&
+        (remMinor == 1 || remMinor == 2)) {
+      return false;
+    }
 
     for (int i = 0; i < 3; i++) {
       final c = i < curParts.length ? curParts[i] : 0;
@@ -230,7 +282,7 @@ class GitHubUpdaterService {
             Uri.parse(latestReleaseApiUrl),
             headers: const {
               'Accept': 'application/vnd.github+json',
-              'User-Agent': 'reKRETA-Android-Updater',
+              'User-Agent': 'TintaNaplo-Android-Updater',
             },
           )
           .timeout(const Duration(seconds: 12));
@@ -242,7 +294,11 @@ class GitHubUpdaterService {
             jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
         final release = GitHubReleaseInfo.fromJson(decoded);
 
-        if (isRemoteVersionNewer(currentVersion, release.tagName)) {
+        if (isRemoteVersionNewer(
+          currentVersion,
+          release.tagName,
+          release: release,
+        )) {
           await showFrostedUpdateDialog(
             context,
             release: release,
@@ -313,18 +369,19 @@ class GitHubUpdaterService {
             animation: curved,
             builder: (context, child) {
               final t = curved.value.clamp(0.0, 1.0);
-              final sigma = 4.5 * t;
               final scale = 0.92 + (0.08 * t);
+              final barrierBase = resolveSoftBlurBarrierColor(
+                context,
+                solidDarkAlpha: 0.56,
+                solidLightAlpha: 0.40,
+              );
               return ColoredBox(
-                color: const Color(0xFF121212).withValues(alpha: 0.82 * t),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-                  child: Opacity(
-                    opacity: t,
-                    child: Transform.scale(
-                      scale: scale,
-                      child: child,
-                    ),
+                color: barrierBase.withValues(alpha: barrierBase.a * t),
+                child: Opacity(
+                  opacity: t,
+                  child: Transform.scale(
+                    scale: scale,
+                    child: child,
                   ),
                 ),
               );
@@ -379,7 +436,7 @@ class _FrostedUpdateDialogContentState
     try {
       final client = HttpClient();
       final request = await client.getUrl(Uri.parse(apkUrl));
-      request.headers.set('User-Agent', 'reKRETA-Android-Updater');
+      request.headers.set('User-Agent', 'TintaNaplo-Android-Updater');
       final response = await request.close();
       if (response.statusCode != 200) {
         client.close();
@@ -446,25 +503,44 @@ class _FrostedUpdateDialogContentState
       _downloadProgress = null;
       _statusMessage = null;
     });
-    final openBrowser = await showDialog<bool>(
+    final openBrowser = await showSoftBlurDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Frissítés sikertelen'),
-        content: Text(
-          '$message\n\nEngedélyezd az ismeretlen forrásból származó '
-          'alkalmazások telepítését, vagy töltsd le az APK-t böngészővel.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Bezár'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Letöltés böngészőben'),
-          ),
-        ],
-      ),
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Frissítés sikertelen',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '$message\n\nEngedélyezd az ismeretlen forrásból származó '
+              'alkalmazások telepítését, vagy töltsd le az APK-t böngészővel.',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Bezár'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Letöltés böngészőben'),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
     );
     _errorShown = false;
     if (openBrowser == true) {
@@ -487,9 +563,10 @@ class _FrostedUpdateDialogContentState
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final isSoftBlur = resolveSoftBlurEnabled();
     final cardBg = isDark
-        ? const Color(0xFF141418).withValues(alpha: 0.90)
-        : Colors.white.withValues(alpha: 0.92);
+        ? const Color(0xFF141418).withValues(alpha: 0.96)
+        : Colors.white.withValues(alpha: 0.97);
 
     return SafeArea(
       child: Center(
@@ -499,16 +576,23 @@ class _FrostedUpdateDialogContentState
             constraints: const BoxConstraints(maxWidth: 440),
             child: Material(
               color: Colors.transparent,
-              child: Container(
+              child: LiquidGlassSurface(
                 padding: const EdgeInsets.all(22),
-                decoration: BoxDecoration(
-                  color: cardBg,
-                  borderRadius: OledTheme.largeRadius,
-                  border: Border.all(
-                    color: scheme.primary.withValues(alpha: 0.6),
-                    width: 1.5,
+                borderRadius: OledTheme.largeRadius,
+                solidColor: cardBg,
+                border: isSoftBlur
+                    ? null
+                    : Border.all(
+                        color: scheme.primary.withValues(alpha: 0.6),
+                        width: 1.5,
+                      ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.42),
+                    blurRadius: 28,
+                    offset: const Offset(0, 12),
                   ),
-                ),
+                ],
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,

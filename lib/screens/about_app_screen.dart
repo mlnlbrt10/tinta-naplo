@@ -10,9 +10,9 @@ import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 
 /// Dedicated "Az alkalmazásról" (About App / Rendszer & Névjegy) screen with:
-/// - App icon (`AppBrandIconBadge`), name ('reKRETA'), semantic version ('v1.2.6'),
+/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v1.0.0'),
 ///   and developer credits.
-/// - Direct link to `https://github.com/mlnlbrt10/reKRETA`.
+/// - Direct link to `https://github.com/mlnlbrt10/tinta-naplo`.
 /// - Manual "Frissítések keresése" button (GitHub Releases OTA updater).
 /// - 5-tap secret Easter egg on the version text to unlock "Fejlesztői beállítások"
 ///   with "UwU mód" and "Tsundere mód" toggles.
@@ -141,24 +141,28 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(uwu('Az alkalmazásról')),
+    return AdaptiveBackgroundScaffold(
+      prefs: _currentPrefs,
+      appBar: buildAdaptiveTransparentAppBar(
+        context,
+        title: uwu('Az alkalmazásról'),
       ),
-      body: ChristmasAndBackgroundOverlay(
-        prefs: _currentPrefs,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 36),
-          children: [
-            _buildHeroIdentityCard(theme, scheme).staggeredEntrance(0),
-            const SizedBox(height: 16),
-            _buildUpdateAndLinksCard(theme, scheme).staggeredEntrance(1),
-            if (_currentPrefs.developerModeUnlocked) ...[
-              const SizedBox(height: 16),
-              _buildDeveloperOptionsCard(theme, scheme).staggeredEntrance(2),
-            ],
-          ],
+      body: ListView(
+        padding: EdgeInsets.fromLTRB(
+          16,
+          adaptiveAppBarTopPadding(context),
+          16,
+          36,
         ),
+        children: [
+          _buildHeroIdentityCard(theme, scheme).staggeredEntrance(0),
+          const SizedBox(height: 16),
+          _buildUpdateAndLinksCard(theme, scheme).staggeredEntrance(1),
+          if (_currentPrefs.developerModeUnlocked) ...[
+            const SizedBox(height: 16),
+            _buildDeveloperOptionsCard(theme, scheme).staggeredEntrance(2),
+          ],
+        ],
       ),
     );
   }
@@ -185,7 +189,7 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            _currentPrefs.uwuModeEnabled ? 'weKWETA uwu' : 'reKRETA',
+            _currentPrefs.uwuModeEnabled ? 'Tinta Nyapló uwu' : 'Tinta Napló',
             style: theme.textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.w900,
               color: scheme.onSurface,
@@ -482,16 +486,16 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
                 context,
                 currentVersion: _version,
                 release: const GitHubReleaseInfo(
-                  tagName: 'v1.2.6',
-                  title: 'reKRETA v1.2.6 — OTA Frissítő Előnézet',
+                  tagName: 'v1.0.0',
+                  title: 'Tinta Napló v1.0.0 — OTA Frissítő Előnézet',
                   releaseNotes:
                       '• 120Hz-es fizikai animációk és Hero átmenetek\n'
                       '• Szellemjegy Számoló, Ösztöndíj Kalkulátor és egyedi kerekítési határok\n'
                       '• Titkos UwU mód és Tsundere mód :3\n'
-                      '• Közvetlen GitHub Releases APK letöltés és telepítés (reKRETA-v1.2.6.apk)',
+                      '• Közvetlen GitHub Releases APK letöltés és telepítés (Tinta-Naplo-v1.0.0.apk)',
                   htmlUrl: GitHubUpdaterService.repoUrl,
                   apkDownloadUrl:
-                      'https://github.com/mlnlbrt10/reKRETA/releases/latest/download/reKRETA-v1.2.6.apk',
+                      '${GitHubUpdaterService.repoUrl}/releases/latest/download/Tinta-Naplo-v1.0.0.apk',
                 ),
               );
             },

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,10 +14,12 @@ import '../utils/greeting_utils.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
+import '../widgets/edge_fade_horizontal_scroll.dart';
 import '../widgets/expandable_profile_card.dart';
 import '../widgets/frosted_inspection_modal.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/menetrend_hero_card.dart';
+import '../widgets/skeleton_shimmer.dart';
 import 'grades_screen.dart';
 import 'more_screen.dart';
 import 'timetable_screen.dart';
@@ -199,23 +200,26 @@ class NextLessonStatus {
   }
 }
 
-class _ActivityItem {
+class HomeActivityItem {
   final DateTime sortDate;
   final Grade? grade;
   final Homework? homework;
   final Test? test;
 
-  _ActivityItem.grade(Grade this.grade)
+  HomeActivityItem.grade(Grade this.grade)
       : sortDate = grade.recordedAt,
         homework = null,
         test = null;
 
-  _ActivityItem.homework(Homework this.homework)
-      : sortDate = homework.creationDate,
+  /// Homeworks are grouped and sorted on Főoldal strictly by their deadline
+  /// (`HataridoDatuma` -> `dueDate`), so upcoming deadlines appear at the very
+  /// top above "Ma", nearest deadline first.
+  HomeActivityItem.homework(Homework this.homework)
+      : sortDate = homework.dueDate,
         grade = null,
         test = null;
 
-  _ActivityItem.test(Test this.test)
+  HomeActivityItem.test(Test this.test)
       : sortDate = test.date,
         grade = null,
         homework = null;
@@ -238,6 +242,57 @@ class _ActivityItem {
     if (homework != null) return 'hw-${homework!.uid}';
     return 't-${test!.uid}';
   }
+}
+
+/// Groups Főoldal feed items into calendar day buckets relative to [today].
+///
+/// Future-dated sections (upcoming exams & future homework deadlines) are
+/// placed first above "Ma" ordered nearest-date-first; "Ma" and past dates
+/// follow below in reverse chronological order.
+List<({DateTime day, List<HomeActivityItem> items})> groupHomeActivityItemsByDay(
+  List<HomeActivityItem> items,
+  DateTime today,
+) {
+  final normalizedToday = DateUtils.dateOnly(today);
+  final byDay = <DateTime, List<HomeActivityItem>>{};
+  for (final item in items) {
+    final day = DateUtils.dateOnly(item.sortDate.toLocal());
+    byDay.putIfAbsent(day, () => <HomeActivityItem>[]).add(item);
+  }
+
+  final futureDays = <DateTime>[];
+  final currentAndPastDays = <DateTime>[];
+  for (final day in byDay.keys) {
+    if (day.isAfter(normalizedToday)) {
+      futureDays.add(day);
+    } else {
+      currentAndPastDays.add(day);
+    }
+  }
+
+  futureDays.sort((a, b) => a.compareTo(b));
+  currentAndPastDays.sort((a, b) => b.compareTo(a));
+
+  final groups = <({DateTime day, List<HomeActivityItem> items})>[];
+  for (final day in futureDays) {
+    final dayItems = byDay[day]!
+      ..sort((a, b) {
+        final aLesson = a.test?.lessonNumber;
+        final bLesson = b.test?.lessonNumber;
+        if (aLesson != null && bLesson != null) {
+          final cmp = aLesson.compareTo(bLesson);
+          if (cmp != 0) return cmp;
+        }
+        return a.sortDate.compareTo(b.sortDate);
+      });
+    groups.add((day: day, items: dayItems));
+  }
+  for (final day in currentAndPastDays) {
+    final dayItems = byDay[day]!
+      ..sort((a, b) => b.sortDate.compareTo(a.sortDate));
+    groups.add((day: day, items: dayItems));
+  }
+  return groups;
 }
 
 class _KeepAliveTabWrapper extends StatefulWidget {
@@ -291,7 +346,7 @@ class _AnimatedFeedCollapse extends StatelessWidget {
   }
 }
 
-/// Main authenticated shell for reKRETA with:
+/// Main authenticated shell for Tinta Napló with:
 /// 1. Dynamic time-based Hungarian greeting + sleek top-right `CircleAvatar`
 ///    action in the AppBar (opening the streamlined Profile & Settings sheet).
 /// 2. Android predictive back / `PopScope` handling: pressing back on Jegyek,
@@ -300,6 +355,7 @@ class _AnimatedFeedCollapse extends StatelessWidget {
 /// 4. Minimalist Icon-Only Floating Dock with fluid sliding pill indicator.
 class HomeScreen extends StatefulWidget {
   final StoredSession initialSession;
+  final DashboardData? initialCachedData;
   final KretaClient kretaClient;
   final UserProfilePrefs prefs;
   final ValueChanged<UserProfilePrefs> onPrefsChanged;
@@ -308,6 +364,7 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.initialSession,
+    this.initialCachedData,
     required this.kretaClient,
     required this.prefs,
     required this.onPrefsChanged,
@@ -322,6 +379,10 @@ class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
   late final PageController _tabPageController =
       PageController(initialPage: _selectedIndex);
+  final ScrollController _chipBarController = ScrollController(
+    initialScrollOffset: 0.0,
+    keepScrollOffset: false,
+  );
   final int _tabSwitchEpoch = 0;
   bool _homeInitialEntrancePlayed = false;
   bool _homeEntranceActive = false;
@@ -340,7 +401,9 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _session = widget.initialSession;
-    _loadDashboard();
+    _data = widget.initialCachedData;
+    _isLoading = _data == null;
+    _loadDashboard(silentIfCached: true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         GitHubUpdaterService.checkForUpdates(context, manual: false);
@@ -398,6 +461,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _countdownTimer?.cancel();
     _tabPageController.dispose();
+    _chipBarController.dispose();
     super.dispose();
   }
 
@@ -435,7 +499,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _loadDashboard() async {
+  Future<void> _loadDashboard({bool silentIfCached = false}) async {
+    if (_data == null) {
+      final cached = await widget.kretaClient.loadCachedDashboard(_session);
+      if (mounted && cached != null && _data == null) {
+        setState(() {
+          _data = cached;
+          _isLoading = false;
+          _error = null;
+        });
+      }
+    }
+
     if (mounted && _data == null) {
       setState(() {
         _isLoading = true;
@@ -450,6 +525,7 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _session = result.activeSession;
         _data = result;
+        _messagesOverride = null;
         _isLoading = false;
         _error = null;
         if (playInitialEntrance) {
@@ -473,7 +549,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _error = e.toString();
+        if (!silentIfCached || _data == null) {
+          _error = e.toString();
+        }
       });
     }
   }
@@ -708,9 +786,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
-          body: _isLoading && _data == null
-              ? const Center(child: CircularProgressIndicator())
-              : _buildKeepAliveTabStack(theme, scheme, student),
+          body: _buildKeepAliveTabStack(theme, scheme, student),
           bottomNavigationBar: hideChromeForLandscapeTimetable
               ? null
               : _buildMinimalistFloatingDock(theme, scheme),
@@ -782,19 +858,13 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// Minimalist Icon-Only Floating Dock with ultra-light liquid/frosted glass
-  /// (`BackdropFilter` sigma 16, surface `Colors.white.withValues(alpha: 0.08)`
-  /// in dark mode and `0.55` in light mode, crisp `1px` border
-  /// `Colors.white.withValues(alpha: 0.20)`), explicit high-contrast icon
-  /// colors, 220ms `Curves.easeOutCubic` sliding pill indicator, and 4 primary
-  /// tabs: Főoldal, Jegyek, Órarend, Hiányzások.
+  /// Floating bottom dock with frosted liquid glass (`BackdropFilter` blur +
+  /// translucent tint + 1px specular border) when Settings Soft Blur is ON or
+  /// elevated solid surface when OFF, paired with underdamped liquid spring
+  /// bubble physics across the 4 primary tabs.
   Widget _buildMinimalistFloatingDock(ThemeData theme, ColorScheme scheme) {
     final isDark = theme.brightness == Brightness.dark ||
         widget.prefs.themeStyle != AppThemeStyle.light;
-    final dockColor = isDark
-        ? Colors.white.withValues(alpha: 0.08)
-        : Colors.white.withValues(alpha: 0.55);
-    final borderColor = Colors.white.withValues(alpha: 0.20);
     final activeIconColor = isDark ? Colors.white : const Color(0xFF0F172A);
     final inactiveIconColor = isDark
         ? Colors.white.withValues(alpha: 0.72)
@@ -831,115 +901,71 @@ class _HomeScreenState extends State<HomeScreen> {
       top: false,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
-        child: RepaintBoundary(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(32),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-              child: Container(
-                height: 62,
-                decoration: BoxDecoration(
-                  color: dockColor,
-                  borderRadius: BorderRadius.circular(32),
-                  border: Border.all(
-                    color: borderColor,
-                    width: 1.0,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color:
-                          Colors.black.withValues(alpha: isDark ? 0.22 : 0.08),
-                      blurRadius: 18,
-                      offset: const Offset(0, 5),
-                    ),
-                  ],
-                ),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final totalWidth = constraints.maxWidth;
-                    final slotWidth = totalWidth / tabs.length;
-                    const pillWidth = 56.0;
-                    const pillHeight = 42.0;
-                    final pillLeft = (_selectedIndex * slotWidth) +
-                        ((slotWidth - pillWidth) / 2);
-
-                    return Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        AnimatedPositioned(
-                          duration: const Duration(milliseconds: 220),
-                          curve: Curves.easeOutCubic,
-                          left: pillLeft,
-                          top: (62 - pillHeight) / 2,
-                          width: pillWidth,
-                          height: pillHeight,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: scheme.primary.withValues(
-                                alpha: isDark ? 0.28 : 0.20,
-                              ),
-                              borderRadius: BorderRadius.circular(22),
-                              border: Border.all(
-                                color: scheme.primary.withValues(
-                                  alpha: isDark ? 0.58 : 0.45,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        Row(
-                          children: List.generate(tabs.length, (idx) {
-                            final item = tabs[idx];
-                            final isSelected = _selectedIndex == idx;
-                            final iconColor = isSelected
-                                ? activeIconColor
-                                : inactiveIconColor;
-                            return Expanded(
-                              child: Semantics(
-                                label: item.tooltip,
-                                selected: isSelected,
-                                button: true,
-                                child: Tooltip(
-                                  message: item.tooltip,
-                                  child: TactileBounce(
-                                    onTap: () => _selectBottomTab(idx),
-                                    child: SizedBox(
-                                      height: 62,
-                                      child: Center(
-                                        child: IconTheme(
-                                          data: IconThemeData(
-                                            color: iconColor,
-                                            size: 25,
-                                          ),
-                                          child: AnimatedSwitcher(
-                                            duration:
-                                                const Duration(milliseconds: 180),
-                                            child: Icon(
-                                              isSelected
-                                                  ? item.selectedIcon
-                                                  : item.icon,
-                                              key: ValueKey<String>(
-                                                'dock-$idx-$isSelected-$isDark',
-                                              ),
-                                              size: 25,
-                                              color: iconColor,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            );
-                          }),
-                        ),
-                      ],
-                    );
-                  },
+        child: LiquidGlassSurface(
+          prefs: widget.prefs,
+          isDockStyle: true,
+          borderRadius: BorderRadius.circular(32),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.22 : 0.08),
+              blurRadius: 18,
+              offset: const Offset(0, 5),
+            ),
+          ],
+          child: LiquidSpringPillTrack(
+            itemCount: tabs.length,
+            selectedIndex: _selectedIndex,
+            height: 62,
+            pillWidth: 56.0,
+            pillHeight: 42.0,
+            pillBuilder: (context, _) => Container(
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: isDark ? 0.28 : 0.20),
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(
+                  color: scheme.primary.withValues(alpha: isDark ? 0.58 : 0.45),
                 ),
               ),
             ),
+            itemBuilder: (context, idx, activeProgress) {
+              final item = tabs[idx];
+              final isSelected = _selectedIndex == idx;
+              final iconColor = Color.lerp(
+                inactiveIconColor,
+                activeIconColor,
+                activeProgress,
+              )!;
+              return Semantics(
+                label: item.tooltip,
+                selected: isSelected,
+                button: true,
+                child: Tooltip(
+                  message: item.tooltip,
+                  child: TactileBounce(
+                    onTap: () => _selectBottomTab(idx),
+                    child: SizedBox(
+                      height: 62,
+                      child: Center(
+                        child: IconTheme(
+                          data: IconThemeData(color: iconColor, size: 25),
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 180),
+                            child: Icon(
+                              isSelected ? item.selectedIcon : item.icon,
+                              key: ValueKey<String>(
+                                'dock-$idx-$isSelected-$isDark',
+                              ),
+                              size: 25,
+                              color: iconColor,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
         ),
       ),
@@ -992,83 +1018,54 @@ class _HomeScreenState extends State<HomeScreen> {
     return '$month ${day.day}.';
   }
 
-  List<({DateTime day, List<_ActivityItem> items})> _groupFeedItemsByDay(
-    List<_ActivityItem> items,
+  List<({DateTime day, List<HomeActivityItem> items})> _groupFeedItemsByDay(
+    List<HomeActivityItem> items,
     DateTime today,
-  ) {
-    final byDay = <DateTime, List<_ActivityItem>>{};
-    for (final item in items) {
-      final day = DateUtils.dateOnly(item.sortDate.toLocal());
-      byDay.putIfAbsent(day, () => <_ActivityItem>[]).add(item);
-    }
-
-    final futureDays = <DateTime>[];
-    final currentAndPastDays = <DateTime>[];
-    for (final day in byDay.keys) {
-      if (day.isAfter(today)) {
-        futureDays.add(day);
-      } else {
-        currentAndPastDays.add(day);
-      }
-    }
-
-    // Nearest upcoming exam date first at the very top of Főoldal (above "Ma")
-    futureDays.sort((a, b) => a.compareTo(b));
-    // Today ("Ma") and past dates sorted reverse-chronologically below
-    currentAndPastDays.sort((a, b) => b.compareTo(a));
-
-    final groups = <({DateTime day, List<_ActivityItem> items})>[];
-    for (final day in futureDays) {
-      final dayItems = byDay[day]!
-        ..sort((a, b) {
-          final aLesson = a.test?.lessonNumber ?? 99;
-          final bLesson = b.test?.lessonNumber ?? 99;
-          final cmp = aLesson.compareTo(bLesson);
-          return cmp != 0 ? cmp : a.sortDate.compareTo(b.sortDate);
-        });
-      groups.add((day: day, items: dayItems));
-    }
-    for (final day in currentAndPastDays) {
-      final dayItems = byDay[day]!
-        ..sort((a, b) => b.sortDate.compareTo(a.sortDate));
-      groups.add((day: day, items: dayItems));
-    }
-    return groups;
-  }
+  ) =>
+      groupHomeActivityItemsByDay(items, today);
 
   Widget _buildHomeTab(ThemeData theme, ColorScheme scheme) {
-    final lessons = _data?.todaysLessons ?? const <Lesson>[];
-    final allFeedItems = _buildAllFeedItems();
-    final today = DateUtils.dateOnly(DateTime.now());
-    final allDayGroups = _groupFeedItemsByDay(allFeedItems, today);
-    final hasAnyMatching =
-        allFeedItems.any((item) => item.matchesFilter(_feedFilter));
+    final Widget tabChild;
+    if (_isLoading && _data == null) {
+      tabChild = HomeSkeletonFeed(
+        key: const ValueKey<String>('home-skeleton-feed'),
+        prefs: widget.prefs,
+      );
+    } else {
+      final lessons = _data?.todaysLessons ?? const <Lesson>[];
+      final allFeedItems = _buildAllFeedItems();
+      final today = DateUtils.dateOnly(DateTime.now());
+      final allDayGroups = _groupFeedItemsByDay(allFeedItems, today);
+      final hasAnyMatching =
+          allFeedItems.any((item) => item.matchesFilter(_feedFilter));
 
-    return RefreshIndicator(
-      displacement: 44,
-      edgeOffset: 8,
-      strokeWidth: 2.6,
-      onRefresh: _loadDashboard,
-      child: ListView(
+      tabChild = ListView(
+        key: const ValueKey<String>('home-live-feed'),
         physics: const BouncingScrollPhysics(
           parent: AlwaysScrollableScrollPhysics(),
         ),
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 116),
+        padding: const EdgeInsets.fromLTRB(0, 12, 0, 116),
         children: [
           if (_error != null) ...[
-            _buildErrorCard(theme, _error!),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _buildErrorCard(theme, _error!),
+            ),
             const SizedBox(height: 16),
           ],
           if (widget.prefs.transitCardEnabled &&
               widget.prefs.transitConfigured &&
               _commuteEval != null) ...[
             _maybeHomeEntrance(
-              MenetrendHomeCard(
-                evaluation: _commuteEval,
-                isLoading: _commuteLoading,
-                prefs: widget.prefs,
-                onOpenSettings: _openProfileAndSettingsModal,
-                onRetry: _refreshCommute,
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: MenetrendHomeCard(
+                  evaluation: _commuteEval,
+                  isLoading: _commuteLoading,
+                  prefs: widget.prefs,
+                  onOpenSettings: _openProfileAndSettingsModal,
+                  onRetry: _refreshCommute,
+                ),
               ),
               0,
               key: const ValueKey('home-transit'),
@@ -1076,7 +1073,10 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 16),
           ],
           _maybeHomeEntrance(
-            _buildNextLessonHeroCard(theme, scheme, lessons),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _buildNextLessonHeroCard(theme, scheme, lessons),
+            ),
             1,
             key: const ValueKey('home-next'),
           ),
@@ -1087,34 +1087,57 @@ class _HomeScreenState extends State<HomeScreen> {
             key: const ValueKey('home-chips'),
           ),
           const SizedBox(height: 18),
-          Column(
-            key: const ValueKey<String>('feed-reflow-list'),
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _AnimatedFeedCollapse(
-                key: const ValueKey<String>('feed-empty-collapse'),
-                visible: !hasAnyMatching,
-                child: _buildEmptyStateCard(
-                  theme,
-                  scheme,
-                  icon: Icons.inbox_rounded,
-                  message: uwu(
-                    'Nincs megjeleníthető elem ebben a kategóriában.',
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              key: const ValueKey<String>('feed-reflow-list'),
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _AnimatedFeedCollapse(
+                  key: const ValueKey<String>('feed-empty-collapse'),
+                  visible: !hasAnyMatching,
+                  child: _buildEmptyStateCard(
+                    theme,
+                    scheme,
+                    icon: Icons.inbox_rounded,
+                    message: uwu(
+                      'Nincs megjeleníthető elem ebben a kategóriában.',
+                    ),
                   ),
                 ),
-              ),
-              for (int gIdx = 0; gIdx < allDayGroups.length; gIdx++)
-                _buildDayGroupSection(
-                  theme,
-                  scheme,
-                  allDayGroups[gIdx].day,
-                  allDayGroups[gIdx].items,
-                  today,
-                  gIdx,
-                ),
-            ],
+                for (int gIdx = 0; gIdx < allDayGroups.length; gIdx++)
+                  _buildDayGroupSection(
+                    theme,
+                    scheme,
+                    allDayGroups[gIdx].day,
+                    allDayGroups[gIdx].items,
+                    today,
+                    gIdx,
+                  ),
+              ],
+            ),
           ),
         ],
+      );
+    }
+
+    return RefreshIndicator(
+      displacement: 44,
+      edgeOffset: 8,
+      strokeWidth: 2.6,
+      onRefresh: _loadDashboard,
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 320),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeOutCubic,
+        layoutBuilder: (currentChild, previousChildren) => Stack(
+          alignment: Alignment.topCenter,
+          children: <Widget>[
+            ...previousChildren,
+            if (currentChild != null) currentChild,
+          ],
+        ),
+        child: tabChild,
       ),
     );
   }
@@ -1123,7 +1146,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ThemeData theme,
     ColorScheme scheme,
     DateTime day,
-    List<_ActivityItem> items,
+    List<HomeActivityItem> items,
     DateTime today,
     int groupIndex,
   ) {
@@ -1760,77 +1783,73 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildFilterChipBar(ThemeData theme, ColorScheme scheme) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: ActivityFeedFilter.values.map((filter) {
-          final selected = _feedFilter == filter;
-          return Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: TactileBounce(
-              onTap: () => setState(() => _feedFilter = filter),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 9,
-                ),
-                decoration: BoxDecoration(
-                  color: selected ? scheme.primary : theme.cardTheme.color,
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(
-                    color: selected ? scheme.primary : theme.dividerColor,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      filter.icon,
-                      size: 16,
-                      color: selected
-                          ? scheme.onPrimary
-                          : scheme.onSurface.withValues(alpha: 0.72),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      uwu(filter.label),
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight:
-                            selected ? FontWeight.w800 : FontWeight.w600,
-                        color: selected
-                            ? scheme.onPrimary
-                            : scheme.onSurface.withValues(alpha: 0.85),
-                      ),
-                    ),
-                  ],
-                ),
+    return EdgeFadeHorizontalScroll(
+      controller: _chipBarController,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      spacing: 8,
+      children: ActivityFeedFilter.values.map((filter) {
+        final selected = _feedFilter == filter;
+        return TactileBounce(
+          onTap: () => setState(() => _feedFilter = filter),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            padding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 9,
+            ),
+            decoration: BoxDecoration(
+              color: selected ? scheme.primary : theme.cardTheme.color,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: selected ? scheme.primary : theme.dividerColor,
               ),
             ),
-          );
-        }).toList(),
-      ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  filter.icon,
+                  size: 16,
+                  color: selected
+                      ? scheme.onPrimary
+                      : scheme.onSurface.withValues(alpha: 0.72),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  uwu(filter.label),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                    color: selected
+                        ? scheme.onPrimary
+                        : scheme.onSurface.withValues(alpha: 0.85),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 
-  List<_ActivityItem> _buildAllFeedItems() {
+  List<HomeActivityItem> _buildAllFeedItems() {
     final grades = _data?.allGrades ?? const <Grade>[];
     final homeworks = _data?.homeworks ?? const <Homework>[];
     final tests = _data?.tests ?? const <Test>[];
 
-    return <_ActivityItem>[
-      ...grades.map(_ActivityItem.grade),
-      ...homeworks.map(_ActivityItem.homework),
-      ...tests.map(_ActivityItem.test),
+    return <HomeActivityItem>[
+      ...grades.map(HomeActivityItem.grade),
+      ...homeworks.map(HomeActivityItem.homework),
+      ...tests.map(HomeActivityItem.test),
     ];
   }
 
   Widget _buildActivityFeedTile(
     ThemeData theme,
     ColorScheme scheme,
-    _ActivityItem item,
+    HomeActivityItem item,
   ) {
     if (item.grade != null) {
       return _buildGradeFeedCard(theme, scheme, item.grade!);
@@ -2032,6 +2051,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                           ),
+                          const SizedBox(width: 8),
                           Text(
                             'Határidő: ${_formatFeedCardDate(homework.dueDate)}',
                             style: theme.textTheme.labelSmall?.copyWith(

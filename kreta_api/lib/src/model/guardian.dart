@@ -24,6 +24,15 @@ class Guardian extends NameUid {
   }
 
   @override
+  Map<String, dynamic> toJson() => {
+        'Uid': uid,
+        'Nev': name,
+        'EmailCim': email,
+        'IsTorvenyesKepviselo': isLegalRepresentative,
+        'Telefonszam': phoneNumber,
+      };
+
+  @override
   String toString() {
     return 'Guardian('
         'email: "$email", '

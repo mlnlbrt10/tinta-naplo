@@ -64,6 +64,20 @@ class Test extends UidObj {
   }
 
   @override
+  Map<String, dynamic> toJson() => {
+        'Uid': uid,
+        'Datum': date.toUtc().toIso8601String(),
+        'BejelentesDatuma': reportDate.toUtc().toIso8601String(),
+        'RogzitoTanarNeve': teacherName,
+        'OrarendiOraOraszama': lessonNumber,
+        'Tantargy': subject.toJson(),
+        'TantargyNeve': subjectName,
+        'Temaja': theme,
+        'Modja': method.toJson(),
+        'OsztalyCsoport': classGroup.toJson(),
+      };
+
+  @override
   String toString() {
     return 'Test('
         'uid: "$uid", '

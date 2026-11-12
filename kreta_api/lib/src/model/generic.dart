@@ -49,6 +49,8 @@ class UidObj extends Identifiable {
 
   UidObj({required this.uid});
 
+  Map<String, dynamic> toJson() => {'Uid': uid};
+
   factory UidObj.fromJson(Map<String, dynamic> json) {
     return UidObj(uid: json['Uid']);
   }

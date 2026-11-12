@@ -219,16 +219,27 @@ void main() {
   });
 
   test('GitHubUpdaterService compares semantic versions and build tags accurately', () {
-    expect(GitHubUpdaterService.fallbackAppVersion, '1.2.6');
-    expect(GitHubUpdaterService.fallbackBuildNumber, '9');
-    expect(GitHubUpdaterService.defaultApkFileName, 'reKRETA-v1.2.6.apk');
-    expect(GitHubUpdaterService.apkFileNameForTag('v1.2.6'), 'reKRETA-v1.2.6.apk');
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.2.6', 'v1.2.7'),
+      GitHubUpdaterService.repoUrl,
+      'https://github.com/mlnlbrt10/tinta-naplo',
+    );
+    expect(
+      GitHubUpdaterService.latestReleaseApiUrl,
+      'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest',
+    );
+    expect(GitHubUpdaterService.fallbackAppVersion, '1.0.0');
+    expect(GitHubUpdaterService.fallbackBuildNumber, '11');
+    expect(GitHubUpdaterService.defaultApkFileName, 'Tinta-Naplo-v1.0.0.apk');
+    expect(
+      GitHubUpdaterService.apkFileNameForTag('v1.0.0'),
+      'Tinta-Naplo-v1.0.0.apk',
+    );
+    expect(
+      GitHubUpdaterService.isRemoteVersionNewer('1.0.0', 'v1.0.1'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.2.6', 'v1.2.6'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.0.0', 'v1.0.0'),
       isFalse,
     );
     expect(
@@ -236,16 +247,83 @@ void main() {
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.0.0-alpha', 'v1.2.6-alpha'),
-      isTrue,
-    );
-    expect(
       GitHubUpdaterService.isRemoteVersionNewer('1.0.0-alpha', 'v1.0.0-alpha'),
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.2.6', 'v1.1.9'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.0.0', 'v0.9.9'),
       isFalse,
+    );
+    // Legacy pre-rebrand v1.2.x / v1.1.x tags must not prompt updates on v1.0.0.
+    expect(
+      GitHubUpdaterService.isRemoteVersionNewer('1.0.0', 'v1.2.7'),
+      isFalse,
+    );
+    expect(
+      GitHubUpdaterService.isRemoteVersionNewer('1.0.0', 'v1.1.9'),
+      isFalse,
+    );
+    const legacyRelease = GitHubReleaseInfo(
+      tagName: 'v1.2.7',
+      title: 'reKRETA v1.2.7',
+      releaseNotes: 'Legacy release',
+      htmlUrl: GitHubUpdaterService.repoUrl,
+      apkDownloadUrl:
+          'https://github.com/mlnlbrt10/reKRETA/releases/download/v1.2.7/reKRETA-v1.2.7.apk',
+    );
+    expect(
+      GitHubUpdaterService.isRemoteVersionNewer(
+        '1.0.0',
+        'v1.2.7',
+        release: legacyRelease,
+      ),
+      isFalse,
+    );
+    final brandedFutureRelease = GitHubReleaseInfo.fromJson({
+      'tag_name': 'v1.1.0',
+      'name': 'Tinta Napló v1.1.0',
+      'body': 'Újdonságok',
+      'html_url': 'https://github.com/mlnlbrt10/tinta-naplo/releases/tag/v1.1.0',
+      'assets': [
+        {
+          'name': 'app-release.apk',
+          'browser_download_url': 'https://example.com/app-release.apk',
+        },
+        {
+          'name': 'Tinta-Naplo-v1.1.0.apk',
+          'browser_download_url': 'https://example.com/Tinta-Naplo-v1.1.0.apk',
+        },
+      ],
+    });
+    expect(
+      brandedFutureRelease.apkDownloadUrl,
+      'https://example.com/Tinta-Naplo-v1.1.0.apk',
+    );
+    expect(
+      GitHubUpdaterService.isRemoteVersionNewer(
+        '1.0.0',
+        'v1.1.0',
+        release: brandedFutureRelease,
+      ),
+      isTrue,
+    );
+    final fallbackApkRelease = GitHubReleaseInfo.fromJson({
+      'tag_name': 'v1.0.1',
+      'name': 'Tinta Napló v1.0.1',
+      'assets': [
+        {
+          'name': 'custom-build.apk',
+          'browser_download_url': 'https://example.com/custom-build.apk',
+        },
+      ],
+    });
+    expect(
+      fallbackApkRelease.apkDownloadUrl,
+      'https://example.com/custom-build.apk',
+    );
+    expect(
+      fallbackApkRelease.htmlUrl,
+      'https://github.com/mlnlbrt10/tinta-naplo/releases',
     );
   });
 

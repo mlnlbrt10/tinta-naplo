@@ -109,7 +109,7 @@ class Grade extends UidObj {
       'SzovegesErtek': strValue,
       'SulySzazalekErteke': weightPercentage,
       'SzovegesErtekelesRovidNev': shortStrValue,
-      'OsztalyCsoport': classGroup,
+      'OsztalyCsoport': classGroup.toJson(),
       'SortIndex': sortIndex,
     };
   }

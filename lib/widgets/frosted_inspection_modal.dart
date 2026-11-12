@@ -7,11 +7,12 @@ import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
+import 'glass_card.dart';
 
-/// Displays a 120Hz frosted glass soft blur inspection modal that smoothly
-/// interpolates `BackdropFilter` sigma from 0 to 12 alongside a 0.92 -> 1.0
-/// scale-in (`Curves.easeOutCubic`), reverse-animating cleanly on dismiss
-/// and supporting [heroTag] boomerang geometry transitions.
+/// Displays a 120Hz frosted liquid glass inspection modal (when Settings
+/// Soft Blur is enabled, matching the floating bottom dock) or solid elevated
+/// inspection card (when OFF) with 0.92 -> 1.0 scale-in (`Curves.easeOutCubic`),
+/// clean reverse dismissal, and [heroTag] boomerang geometry transitions.
 Future<void> showFrostedModal({
   required BuildContext context,
   required String categoryLabel,
@@ -28,17 +29,24 @@ Future<void> showFrostedModal({
   Widget? extraBottomSection,
   String? tsundereNote,
   ModalCloseButtonMode? closeMode,
+  UserProfilePrefs? prefs,
 }) {
   HapticFeedback.lightImpact();
   final effectiveCloseMode =
       closeMode ?? UserProfilePrefs.activeModalCloseMode;
+  final isSoftBlur = resolveSoftBlurEnabled(prefs);
 
   return Navigator.of(context).push<void>(
     PageRouteBuilder<void>(
       opaque: false,
       barrierDismissible: true,
       barrierLabel: 'Bezárás',
-      barrierColor: Colors.black54,
+      barrierColor: resolveSoftBlurBarrierColor(
+        context,
+        prefs: prefs,
+        solidDarkAlpha: 0.54,
+        solidLightAlpha: 0.42,
+      ),
       transitionDuration: const Duration(milliseconds: 180),
       reverseTransitionDuration: const Duration(milliseconds: 160),
       pageBuilder: (dialogContext, animation, secondaryAnimation) {
@@ -46,8 +54,8 @@ Future<void> showFrostedModal({
         final scheme = theme.colorScheme;
         final isDark = theme.brightness == Brightness.dark;
         final cardBg = isDark
-            ? const Color(0xFF14181F).withValues(alpha: 0.94)
-            : Colors.white.withValues(alpha: 0.96);
+            ? const Color(0xFF14181F).withValues(alpha: 0.96)
+            : Colors.white.withValues(alpha: 0.97);
 
         final curved = CurvedAnimation(
           parent: animation,
@@ -127,23 +135,24 @@ Future<void> showFrostedModal({
                   onTap: () {}, // Prevent tap-through to barrier
                   child: Material(
                     color: Colors.transparent,
-                    child: Container(
+                    child: LiquidGlassSurface(
+                      prefs: prefs,
                       padding: const EdgeInsets.all(22),
-                      decoration: BoxDecoration(
-                        color: cardBg,
-                        borderRadius: OledTheme.largeRadius,
-                        border: Border.all(
-                          color: accentColor.withValues(alpha: 0.55),
-                          width: 1.4,
+                      borderRadius: OledTheme.largeRadius,
+                      solidColor: cardBg,
+                      border: isSoftBlur
+                          ? null
+                          : Border.all(
+                              color: accentColor.withValues(alpha: 0.55),
+                              width: 1.4,
+                            ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.45),
+                          blurRadius: 28,
+                          offset: const Offset(0, 12),
                         ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.45),
-                            blurRadius: 28,
-                            offset: const Offset(0, 12),
-                          ),
-                        ],
-                      ),
+                      ],
                       child: SingleChildScrollView(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -260,10 +269,14 @@ Future<void> showFrostedModal({
                               padding: const EdgeInsets.all(14),
                               decoration: BoxDecoration(
                                 color: scheme.surfaceContainerHighest
-                                    .withValues(alpha: 0.65),
+                                    .withValues(alpha: isSoftBlur ? 0.36 : 0.65),
                                 borderRadius: OledTheme.cardRadius,
                                 border: Border.all(
-                                  color: theme.dividerColor,
+                                  color: isSoftBlur
+                                      ? Colors.white.withValues(
+                                          alpha: isDark ? 0.14 : 0.38,
+                                        )
+                                      : theme.dividerColor,
                                 ),
                               ),
                               child: Column(
@@ -322,9 +335,15 @@ Future<void> showFrostedModal({
                                 padding: const EdgeInsets.all(14),
                                 decoration: BoxDecoration(
                                   color: scheme.surfaceContainerHighest
-                                      .withValues(alpha: 0.5),
+                                      .withValues(alpha: isSoftBlur ? 0.30 : 0.50),
                                   borderRadius: OledTheme.cardRadius,
-                                  border: Border.all(color: theme.dividerColor),
+                                  border: Border.all(
+                                    color: isSoftBlur
+                                        ? Colors.white.withValues(
+                                            alpha: isDark ? 0.14 : 0.38,
+                                          )
+                                        : theme.dividerColor,
+                                  ),
                                 ),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -454,6 +473,7 @@ Future<void> showGradeInspectionModal(
     heroTag: heroTag,
     tsundereNote: tsundereNote,
     closeMode: prefs?.modalCloseMode,
+    prefs: prefs,
     rows: [
       FrostedDetailRow(
         icon: Icons.school_rounded,
@@ -528,6 +548,7 @@ Future<void> showHomeworkInspectionModal(
     title: subjectDisplay,
     heroTag: heroTag,
     closeMode: prefs?.modalCloseMode,
+    prefs: prefs,
     tsundereNote:
         (prefs?.tsundereModeEnabled == true || UwuHelper.isTsundereEnabled)
             ? 'N-nem mintha érdekelne a házi feladatod, b-baka~!'
@@ -609,6 +630,7 @@ Future<void> showTestInspectionModal(
     badgeText: '${test.lessonNumber}.',
     heroTag: heroTag,
     closeMode: prefs?.modalCloseMode,
+    prefs: prefs,
     rows: [
       FrostedDetailRow(
         icon: Icons.school_rounded,
@@ -783,6 +805,7 @@ Future<void> showLessonInspectionModal(
     badgeText: lesson.lessonNumber != null ? '${lesson.lessonNumber}.' : '•',
     heroTag: heroTag ?? 'lesson_num_${lesson.uid}',
     closeMode: prefs?.modalCloseMode,
+    prefs: prefs,
     rows: [
       FrostedDetailRow(
         icon: Icons.access_time_filled_rounded,

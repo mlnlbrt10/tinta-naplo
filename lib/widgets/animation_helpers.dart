@@ -1,5 +1,250 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
+
+/// Underdamped liquid spring pill track (~400ms settling + velocity-driven
+/// horizontal stretch / vertical squish) shared by the floating bottom
+/// navigation bar and the Órarend weekday selector.
+class LiquidSpringPillTrack extends StatefulWidget {
+  final int itemCount;
+  final int selectedIndex;
+  final double height;
+  final double? pillWidth;
+  final double pillHeight;
+  final PageController? pageController;
+  final bool ignorePageController;
+  final Clip clipBehavior;
+  final BorderRadius? clipBorderRadius;
+  final Widget Function(BuildContext context, double velocity) pillBuilder;
+  final Widget Function(
+    BuildContext context,
+    int index,
+    double activeProgress,
+  ) itemBuilder;
+
+  const LiquidSpringPillTrack({
+    super.key,
+    required this.itemCount,
+    required this.selectedIndex,
+    required this.height,
+    this.pillWidth,
+    double? pillHeight,
+    this.pageController,
+    this.ignorePageController = false,
+    this.clipBehavior = Clip.none,
+    this.clipBorderRadius,
+    required this.pillBuilder,
+    required this.itemBuilder,
+  }) : pillHeight = pillHeight ?? height;
+
+  @override
+  State<LiquidSpringPillTrack> createState() => _LiquidSpringPillTrackState();
+}
+
+class _LiquidSpringPillTrackState extends State<LiquidSpringPillTrack>
+    with SingleTickerProviderStateMixin {
+  static const SpringDescription _liquidSpring = SpringDescription(
+    mass: 1.0,
+    stiffness: 255.0,
+    damping: 17.5,
+  );
+
+  late final AnimationController _pillAnim;
+  ScrollPosition? _observedPosition;
+  double? _lastPageSample;
+  int _lastSampleUs = 0;
+  double _dragVelocity = 0.0;
+  bool _isFollowingPage = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _pillAnim = AnimationController.unbounded(
+      vsync: this,
+      value: widget.selectedIndex.toDouble(),
+    );
+    widget.pageController?.addListener(_onPageControllerChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _attachScrollEndListener();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant LiquidSpringPillTrack oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.pageController != widget.pageController) {
+      oldWidget.pageController?.removeListener(_onPageControllerChanged);
+      _detachScrollEndListener();
+      widget.pageController?.addListener(_onPageControllerChanged);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _attachScrollEndListener();
+      });
+    }
+    if (oldWidget.selectedIndex != widget.selectedIndex) {
+      final pc = widget.pageController;
+      final isUserSwiping = !widget.ignorePageController &&
+          pc != null &&
+          pc.hasClients &&
+          pc.position.isScrollingNotifier.value;
+      if (!isUserSwiping) {
+        _launchSpringTo(widget.selectedIndex.toDouble());
+      }
+    }
+  }
+
+  void _attachScrollEndListener() {
+    if (!mounted) return;
+    final pc = widget.pageController;
+    if (pc == null || !pc.hasClients) return;
+    final pos = pc.position;
+    if (_observedPosition == pos) return;
+    _detachScrollEndListener();
+    _observedPosition = pos;
+    pos.isScrollingNotifier.addListener(_onScrollingStateChanged);
+  }
+
+  void _detachScrollEndListener() {
+    _observedPosition?.isScrollingNotifier.removeListener(
+      _onScrollingStateChanged,
+    );
+    _observedPosition = null;
+  }
+
+  void _onScrollingStateChanged() {
+    final pos = _observedPosition;
+    if (pos == null || pos.isScrollingNotifier.value) return;
+    if (_isFollowingPage) {
+      final leftoverVel = _dragVelocity.clamp(-8.0, 8.0);
+      _isFollowingPage = false;
+      _dragVelocity = 0.0;
+      _lastPageSample = null;
+      _lastSampleUs = 0;
+      _launchSpringTo(
+        widget.selectedIndex.toDouble(),
+        initialVelocity: leftoverVel,
+      );
+    }
+  }
+
+  void _onPageControllerChanged() {
+    _attachScrollEndListener();
+    if (widget.ignorePageController) return;
+    final pc = widget.pageController;
+    if (pc == null || !pc.hasClients || !pc.position.haveDimensions) return;
+    if (!pc.position.isScrollingNotifier.value) {
+      return;
+    }
+    final page = pc.page;
+    if (page == null) return;
+    final clamped = page.clamp(0.0, (widget.itemCount - 1).toDouble());
+    final nowUs = DateTime.now().microsecondsSinceEpoch;
+    if (_lastPageSample != null && _lastSampleUs > 0) {
+      final dtSec = ((nowUs - _lastSampleUs) / 1000000.0).clamp(0.004, 0.05);
+      final instVel = ((clamped - _lastPageSample!) / dtSec).clamp(-18.0, 18.0);
+      _dragVelocity = (_dragVelocity * 0.55) + (instVel * 0.45);
+    }
+    _lastPageSample = clamped;
+    _lastSampleUs = nowUs;
+    _isFollowingPage = true;
+    _pillAnim.value = clamped;
+  }
+
+  void _launchSpringTo(double target, {double? initialVelocity}) {
+    _isFollowingPage = false;
+    final currentPos = _pillAnim.value;
+    final currentVel =
+        initialVelocity ?? (_pillAnim.isAnimating ? _pillAnim.velocity : 0.0);
+    _dragVelocity = 0.0;
+    _lastPageSample = null;
+    _lastSampleUs = 0;
+    if ((currentPos - target).abs() < 0.001 && currentVel.abs() < 0.01) {
+      _pillAnim.value = target;
+      return;
+    }
+    final sim = SpringSimulation(
+      _liquidSpring,
+      currentPos,
+      target,
+      currentVel,
+    );
+    _pillAnim.animateWith(sim);
+  }
+
+  @override
+  void dispose() {
+    widget.pageController?.removeListener(_onPageControllerChanged);
+    _detachScrollEndListener();
+    _pillAnim.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: widget.height,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final slotWidth = constraints.maxWidth / widget.itemCount;
+          final resolvedPillWidth = widget.pillWidth ?? slotWidth;
+          final topOffset = (widget.height - widget.pillHeight) / 2;
+
+          return AnimatedBuilder(
+            animation: _pillAnim,
+            builder: (context, _) {
+              final pos = _pillAnim.value;
+              final vel = _isFollowingPage
+                  ? _dragVelocity
+                  : (_pillAnim.isAnimating ? _pillAnim.velocity : 0.0);
+              final stretchNorm = (vel.abs() / 12.0).clamp(0.0, 1.0);
+              final scaleX = 1.0 + (stretchNorm * 0.28);
+              final scaleY = 1.0 - (stretchNorm * 0.11);
+              final left = (pos * slotWidth) +
+                  ((slotWidth - resolvedPillWidth) / 2);
+
+              final stack = Stack(
+                alignment: Alignment.center,
+                clipBehavior: widget.clipBehavior,
+                children: [
+                  Positioned(
+                    left: left,
+                    top: topOffset,
+                    width: resolvedPillWidth,
+                    height: widget.pillHeight,
+                    child: IgnorePointer(
+                      child: Transform.scale(
+                        scaleX: scaleX,
+                        scaleY: scaleY,
+                        alignment: Alignment.center,
+                        child: widget.pillBuilder(context, vel),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    children: List.generate(widget.itemCount, (idx) {
+                      final activeProgress = (1.0 - (pos - idx).abs())
+                          .clamp(0.0, 1.0);
+                      return Expanded(
+                        child: widget.itemBuilder(context, idx, activeProgress),
+                      );
+                    }),
+                  ),
+                ],
+              );
+
+              if (widget.clipBorderRadius != null) {
+                return ClipRRect(
+                  borderRadius: widget.clipBorderRadius!,
+                  child: stack,
+                );
+              }
+              return stack;
+            },
+          );
+        },
+      ),
+    );
+  }
+}
 
 /// Custom 120Hz-ready Shared-Axis / Predictive-Back style page route transition
 /// using `Curves.easeOutCubic` / `Curves.easeInOutCubic` (280ms forward, 240ms reverse).
@@ -293,7 +538,7 @@ class _StaggeredEntranceItemState extends State<StaggeredEntranceItem>
 
   @override
   Widget build(BuildContext context) {
-    if (_completed || _curved == null) {
+    if (_curved == null) {
       return widget.child;
     }
     return RepaintBoundary(
@@ -301,7 +546,7 @@ class _StaggeredEntranceItemState extends State<StaggeredEntranceItem>
         animation: _curved!,
         child: widget.child,
         builder: (context, child) {
-          final t = _curved!.value.clamp(0.0, 1.0);
+          final t = _completed ? 1.0 : _curved!.value.clamp(0.0, 1.0);
           return Opacity(
             opacity: t,
             child: Transform.translate(

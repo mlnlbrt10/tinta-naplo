@@ -11,8 +11,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
+import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import java.io.File
+import java.net.URLConnection
 import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
@@ -213,6 +215,17 @@ open class MainActivity : FlutterActivity() {
                             installApk(filePath, result)
                         }
                     }
+                    "openFile" -> {
+                        val args = call.arguments as? Map<*, *>
+                        val filePath = args?.get("filePath")?.toString()
+                            ?: (call.arguments as? String)
+                        val mimeType = args?.get("mimeType")?.toString()
+                        if (filePath.isNullOrBlank()) {
+                            result.error("NO_PATH", "filePath missing", null)
+                        } else {
+                            openFileWithProvider(filePath, mimeType, result)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -236,18 +249,11 @@ open class MainActivity : FlutterActivity() {
                 result.success("permission_required")
                 return
             }
-            val sourceFile = File(filePath)
-            val targetFile = File(cacheDir, sourceFile.name)
-            val apkFile = if (sourceFile.canonicalPath.startsWith(cacheDir.canonicalPath + File.separator)) {
-                sourceFile
-            } else {
-                sourceFile.copyTo(targetFile, overwrite = true)
-                targetFile
-            }
+            val shareFile = ensureFileInCacheDir(filePath)
             val uri = FileProvider.getUriForFile(
                 this,
                 "${applicationContext.packageName}.fileprovider",
-                apkFile
+                shareFile
             )
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/vnd.android.package-archive")
@@ -257,6 +263,57 @@ open class MainActivity : FlutterActivity() {
             result.success("started")
         } catch (e: Exception) {
             result.error("INSTALL_FAILED", e.message, null)
+        }
+    }
+
+    private fun ensureFileInCacheDir(filePath: String): File {
+        val sourceFile = File(filePath)
+        val targetFile = File(cacheDir, sourceFile.name)
+        return if (sourceFile.canonicalPath.startsWith(cacheDir.canonicalPath + File.separator)) {
+            sourceFile
+        } else {
+            sourceFile.copyTo(targetFile, overwrite = true)
+            targetFile
+        }
+    }
+
+    private fun openFileWithProvider(
+        filePath: String,
+        requestedMimeType: String?,
+        result: MethodChannel.Result
+    ) {
+        try {
+            val shareFile = ensureFileInCacheDir(filePath)
+            val ext = shareFile.extension.lowercase()
+            val detectedMime = requestedMimeType?.takeIf { it.isNotBlank() }
+                ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+                ?: URLConnection.guessContentTypeFromName(shareFile.name)
+                ?: "*/*"
+            val uri = FileProvider.getUriForFile(
+                this,
+                "${applicationContext.packageName}.fileprovider",
+                shareFile
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, detectedMime)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            }
+            try {
+                startActivity(intent)
+            } catch (_: Exception) {
+                val fallbackIntent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "*/*")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                }
+                startActivity(
+                    Intent.createChooser(fallbackIntent, shareFile.name).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                )
+            }
+            result.success("opened")
+        } catch (e: Exception) {
+            result.error("OPEN_FAILED", e.message, null)
         }
     }
 

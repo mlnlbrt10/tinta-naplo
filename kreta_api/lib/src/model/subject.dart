@@ -11,6 +11,14 @@ class Subject extends NameUid {
     required this.sortIndex,
   });
 
+  @override
+  Map<String, dynamic> toJson() => {
+        'Uid': uid,
+        'Nev': name,
+        'Kategoria': category.toJson(),
+        'SortIndex': sortIndex,
+      };
+
   factory Subject.fromJson(Map<String, dynamic> json) {
     final uid = (json['Uid'] ?? '').toString();
     final name = (json['Nev'] ?? '').toString();

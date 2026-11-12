@@ -255,7 +255,7 @@ class CommuteEvaluation {
 }
 
 /// Service integrating MenetrendGO (MÁVPlusz OTP2 GraphQL & GTFS schedule engine)
-/// with reKRETA's live timetable, departure alarms, and native Android intent deep-linking.
+/// with Tinta Napló's live timetable, departure alarms, and native Android intent deep-linking.
 class MenetrendService {
   static const String mavPluszBaseUrl =
       'https://mavplusz.hu/otp2-backend/otp/routers/default';
@@ -276,7 +276,7 @@ class MenetrendService {
         'Content-Type': 'application/json; charset=utf-8',
         'Origin': 'https://mavplusz.hu',
         'Referer': 'https://mavplusz.hu/',
-        'User-Agent': 'MenetrendGO/1.2.6 (Android)',
+        'User-Agent': 'MenetrendGO/1.0.0 (Android)',
       };
 
   /// Snaps any stored walking speed to one of the three supported presets:
@@ -468,7 +468,7 @@ class MenetrendService {
         'addressdetails': '1',
       });
       final response = await _http.get(uri, headers: const {
-        'User-Agent': 'reKRETA-Android/1.2.6',
+        'User-Agent': 'TintaNaplo-Android/1.0.0',
         'Accept': 'application/json',
       }).timeout(const Duration(seconds: 6));
       if (response.statusCode == 200) {
@@ -506,7 +506,7 @@ class MenetrendService {
         'limit': '6',
       });
       final res = await _http
-          .get(photonUri, headers: const {'User-Agent': 'reKRETA-Android/1.2.6'})
+          .get(photonUri, headers: const {'User-Agent': 'TintaNaplo-Android/1.0.0'})
           .timeout(const Duration(seconds: 6));
       if (res.statusCode == 200) {
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));

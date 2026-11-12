@@ -439,20 +439,24 @@ class _TimetableScreenState extends State<TimetableScreen>
 
     setState(() {
       _selectedDate = target;
+      _isAnimatingPage = _pageController.hasClients;
     });
     if (_pageController.hasClients) {
-      _pageController.animateToPage(
+      await _pageController.animateToPage(
         pageIdx,
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
       );
+      if (mounted) {
+        setState(() => _isAnimatingPage = false);
+      }
     }
     if (weekChanged) {
       _loadCurrentWeek(showFullSpinner: true);
     }
   }
 
-  void _jumpToToday() {
+  Future<void> _jumpToToday() async {
     HapticFeedback.lightImpact();
     final now = DateTime.now();
     var today = DateTime(now.year, now.month, now.day);
@@ -463,13 +467,17 @@ class _TimetableScreenState extends State<TimetableScreen>
     final pageIdx = (today.weekday - 1).clamp(0, _visibleDaysCount - 1);
     setState(() {
       _selectedDate = today;
+      _isAnimatingPage = _pageController.hasClients;
     });
     if (_pageController.hasClients) {
-      _pageController.animateToPage(
+      await _pageController.animateToPage(
         pageIdx,
         duration: const Duration(milliseconds: 280),
         curve: Curves.easeOutCubic,
       );
+      if (mounted) {
+        setState(() => _isAnimatingPage = false);
+      }
     }
     if (weekChanged) {
       _loadCurrentWeek(showFullSpinner: true);
@@ -482,15 +490,17 @@ class _TimetableScreenState extends State<TimetableScreen>
     HapticFeedback.selectionClick();
     setState(() {
       _selectedDate = targetDay;
+      _isAnimatingPage = _pageController.hasClients;
     });
     if (_pageController.hasClients) {
-      _isAnimatingPage = true;
       await _pageController.animateToPage(
         idx,
         duration: const Duration(milliseconds: 280),
         curve: Curves.easeOutCubic,
       );
-      _isAnimatingPage = false;
+      if (mounted) {
+        setState(() => _isAnimatingPage = false);
+      }
     }
   }
 
@@ -737,11 +747,10 @@ class _TimetableScreenState extends State<TimetableScreen>
   }
 
   Widget _buildExpandableFilterCard(ThemeData theme, ColorScheme scheme) {
-    return SoftGlassCard(
+    return LiquidGlassSurface(
       prefs: widget.prefs,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       borderRadius: BorderRadius.circular(18),
-      border: Border.all(color: theme.dividerColor),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -865,84 +874,66 @@ class _TimetableScreenState extends State<TimetableScreen>
       padding: const EdgeInsets.all(3),
       borderRadius: BorderRadius.circular(16),
       border: Border.all(color: theme.dividerColor),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final slotWidth = constraints.maxWidth / visibleDaysCount;
-          return AnimatedBuilder(
-            animation: _pageController,
-            builder: (context, _) {
-              double page = selectedIdx.toDouble();
-              if (_pageController.hasClients &&
-                  _pageController.position.haveDimensions) {
-                page = (_pageController.page ?? page)
-                    .clamp(0.0, (visibleDaysCount - 1).toDouble());
-              }
-              return SizedBox(
-                height: 34,
-                child: Stack(
-                  children: [
-                    Positioned(
-                      left: page * slotWidth,
-                      top: 0,
-                      bottom: 0,
-                      width: slotWidth,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: scheme.primary,
-                          borderRadius: BorderRadius.circular(12),
+      child: LiquidSpringPillTrack(
+        itemCount: visibleDaysCount,
+        selectedIndex: selectedIdx,
+        height: 34,
+        pillHeight: 34,
+        pageController: _pageController,
+        ignorePageController: _isAnimatingPage,
+        clipBehavior: Clip.hardEdge,
+        clipBorderRadius: BorderRadius.circular(12),
+        pillBuilder: (context, _) => Container(
+          decoration: BoxDecoration(
+            color: scheme.primary,
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        itemBuilder: (context, idx, activeProgress) {
+          final day = monday.add(Duration(days: idx));
+          final mainColor = Color.lerp(
+            scheme.onSurface,
+            scheme.onPrimary,
+            activeProgress,
+          )!;
+          final subColor = Color.lerp(
+            scheme.onSurface.withValues(alpha: 0.62),
+            scheme.onPrimary.withValues(alpha: 0.88),
+            activeProgress,
+          )!;
+          return TactileBounce(
+            onTap: () => _onSelectWeekdayPill(idx, monday),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Center(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _weekdayShortNames[idx],
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: mainColor,
                         ),
                       ),
-                    ),
-                    Row(
-                      children: List.generate(visibleDaysCount, (idx) {
-                        final day = monday.add(Duration(days: idx));
-                        final t = (1 - (page - idx).abs()).clamp(0.0, 1.0);
-                        final mainColor = Color.lerp(
-                          scheme.onSurface,
-                          scheme.onPrimary,
-                          t,
-                        )!;
-                        final subColor = Color.lerp(
-                          scheme.onSurface.withValues(alpha: 0.62),
-                          scheme.onPrimary.withValues(alpha: 0.88),
-                          t,
-                        )!;
-                        return Expanded(
-                          child: TactileBounce(
-                            onTap: () => _onSelectWeekdayPill(idx, monday),
-                            child: Center(
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    _weekdayShortNames[idx],
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w800,
-                                      color: mainColor,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 3),
-                                  Text(
-                                    '${day.day}.',
-                                    style: TextStyle(
-                                      fontSize: 10.5,
-                                      fontWeight: FontWeight.w600,
-                                      color: subColor,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        );
-                      }),
-                    ),
-                  ],
+                      const SizedBox(width: 3),
+                      Text(
+                        '${day.day}.',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                          color: subColor,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              );
-            },
+              ),
+            ),
           );
         },
       ),

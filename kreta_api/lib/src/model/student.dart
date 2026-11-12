@@ -62,6 +62,24 @@ class Student extends NameUid {
   }
 
   @override
+  Map<String, dynamic> toJson() => {
+        'Uid': uid,
+        'Nev': name,
+        'Cimek': addressDataList,
+        'Bankszamla': bankAccount.toJson(),
+        'SzuletesiEv': birthdate.year,
+        'SzuletesiHonap': birthdate.month,
+        'SzuletesiNap': birthdate.day,
+        'EmailCim': emailAddress,
+        'Telefonszam': phoneNumber,
+        'TanevUid': schoolYearUID,
+        'Gondviselok': guardianList.map((g) => g.toJson()).toList(),
+        'IntezmenyAzonosito': instituteCode,
+        'IntezmenyNev': instituteName,
+        'Intezmeny': institution.toJson(),
+      };
+
+  @override
   String toString() {
     return 'Student('
         'addressDataList: [$addressDataList], '
@@ -100,6 +118,13 @@ class BankAccount {
       ownerType: json['BankszamlaTulajdonosTipusId'],
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'BankszamlaSzam': accountNumber,
+        'IsReadOnly': isReadOnly,
+        'BankszamlaTulajdonosNeve': ownerName,
+        'BankszamlaTulajdonosTipusId': ownerType,
+      };
 
   @override
   String toString() {

@@ -28,6 +28,14 @@ class Institution extends UidObj {
       uid: json['Uid'],
     );
   }
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'Uid': uid,
+        'RovidNev': shortName,
+        'TestreszabasBeallitasok': customizationSettings.toJson(),
+        'Rendszermodulok': systemModuleList.map((m) => m.toJson()).toList(),
+      };
 }
 
 class CustomizationSettings {
@@ -52,6 +60,14 @@ class CustomizationSettings {
       nextServerDeployAsString: json['KovetkezoTelepitesDatuma'],
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'ErtekelesekMegjelenitesenekKesleltetesenekMerteke':
+            delayForNotifications,
+        'IsOsztalyAtlagMegjeleniteseEllenorzoben': isClassAverageVisible,
+        'IsTanorakTemajaMegtekinthetoEllenorzoben': isLessonsThemeVisible,
+        'KovetkezoTelepitesDatuma': nextServerDeployAsString,
+      };
 
   @override
   String toString() {
@@ -82,6 +98,12 @@ class SystemModule {
       url: json['Url'],
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'IsAktiv': isActive,
+        'Tipus': type,
+        'Url': url,
+      };
 
   @override
   String toString() {

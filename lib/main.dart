@@ -8,6 +8,7 @@ import 'services/kreta_client.dart';
 import 'services/token_storage_service.dart';
 import 'theme/oled_theme.dart';
 import 'widgets/christmas_snowfall_overlay.dart';
+import 'widgets/tinta_splash_overlay.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,19 +16,30 @@ void main() {
 }
 
 class ReKretaApp extends StatefulWidget {
-  const ReKretaApp({super.key});
+  final TokenStorageService? tokenStorage;
+  final KretaClient? kretaClient;
+
+  const ReKretaApp({
+    super.key,
+    this.tokenStorage,
+    this.kretaClient,
+  });
 
   @override
   State<ReKretaApp> createState() => _ReKretaAppState();
 }
 
 class _ReKretaAppState extends State<ReKretaApp> {
-  final TokenStorageService _tokenStorage = const TokenStorageService();
-  late final KretaClient _kretaClient = KretaClient(storage: _tokenStorage);
+  late final TokenStorageService _tokenStorage =
+      widget.tokenStorage ?? const TokenStorageService();
+  late final KretaClient _kretaClient =
+      widget.kretaClient ?? KretaClient(storage: _tokenStorage);
 
   StoredSession? _session;
+  DashboardData? _cachedDashboard;
   UserProfilePrefs _prefs = const UserProfilePrefs();
   bool _isRestoringSession = true;
+  bool _showSplashOverlay = true;
 
   final TextEditingController _instituteController = TextEditingController();
   final TextEditingController _usernameController = TextEditingController();
@@ -67,9 +79,19 @@ class _ReKretaAppState extends State<ReKretaApp> {
         _tokenStorage.loadProfilePrefs(),
       ]);
       if (!mounted) return;
+      final restoredSession = results[0] as StoredSession?;
+      final restoredPrefs = results[1] as UserProfilePrefs;
+      DashboardData? restoredCache;
+      if (restoredSession != null) {
+        restoredCache =
+            await _kretaClient.loadCachedDashboard(restoredSession);
+      }
+      if (!mounted) return;
+      UserProfilePrefs.syncActiveGlobals(restoredPrefs);
       _set(() {
-        _session = results[0] as StoredSession?;
-        _prefs = results[1] as UserProfilePrefs;
+        _session = restoredSession;
+        _prefs = restoredPrefs;
+        _cachedDashboard = restoredCache;
         _isRestoringSession = false;
       });
     } catch (_) {
@@ -79,6 +101,7 @@ class _ReKretaAppState extends State<ReKretaApp> {
   }
 
   Future<void> _updatePrefs(UserProfilePrefs nextPrefs) async {
+    UserProfilePrefs.syncActiveGlobals(nextPrefs);
     _set(() => _prefs = nextPrefs);
     // Persist first: the alias swap may restart the process.
     await _tokenStorage.saveProfilePrefs(nextPrefs);
@@ -97,14 +120,26 @@ class _ReKretaAppState extends State<ReKretaApp> {
     );
 
     if (session != null && mounted) {
-      _set(() => _session = session);
+      _set(() {
+        _session = session;
+        _cachedDashboard = null;
+      });
     }
   }
 
   Future<void> _handleLogout() async {
+    final previousSession = _session;
+    if (previousSession != null) {
+      await _tokenStorage.clearDashboardCache(
+        TokenStorageService.accountKeyForSession(previousSession),
+      );
+    }
     await _tokenStorage.clearSession();
     if (!mounted) return;
-    _set(() => _session = null);
+    _set(() {
+      _session = null;
+      _cachedDashboard = null;
+    });
   }
 
   @override
@@ -118,11 +153,28 @@ class _ReKretaAppState extends State<ReKretaApp> {
         );
 
         return MaterialApp(
-          title: 'reKRETA',
+          title: 'Tinta Napló',
           debugShowCheckedModeBanner: false,
           theme: activeTheme,
           darkTheme: activeTheme,
           themeMode: isLight ? ThemeMode.light : ThemeMode.dark,
+          builder: (context, child) {
+            return Stack(
+              children: [
+                child ?? const SizedBox.shrink(),
+                if (_showSplashOverlay)
+                  TintaSplashOverlay(
+                    isLoading: _isRestoringSession,
+                    accentColor: activeTheme.colorScheme.primary,
+                    onDismissed: () {
+                      if (mounted) {
+                        setState(() => _showSplashOverlay = false);
+                      }
+                    },
+                  ),
+              ],
+            );
+          },
           home: _rootRoute(),
           routes: {'/login': (_) => _rootRoute()},
         );
@@ -133,13 +185,15 @@ class _ReKretaAppState extends State<ReKretaApp> {
   Widget _buildRootScreen() {
     if (_isRestoringSession) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+        backgroundColor: Color(0xFF000000),
+        body: SizedBox.expand(),
       );
     }
 
     if (_session != null) {
       return HomeScreen(
         initialSession: _session!,
+        initialCachedData: _cachedDashboard,
         kretaClient: _kretaClient,
         prefs: _prefs,
         onPrefsChanged: _updatePrefs,
@@ -182,7 +236,7 @@ class _ReKretaAppState extends State<ReKretaApp> {
                             ),
                             const SizedBox(height: 18),
                             Text(
-                              'reKRETA',
+                              'Tinta Napló',
                               style: theme.textTheme.headlineMedium?.copyWith(
                                 fontWeight: FontWeight.w900,
                                 color: scheme.onSurface,

@@ -8,7 +8,7 @@ import 'package:kreta_api/kreta_api.dart';
 import '../core/kreta_auth_config.dart';
 import '../utils/uwu_helper.dart';
 
-/// Supported visual theme styles in reKRETA.
+/// Supported visual theme styles in Tinta Napló.
 enum AppThemeStyle {
   oledPureBlack,
   standardDark,
@@ -117,6 +117,14 @@ class GradeRoundingConfig {
 /// Survives logout/relogin and supports full JSON export/import.
 class UserProfilePrefs {
   static ModalCloseButtonMode activeModalCloseMode = ModalCloseButtonMode.both;
+  static bool activeSoftBlurEnabled = false;
+  static double activeSoftBlurSigma = 4.0;
+
+  static void syncActiveGlobals(UserProfilePrefs prefs) {
+    activeModalCloseMode = prefs.modalCloseMode;
+    activeSoftBlurEnabled = prefs.cardBlurEnabled;
+    activeSoftBlurSigma = prefs.cardBlurSigma;
+  }
 
   final String? nickname;
   final int avatarIconIndex;
@@ -161,7 +169,7 @@ class UserProfilePrefs {
   final Map<String, String> subjectCustomNames;
   final Map<String, String> teacherCustomNames;
 
-  /// Forward-compatible bag for v1.2.6 settings (timetable filters, scholarship
+  /// Forward-compatible bag for v1.0.0 settings (timetable filters, scholarship
   /// mode, exact commute addresses, per-day commute plans). Persisted as JSON.
   final Map<String, dynamic> extras;
 
@@ -219,7 +227,7 @@ class UserProfilePrefs {
     this.extras = const {},
   });
 
-  // ---- v1.2.6 typed accessors over [extras] --------------------------------
+  // ---- v1.0.0 typed accessors over [extras] --------------------------------
   /// "Elmaradó órák elrejtése" (falls back to the legacy single filter).
   bool get hideCancelledLessons =>
       (extras['hideCancelledLessons'] as bool?) ?? !showCancelledLessons;
@@ -799,6 +807,8 @@ class TokenStorageService {
   static const _keySubjectCustomNames = 'kreta_subj_custom_names';
   static const _keyTeacherCustomNames = 'kreta_teacher_custom_names';
   static const _keyExtras = 'kreta_extras_json';
+  static const _keyReadMessageIds = 'kreta_read_message_ids';
+  static const _keyDashboardCachePrefix = 'kreta_dashboard_cache_v1_';
 
   final FlutterSecureStorage _storage;
 
@@ -1062,7 +1072,7 @@ class TokenStorageService {
       } catch (_) {}
     }
 
-    return UserProfilePrefs(
+    final loaded = UserProfilePrefs(
       nickname: (rawNick != null && rawNick.isNotEmpty) ? rawNick : null,
       avatarIconIndex: iconIdx,
       avatarColorIndex: colorIdx,
@@ -1110,6 +1120,8 @@ class TokenStorageService {
       teacherCustomNames: teacherNames,
       extras: _decodeExtras(values[_keyExtras]),
     );
+    UserProfilePrefs.syncActiveGlobals(loaded);
+    return loaded;
   }
 
   static Map<String, dynamic> _decodeExtras(String? raw) {
@@ -1124,7 +1136,7 @@ class TokenStorageService {
   Future<void> saveProfilePrefs(UserProfilePrefs prefs) async {
     UwuHelper.isEnabled = prefs.uwuModeEnabled;
     UwuHelper.isTsundereEnabled = prefs.tsundereModeEnabled;
-    UserProfilePrefs.activeModalCloseMode = prefs.modalCloseMode;
+    UserProfilePrefs.syncActiveGlobals(prefs);
     final trimmedNick = prefs.nickname?.trim() ?? '';
     final trimmedPhoto = prefs.customPhotoPath?.trim() ?? '';
     final serializedColors = jsonEncode(
@@ -1285,5 +1297,108 @@ class TokenStorageService {
         value: serializedTeacherNames,
       ),
     ]);
+  }
+
+  /// Builds a stable per-account key used to scope locally cached read message IDs.
+  static String accountKeyForSession(StoredSession? session) {
+    if (session == null) return 'default';
+    final inst = session.instituteCode.trim();
+    final user = (session.userName ?? 'default').trim();
+    return '${inst.isEmpty ? 'default' : inst}|${user.isEmpty ? 'default' : user}';
+  }
+
+  /// Loads locally persisted read message keys for [accountKey].
+  Future<Set<String>> loadReadMessageIds({String? accountKey}) async {
+    final key = (accountKey == null || accountKey.trim().isEmpty)
+        ? 'default'
+        : accountKey.trim();
+    try {
+      final raw = await _storage.read(key: _keyReadMessageIds);
+      if (raw == null || raw.isEmpty) return <String>{};
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final bucket = decoded[key];
+        if (bucket is List) {
+          return bucket
+              .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty)
+              .toSet();
+        }
+      }
+    } catch (_) {}
+    return <String>{};
+  }
+
+  /// Persists [messageKeys] as read locally for [accountKey] so system messages
+  /// and offline views stay marked read across app restarts.
+  Future<void> markMessagesReadLocally(
+    Iterable<String> messageKeys, {
+    String? accountKey,
+  }) async {
+    final cleanKeys = messageKeys
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (cleanKeys.isEmpty) return;
+
+    final acct = (accountKey == null || accountKey.trim().isEmpty)
+        ? 'default'
+        : accountKey.trim();
+    try {
+      final map = <String, List<String>>{};
+      final raw = await _storage.read(key: _keyReadMessageIds);
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          for (final entry in decoded.entries) {
+            if (entry.value is List) {
+              map[entry.key.toString()] = (entry.value as List)
+                  .map((e) => e.toString().trim())
+                  .where((e) => e.isNotEmpty)
+                  .toList();
+            }
+          }
+        }
+      }
+      final existing = map[acct] ?? <String>[];
+      final merged = <String>{...existing, ...cleanKeys}.toList();
+      const maxStoredIds = 2500;
+      map[acct] = merged.length > maxStoredIds
+          ? merged.sublist(merged.length - maxStoredIds)
+          : merged;
+      await _storage.write(
+        key: _keyReadMessageIds,
+        value: jsonEncode(map),
+      );
+    } catch (_) {}
+  }
+
+  /// Persists serialized dashboard cache JSON scoped per account.
+  Future<void> saveDashboardCacheJson(
+    String accountKey,
+    String jsonPayload,
+  ) async {
+    try {
+      await _storage.write(
+        key: '$_keyDashboardCachePrefix$accountKey',
+        value: jsonPayload,
+      );
+    } catch (_) {}
+  }
+
+  /// Loads cached dashboard JSON scoped per account, or `null` if unavailable.
+  Future<String?> loadDashboardCacheJson(String accountKey) async {
+    try {
+      return await _storage.read(key: '$_keyDashboardCachePrefix$accountKey');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Removes cached dashboard JSON for [accountKey].
+  Future<void> clearDashboardCache(String accountKey) async {
+    try {
+      await _storage.delete(key: '$_keyDashboardCachePrefix$accountKey');
+    } catch (_) {}
   }
 }

@@ -61,6 +61,22 @@ class Omission extends UidObj {
   }
 
   @override
+  Map<String, dynamic> toJson() => {
+        'Uid': uid,
+        'Tantargy': subject.toJson(),
+        'Ora': lesson?.toJson(),
+        'Datum': date.toUtc().toIso8601String(),
+        'RogzitoTanarNeve': teacher,
+        'Tipus': type?.toJson(),
+        'Mod': mode?.toJson(),
+        'KesesPercben': lateForMin,
+        'KeszitesDatuma': createdAt.toUtc().toIso8601String(),
+        'IgazolasAllapota': state.key,
+        'IgazolasTipusa': proofType?.toJson(),
+        'OsztalyCsoport': classGroup?.toJson(),
+      };
+
+  @override
   String toString() {
     return 'Omission('
         'uid: "$uid", '
@@ -117,6 +133,12 @@ class OmittedLesson {
       classNo: (json['Oraszam'] as num?)?.toInt(),
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'KezdoDatum': start.toUtc().toIso8601String(),
+        'VegDatum': end.toUtc().toIso8601String(),
+        'Oraszam': classNo,
+      };
 
   @override
   String toString() {

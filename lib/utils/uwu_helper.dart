@@ -1,4 +1,4 @@
-/// Global UwU and Tsundere text transformers for reKRETA's Developer Mode Easter Eggs.
+/// Global UwU and Tsundere text transformers for Tinta Napló's Developer Mode Easter Eggs.
 class UwuHelper {
   /// Synchronized with `UserProfilePrefs.uwuModeEnabled`.
   static bool isEnabled = false;

@@ -268,6 +268,17 @@ class ChristmasAndBackgroundOverlay extends StatefulWidget {
     required this.child,
   });
 
+  /// Returns true when the active theme and preferences render an ambient
+  /// gradient or radial glow layer behind screen content.
+  static bool hasAmbientBackdrop(
+    BuildContext context,
+    UserProfilePrefs prefs,
+  ) {
+    final bgPreset = BackgroundPresetInfo.resolve(prefs);
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    return (!isLight && bgPreset.id != 'pure_oled') || prefs.cardBlurEnabled;
+  }
+
   @override
   State<ChristmasAndBackgroundOverlay> createState() =>
       _ChristmasAndBackgroundOverlayState();
@@ -317,7 +328,10 @@ class _ChristmasAndBackgroundOverlayState
     final hasGradient = !isLight && bgPreset.id != 'pure_oled';
 
     Widget content = widget.child;
-    if (hasGradient || widget.prefs.cardBlurEnabled) {
+    if (ChristmasAndBackgroundOverlay.hasAmbientBackdrop(
+      context,
+      widget.prefs,
+    )) {
       final primary = theme.colorScheme.primary;
       final secondary = theme.colorScheme.secondary;
       final baseBg = theme.scaffoldBackgroundColor;
@@ -443,6 +457,68 @@ class _ChristmasAndBackgroundOverlayState
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Top padding for scrollable content inside an [AdaptiveBackgroundScaffold]
+/// using `extendBodyBehindAppBar: true`.
+double adaptiveAppBarTopPadding(BuildContext context, {double extra = 12.0}) {
+  return MediaQuery.paddingOf(context).top + kToolbarHeight + extra;
+}
+
+/// Transparent [AppBar] with contrast-safe foreground color and zero scroll
+/// tinting so underlying ambient backgrounds extend seamlessly behind it.
+PreferredSizeWidget buildAdaptiveTransparentAppBar(
+  BuildContext context, {
+  required String title,
+  List<Widget>? actions,
+}) {
+  return AppBar(
+    title: Text(title),
+    actions: actions,
+    backgroundColor: Colors.transparent,
+    surfaceTintColor: Colors.transparent,
+    scrolledUnderElevation: 0,
+    foregroundColor: Theme.of(context).colorScheme.onSurface,
+  );
+}
+
+/// [Scaffold] that extends its background and effects behind a transparent
+/// [AppBar], seamlessly matching OLED pure black, Standard Dark, Light theme,
+/// and active background gradients/effects.
+class AdaptiveBackgroundScaffold extends StatelessWidget {
+  final UserProfilePrefs? prefs;
+  final PreferredSizeWidget appBar;
+  final Widget body;
+
+  const AdaptiveBackgroundScaffold({
+    super.key,
+    required this.prefs,
+    required this.appBar,
+    required this.body,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final effectivePrefs = prefs;
+    final hasAmbient = effectivePrefs != null &&
+        ChristmasAndBackgroundOverlay.hasAmbientBackdrop(
+          context,
+          effectivePrefs,
+        );
+    final scaffold = Scaffold(
+      backgroundColor: hasAmbient ? Colors.transparent : null,
+      extendBodyBehindAppBar: true,
+      appBar: appBar,
+      body: body,
+    );
+    if (effectivePrefs == null) {
+      return scaffold;
+    }
+    return ChristmasAndBackgroundOverlay(
+      prefs: effectivePrefs,
+      child: scaffold,
     );
   }
 }

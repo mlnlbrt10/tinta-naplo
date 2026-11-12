@@ -7,6 +7,8 @@ import '../services/token_storage_service.dart';
 import '../utils/html_sanitizer.dart';
 import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
+import 'edge_fade_horizontal_scroll.dart';
+import 'glass_card.dart';
 
 /// Home wrapper for the MenetrendGO card. Outside morning/afternoon commute
 /// windows or when zero catchable departures remain, renders [SizedBox.shrink]
@@ -108,7 +110,7 @@ class MenetrendHeroCard extends StatelessWidget {
           type: MaterialType.transparency,
           child: Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            padding: const EdgeInsets.symmetric(vertical: 14),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: [
@@ -127,7 +129,12 @@ class MenetrendHeroCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -319,101 +326,91 @@ class MenetrendHeroCard extends StatelessWidget {
                     ),
                   ],
                 ),
+                    ],
+                  ),
+                ),
                 if (trip.legs.length > 1) ...[
                   const SizedBox(height: 10),
-                  ShaderMask(
-                    blendMode: BlendMode.dstIn,
-                    shaderCallback: (rect) => const LinearGradient(
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                      colors: [Colors.white, Colors.white, Colors.transparent],
-                      stops: [0.0, 0.86, 1.0],
-                    ).createShader(rect),
-                    child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    physics: const BouncingScrollPhysics(),
-                    padding: const EdgeInsets.only(right: 28),
-                    child: Row(
-                      children: [
-                        for (var i = 0; i < trip.legs.length; i++) ...[
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 9,
-                              vertical: 5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: primary.withValues(alpha: 0.16),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: primary.withValues(alpha: 0.35),
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  _iconForMode(trip.legs[i].mode),
-                                  size: 13,
-                                  color: primary,
-                                ),
-                                const SizedBox(width: 5),
-                                Text(
-                                  '${i + 1}. szakasz: ${HtmlSanitizer.clean(trip.legs[i].routeShortName)} '
-                                  '(${trip.legs[i].mode == MenetrendTransportMode.rail ? "vonat" : "busz"})',
-                                  style: TextStyle(
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w800,
-                                    color: primary,
-                                  ),
-                                ),
-                              ],
+                  EdgeFadeHorizontalScroll(
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    children: [
+                      for (var i = 0; i < trip.legs.length; i++) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: primary.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: primary.withValues(alpha: 0.35),
                             ),
                           ),
-                          if (i < trip.legs.length - 1) ...[
-                            const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 5),
-                              child: Icon(
-                                Icons.arrow_forward_rounded,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _iconForMode(trip.legs[i].mode),
                                 size: 13,
-                                color: OledTheme.textSecondary,
+                                color: primary,
                               ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFFFB300)
-                                    .withValues(alpha: 0.16),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: const Color(0xFFFFB300)
-                                      .withValues(alpha: 0.38),
-                                ),
-                              ),
-                              child: Text(
-                                'Átszállás ${trip.legs[i + 1].departure.difference(trip.legs[i].arrival).inMinutes} p',
-                                style: const TextStyle(
-                                  fontSize: 11,
+                              const SizedBox(width: 5),
+                              Text(
+                                '${i + 1}. szakasz: ${HtmlSanitizer.clean(trip.legs[i].routeShortName)} '
+                                '(${trip.legs[i].mode == MenetrendTransportMode.rail ? "vonat" : "busz"})',
+                                style: TextStyle(
+                                  fontSize: 11.5,
                                   fontWeight: FontWeight.w800,
-                                  color: Color(0xFFFFB300),
+                                  color: primary,
                                 ),
                               ),
+                            ],
+                          ),
+                        ),
+                        if (i < trip.legs.length - 1) ...[
+                          const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 5),
+                            child: Icon(
+                              Icons.arrow_forward_rounded,
+                              size: 13,
+                              color: OledTheme.textSecondary,
                             ),
-                            const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 5),
-                              child: Icon(
-                                Icons.arrow_forward_rounded,
-                                size: 13,
-                                color: OledTheme.textSecondary,
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFB300)
+                                  .withValues(alpha: 0.16),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: const Color(0xFFFFB300)
+                                    .withValues(alpha: 0.38),
                               ),
                             ),
-                          ],
+                            child: Text(
+                              'Átszállás ${trip.legs[i + 1].departure.difference(trip.legs[i].arrival).inMinutes} p',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFFFFB300),
+                              ),
+                            ),
+                          ),
+                          const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 5),
+                            child: Icon(
+                              Icons.arrow_forward_rounded,
+                              size: 13,
+                              color: OledTheme.textSecondary,
+                            ),
+                          ),
                         ],
                       ],
-                    ),
-                  ),
+                    ],
                   ),
                 ],
               ],
@@ -434,7 +431,13 @@ Future<void> showMenetrendDetailsModal(
     PageRouteBuilder<void>(
       opaque: false,
       barrierDismissible: true,
-      barrierColor: Colors.black.withValues(alpha: 0.72),
+      barrierLabel: 'Bezárás',
+      barrierColor: resolveSoftBlurBarrierColor(
+        context,
+        prefs: prefs,
+        solidDarkAlpha: 0.72,
+        solidLightAlpha: 0.48,
+      ),
       transitionDuration: const Duration(milliseconds: 180),
       reverseTransitionDuration: const Duration(milliseconds: 160),
       pageBuilder: (ctx, animation, secondaryAnimation) {
@@ -512,116 +515,126 @@ class _MenetrendDetailsModalSheetState
                     child: Hero(
                       tag: 'menetrend_hero_card',
                       child: Material(
-                        color: const Color(0xF0121212),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        side: BorderSide(
-                          color: primary.withValues(alpha: 0.4),
-                          width: 1.2,
-                        ),
-                      ),
-                      child: ConstrainedBox(
+                        type: MaterialType.transparency,
+                        child: LiquidGlassSurface(
+                          prefs: widget.prefs,
+                          solidColor: const Color(0xF0121212),
+                          borderRadius: BorderRadius.circular(24),
+                          border: resolveSoftBlurEnabled(widget.prefs)
+                              ? null
+                              : Border.all(
+                                  color: primary.withValues(alpha: 0.4),
+                                  width: 1.2,
+                                ),
+                          child: ConstrainedBox(
                         constraints: const BoxConstraints(
                           maxWidth: 460,
                           maxHeight: 640,
                         ),
                         child: SingleChildScrollView(
-                          padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+                          padding: const EdgeInsets.fromLTRB(0, 18, 0, 20),
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Row(
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.all(10),
-                                    decoration: BoxDecoration(
-                                      color: primary.withValues(alpha: 0.16),
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
-                                    child: Icon(
-                                      trip.mode == MenetrendTransportMode.rail
-                                          ? Icons.train_rounded
-                                          : Icons.directions_bus_filled_rounded,
-                                      color: primary,
-                                      size: 22,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          HtmlSanitizer.clean('${trip.routeShortName} • ${trip.mode.displayName}'),
-                                          style: const TextStyle(
-                                            fontSize: 17,
-                                            fontWeight: FontWeight.w800,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                        Text(
-                                          HtmlSanitizer.clean(trip.routeLongName),
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                            color: OledTheme.textSecondary,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  if (closeMode.showTopX)
-                                    IconButton(
-                                      onPressed: () =>
-                                          Navigator.of(context).pop(),
-                                      icon: const Icon(
-                                        Icons.close_rounded,
-                                        color: OledTheme.textSecondary,
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 20),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: primary.withValues(alpha: 0.16),
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
+                                      child: Icon(
+                                        trip.mode == MenetrendTransportMode.rail
+                                            ? Icons.train_rounded
+                                            : Icons.directions_bus_filled_rounded,
+                                        color: primary,
+                                        size: 22,
                                       ),
                                     ),
-                                ],
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            HtmlSanitizer.clean('${trip.routeShortName} • ${trip.mode.displayName}'),
+                                            style: const TextStyle(
+                                              fontSize: 17,
+                                              fontWeight: FontWeight.w800,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                          Text(
+                                            HtmlSanitizer.clean(trip.routeLongName),
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              color: OledTheme.textSecondary,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (closeMode.showTopX)
+                                      IconButton(
+                                        onPressed: () =>
+                                            Navigator.of(context).pop(),
+                                        icon: const Icon(
+                                          Icons.close_rounded,
+                                          color: OledTheme.textSecondary,
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
                               const SizedBox(height: 14),
                               // Alternative departures selector
                               if (widget.evaluation.alternatives.length > 1) ...[
-                                SingleChildScrollView(
-                                  scrollDirection: Axis.horizontal,
-                                  child: Row(
-                                    children: widget.evaluation.alternatives
-                                        .map((alt) {
-                                      final isSel = alt.scheduledDeparture ==
-                                              trip.scheduledDeparture &&
-                                          alt.routeShortName ==
-                                              trip.routeShortName;
-                                      return Padding(
-                                        padding:
-                                            const EdgeInsets.only(right: 8),
-                                        child: ChoiceChip(
-                                          label: Text(
-                                            '${HtmlSanitizer.clean(alt.routeShortName)} (${alt.departureTimeFormatted})',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w700,
-                                              color: isSel
-                                                  ? Colors.black
-                                                  : Colors.white,
-                                            ),
-                                          ),
-                                          selected: isSel,
-                                          selectedColor: primary,
-                                          backgroundColor:
-                                              OledTheme.surfaceElevated,
-                                          onSelected: (_) {
-                                            setState(() => _selectedTrip = alt);
-                                          },
-                                        ),
-                                      );
-                                    }).toList(),
+                                EdgeFadeHorizontalScroll(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
                                   ),
+                                  spacing: 8,
+                                  children: widget.evaluation.alternatives
+                                      .map((alt) {
+                                    final isSel = alt.scheduledDeparture ==
+                                            trip.scheduledDeparture &&
+                                        alt.routeShortName ==
+                                            trip.routeShortName;
+                                    return ChoiceChip(
+                                      label: Text(
+                                        '${HtmlSanitizer.clean(alt.routeShortName)} (${alt.departureTimeFormatted})',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                          color: isSel
+                                              ? Colors.black
+                                              : Colors.white,
+                                        ),
+                                      ),
+                                      selected: isSel,
+                                      selectedColor: primary,
+                                      backgroundColor:
+                                          OledTheme.surfaceElevated,
+                                      onSelected: (_) {
+                                        setState(() => _selectedTrip = alt);
+                                      },
+                                    );
+                                  }).toList(),
                                 ),
                                 const SizedBox(height: 12),
                               ],
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 20),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
                               // Delay & platform status banner
                               Container(
                                 padding: const EdgeInsets.symmetric(
@@ -855,9 +868,13 @@ class _MenetrendDetailsModalSheetState
                                   ),
                                 ),
                               ],
+                                  ],
+                                ),
+                              ),
                             ],
                           ),
                         ),
+                      ),
                       ),
                     ),
                   ),

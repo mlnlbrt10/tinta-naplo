@@ -1,33 +1,84 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart' show DateUtils;
-
 import 'package:http/http.dart' as http;
 import 'package:kreta_api/kreta_api.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../core/kreta_auth_config.dart';
 import 'token_storage_service.dart';
 
-/// Represents an internal E-Kréta message from `/ellenorzo/v3/sajat/Uzenetek`.
+/// Represents a downloadable file attachment on a Kréta e-Ügyintézés message.
+class KretaMessageAttachment {
+  final String id;
+  final String fileName;
+
+  const KretaMessageAttachment({
+    required this.id,
+    required this.fileName,
+  });
+
+  factory KretaMessageAttachment.fromJson(Map<String, dynamic> json) {
+    final id = (json['azonosito'] ??
+            json['Azonosito'] ??
+            json['id'] ??
+            json['Uid'] ??
+            '')
+        .toString()
+        .trim();
+    final fileName = (json['fajlNev'] ??
+            json['FajlNev'] ??
+            json['nev'] ??
+            json['Nev'] ??
+            json['fileName'] ??
+            'csatolmany')
+        .toString()
+        .trim();
+    return KretaMessageAttachment(
+      id: id,
+      fileName: fileName.isEmpty ? 'csatolmany' : fileName,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'azonosito': id,
+        'fajlNev': fileName,
+      };
+}
+
+/// Represents a Kréta e-Ügyintézés message or school notice/system message.
 class KretaMessage {
   final String uid;
+  final String? messageId;
   final String sender;
+  final String? senderTitle;
   final List<String> recipients;
   final String subject;
   final String body;
   final DateTime sentAt;
   final bool isRead;
   final bool isSent;
+  final bool isSystemMessage;
+  final bool hasAttachments;
+  final List<KretaMessageAttachment> attachments;
+  final bool detailsLoaded;
 
   const KretaMessage({
     required this.uid,
+    this.messageId,
     required this.sender,
+    this.senderTitle,
     this.recipients = const [],
     required this.subject,
     required this.body,
     required this.sentAt,
     this.isRead = false,
     this.isSent = false,
+    this.isSystemMessage = false,
+    this.hasAttachments = false,
+    this.attachments = const [],
+    this.detailsLoaded = true,
   });
 
   String get cleanBody => body
@@ -41,39 +92,70 @@ class KretaMessage {
 
   KretaMessage copyWith({
     String? uid,
+    String? messageId,
     String? sender,
+    String? senderTitle,
     List<String>? recipients,
     String? subject,
     String? body,
     DateTime? sentAt,
     bool? isRead,
     bool? isSent,
+    bool? isSystemMessage,
+    bool? hasAttachments,
+    List<KretaMessageAttachment>? attachments,
+    bool? detailsLoaded,
   }) {
     return KretaMessage(
       uid: uid ?? this.uid,
+      messageId: messageId ?? this.messageId,
       sender: sender ?? this.sender,
+      senderTitle: senderTitle ?? this.senderTitle,
       recipients: recipients ?? this.recipients,
       subject: subject ?? this.subject,
       body: body ?? this.body,
       sentAt: sentAt ?? this.sentAt,
       isRead: isRead ?? this.isRead,
       isSent: isSent ?? this.isSent,
+      isSystemMessage: isSystemMessage ?? this.isSystemMessage,
+      hasAttachments: hasAttachments ?? this.hasAttachments,
+      attachments: attachments ?? this.attachments,
+      detailsLoaded: detailsLoaded ?? this.detailsLoaded,
     );
   }
 
-  factory KretaMessage.fromJson(Map<String, dynamic> json) {
+  factory KretaMessage.fromJson(
+    Map<String, dynamic> json, {
+    bool? forceSent,
+    bool isSystemMessage = false,
+    bool? detailsLoaded,
+  }) {
     final nestedMsg = json['uzenet'] is Map<String, dynamic>
         ? json['uzenet'] as Map<String, dynamic>
-        : json;
+        : (json['Uzenet'] is Map<String, dynamic>
+            ? json['Uzenet'] as Map<String, dynamic>
+            : json);
 
     final uid = (json['Uid'] ??
             json['azonosito'] ??
+            json['Azonosito'] ??
             nestedMsg['azonosito'] ??
             json['id'] ??
             DateTime.now().microsecondsSinceEpoch)
-        .toString();
+        .toString()
+        .trim();
+
+    final rawMsgId = json['uzenetAzonosito'] ??
+        json['UzenetAzonosito'] ??
+        (json.containsKey('uzenet') || json.containsKey('Uzenet')
+            ? (nestedMsg['azonosito'] ?? nestedMsg['Azonosito'])
+            : null);
+    final parsedMsgId = rawMsgId?.toString().trim();
+    final messageId =
+        (parsedMsgId == null || parsedMsgId.isEmpty) ? null : parsedMsgId;
 
     final sender = (json['FeladoNev'] ??
+            json['uzenetFeladoNev'] ??
             nestedMsg['feladoNev'] ??
             json['feladoNev'] ??
             json['RogzitoNeve'] ??
@@ -82,24 +164,37 @@ class KretaMessage {
         .toString()
         .trim();
 
+    final rawTitle = (json['uzenetFeladoTitulus'] ??
+            nestedMsg['feladoTitulus'] ??
+            json['feladoTitulus'] ??
+            json['FeladoTitulus'] ??
+            '')
+        .toString()
+        .trim();
+    final senderTitle = rawTitle.isEmpty ? null : rawTitle;
+
     final recipients = <String>[];
     final rawRecips = json['CimzettLista'] ??
         nestedMsg['cimzettLista'] ??
+        json['cimzettLista'] ??
         json['Cimzettek'];
     if (rawRecips is List) {
       for (final r in rawRecips) {
         if (r is Map) {
-          final name = (r['Nev'] ?? r['nev'] ?? r['CimzettNev'] ?? '').toString().trim();
+          final name =
+              (r['Nev'] ?? r['nev'] ?? r['CimzettNev'] ?? '').toString().trim();
           if (name.isNotEmpty) recipients.add(name);
         } else if (r != null) {
-          recipients.add(r.toString());
+          final name = r.toString().trim();
+          if (name.isNotEmpty) recipients.add(name);
         }
       }
     }
 
     final subject = (json['Targy'] ??
-            nestedMsg['targy'] ??
             json['uzenetTargy'] ??
+            nestedMsg['targy'] ??
+            json['targy'] ??
             json['Cim'] ??
             'Üzenet')
         .toString()
@@ -108,14 +203,17 @@ class KretaMessage {
     final body = (json['Szoveg'] ??
             nestedMsg['szoveg'] ??
             json['uzenetSzoveg'] ??
-            json['Tartalom'] ??
+            json['TartalomFormazott'] ??
             json['TartalomText'] ??
+            json['Tartalom'] ??
             '')
         .toString();
 
     final rawDate = (json['KuldesDatuma'] ??
-            nestedMsg['kuldesDatum'] ??
             json['uzenetKuldesDatum'] ??
+            nestedMsg['kuldesDatum'] ??
+            json['kuldesDatum'] ??
+            json['KeszitesDatuma'] ??
             json['Datum'] ??
             json['ErvenyessegKezdete'] ??
             '')
@@ -123,36 +221,106 @@ class KretaMessage {
     final sentAt = DateTime.tryParse(rawDate)?.toLocal() ?? DateTime.now();
 
     final isRead = json['IsElolvasva'] == true ||
+        json['isElolvasva'] == true ||
         json['elolvasva'] == true ||
+        json['isOlvasott'] == true ||
         json['isRead'] == true;
 
-    final rawType = (json['Tipus'] ?? json['Mappa'] ?? '').toString().toLowerCase();
-    final isSent = json['isSent'] == true ||
-        rawType.contains('kuldott') ||
-        rawType.contains('küldött') ||
-        rawType.contains('sent');
+    final tipusObj = json['tipus'] is Map
+        ? json['tipus'] as Map
+        : (json['Tipus'] is Map ? json['Tipus'] as Map : null);
+    final rawType = [
+      tipusObj?['kod'],
+      tipusObj?['nev'],
+      tipusObj?['Nev'],
+      tipusObj?['Leiras'],
+      json['Tipus'],
+      json['tipus'],
+      json['Mappa'],
+      json['mappa'],
+    ]
+        .where((e) => e != null)
+        .map((e) => e.toString().toLowerCase())
+        .join(' ');
+    final isSent = forceSent ??
+        (json['isSent'] == true ||
+            rawType.contains('elkuldott') ||
+            rawType.contains('kuldott') ||
+            rawType.contains('küldött') ||
+            rawType.contains('sent'));
+
+    final attachments = <KretaMessageAttachment>[];
+    final rawAttachments = json['csatolmanyok'] ??
+        nestedMsg['csatolmanyok'] ??
+        json['Csatolmanyok'] ??
+        nestedMsg['Csatolmanyok'];
+    if (rawAttachments is List) {
+      for (final a in rawAttachments) {
+        if (a is Map<String, dynamic>) {
+          final att = KretaMessageAttachment.fromJson(a);
+          if (att.id.isNotEmpty || att.fileName.isNotEmpty) {
+            attachments.add(att);
+          }
+        } else if (a is Map) {
+          final att =
+              KretaMessageAttachment.fromJson(Map<String, dynamic>.from(a));
+          if (att.id.isNotEmpty || att.fileName.isNotEmpty) {
+            attachments.add(att);
+          }
+        }
+      }
+    }
+
+    final hasAttachments = json['hasCsatolmany'] == true ||
+        json['HasCsatolmany'] == true ||
+        nestedMsg['hasCsatolmany'] == true ||
+        attachments.isNotEmpty;
+
+    final isSummary = json.containsKey('uzenetTargy') ||
+        json.containsKey('uzenetKuldesDatum') ||
+        (json['uzenet'] is Map && json['detailsLoaded'] != true);
+    final resolvedIsSystem =
+        isSystemMessage || json['isSystemMessage'] == true;
+    final resolvedDetailsLoaded =
+        detailsLoaded ??
+        (json['detailsLoaded'] is bool
+            ? json['detailsLoaded'] as bool
+            : (resolvedIsSystem || !isSummary));
 
     return KretaMessage(
       uid: uid,
+      messageId: messageId,
       sender: sender,
+      senderTitle: senderTitle,
       recipients: recipients,
       subject: subject,
       body: body,
       sentAt: sentAt,
       isRead: isRead,
       isSent: isSent,
+      isSystemMessage: resolvedIsSystem,
+      hasAttachments: hasAttachments,
+      attachments: attachments,
+      detailsLoaded: resolvedDetailsLoaded,
     );
   }
 
   Map<String, dynamic> toJson() => {
         'Uid': uid,
+        if (messageId != null) 'uzenetAzonosito': messageId,
         'FeladoNev': sender,
+        if (senderTitle != null) 'uzenetFeladoTitulus': senderTitle,
         'Cimzettek': recipients,
         'Targy': subject,
         'Szoveg': body,
         'KuldesDatuma': sentAt.toIso8601String(),
         'IsElolvasva': isRead,
         'isSent': isSent,
+        if (isSystemMessage) 'isSystemMessage': true,
+        'hasCsatolmany': hasAttachments,
+        if (attachments.isNotEmpty)
+          'csatolmanyok': attachments.map((a) => a.toJson()).toList(),
+        'detailsLoaded': detailsLoaded,
       };
 }
 
@@ -267,6 +435,77 @@ class DashboardData {
     this.messages = const [],
     required this.activeSession,
   });
+
+  Map<String, dynamic> toJson() => {
+        'cacheDate': DateUtils.dateOnly(DateTime.now()).toIso8601String(),
+        if (student != null) 'student': student!.toJson(),
+        'todaysLessons': todaysLessons.map((l) => l.toJson()).toList(),
+        'allGrades': allGrades.map((g) => g.toJson()).toList(),
+        'homeworks': homeworks.map((h) => h.toJson()).toList(),
+        'tests': tests.map((t) => t.toJson()).toList(),
+        'omissions': omissions.map((o) => o.toJson()).toList(),
+        'messages': messages.map((m) => m.toJson()).toList(),
+      };
+
+  factory DashboardData.fromJson(
+    Map<String, dynamic> json,
+    StoredSession session, {
+    Set<String> readMessageIds = const {},
+  }) {
+    List<T> parseList<T>(
+      Object? raw,
+      T Function(Map<String, dynamic>) parser,
+    ) {
+      if (raw is! List) return <T>[];
+      final out = <T>[];
+      for (final item in raw) {
+        if (item is Map<String, dynamic>) {
+          out.add(parser(item));
+        } else if (item is Map) {
+          out.add(parser(Map<String, dynamic>.from(item)));
+        }
+      }
+      return out;
+    }
+
+    Student? student;
+    final rawStudent = json['student'];
+    if (rawStudent is Map<String, dynamic>) {
+      student = Student.fromJson(rawStudent);
+    } else if (rawStudent is Map) {
+      student = Student.fromJson(Map<String, dynamic>.from(rawStudent));
+    }
+
+    final todayStr = DateUtils.dateOnly(DateTime.now()).toIso8601String();
+    final cacheDateStr = json['cacheDate']?.toString();
+    final isSameDay = cacheDateStr == todayStr;
+
+    final allGrades = parseList(json['allGrades'], Grade.fromJson);
+    final rawMessages = parseList(json['messages'], KretaMessage.fromJson);
+    final messages = readMessageIds.isEmpty
+        ? rawMessages
+        : rawMessages
+            .map((m) => (m.isRead ||
+                    readMessageIds.contains(m.uid) ||
+                    (m.messageId != null &&
+                        readMessageIds.contains(m.messageId!)))
+                ? (m.isRead ? m : m.copyWith(isRead: true))
+                : m)
+            .toList();
+
+    return DashboardData(
+      student: student,
+      todaysLessons:
+          isSameDay ? parseList(json['todaysLessons'], Lesson.fromJson) : const [],
+      allGrades: allGrades,
+      latestGrades: allGrades.take(5).toList(),
+      homeworks: parseList(json['homeworks'], Homework.fromJson),
+      tests: parseList(json['tests'], Test.fromJson),
+      omissions: parseList(json['omissions'], Omission.fromJson),
+      messages: messages,
+      activeSession: session,
+    );
+  }
 }
 
 /// Client for E-Kréta OAuth2 token exchange, transparent background token
@@ -301,6 +540,12 @@ class KretaClient {
         'User-Agent': KretaAuthConfig.userAgent,
         'Authorization': 'Bearer $accessToken',
         'apiKey': KretaAuthConfig.apiKey,
+      };
+
+  Map<String, String> _eugyintezesHeaders(String accessToken) => {
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': KretaAuthConfig.userAgent,
+        'Authorization': 'Bearer $accessToken',
       };
 
   /// Exchanges the intercepted OAuth2 authorization [code] and PKCE
@@ -445,32 +690,62 @@ class KretaClient {
     return jsonDecode(text);
   }
 
-  Future<dynamic> _postAuthenticatedJson(
+  Future<dynamic> _getEugyintezesJson(
     StoredSession session,
     String url,
-    Map<String, dynamic> payload,
   ) async {
     final response = await _sendWithRetryInterceptor(
       session,
-      (accessToken) => _http.post(
+      (accessToken) => _http.get(
         Uri.parse(url),
-        headers: {
-          ..._apiHeaders(accessToken),
-          'Content-Type': 'application/json; charset=UTF-8',
-        },
-        body: utf8.encode(jsonEncode(payload)),
+        headers: _eugyintezesHeaders(accessToken),
       ),
     );
 
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('POST $url failed (HTTP ${response.statusCode})');
+    if (response.statusCode != 200) {
+      return null;
     }
 
     final text = utf8.decode(response.bodyBytes).trim();
     if (text.isEmpty) {
-      return const {};
+      return const [];
     }
     return jsonDecode(text);
+  }
+
+  Future<bool> _postOrPutEugyintezes(
+    StoredSession session,
+    String url,
+    Map<String, dynamic> payload,
+  ) async {
+    final encodedBody = utf8.encode(jsonEncode(payload));
+    var response = await _sendWithRetryInterceptor(
+      session,
+      (accessToken) => _http.post(
+        Uri.parse(url),
+        headers: {
+          ..._eugyintezesHeaders(accessToken),
+          'Content-Type': 'application/json; charset=UTF-8',
+        },
+        body: encodedBody,
+      ),
+    );
+
+    if (response.statusCode == 405) {
+      response = await _sendWithRetryInterceptor(
+        session,
+        (accessToken) => _http.put(
+          Uri.parse(url),
+          headers: {
+            ..._eugyintezesHeaders(accessToken),
+            'Content-Type': 'application/json; charset=UTF-8',
+          },
+          body: encodedBody,
+        ),
+      );
+    }
+
+    return response.statusCode >= 200 && response.statusCode < 300;
   }
 
   /// Fetches timetable lessons between [from] and [to] (inclusive) using
@@ -713,57 +988,168 @@ class KretaClient {
     }
   }
 
-  /// Queries `/ellenorzo/v3/sajat/Uzenetek` (and falls back to notice/info board
-  /// items if the institution's `/Uzenetek` endpoint returns empty/404) to
-  /// return both Beérkezett (Inbox) and Elküldött (Sent) messages.
-  Future<List<KretaMessage>> fetchMessages(StoredSession session) async {
-    final results = <KretaMessage>[];
+  List<Map<String, dynamic>> _extractMessageMaps(dynamic raw) {
+    final Iterable<dynamic> items;
+    if (raw is List) {
+      items = raw;
+    } else if (raw is Map) {
+      final list = raw['lista'] ??
+          raw['uzenetek'] ??
+          raw['postaladaElemek'] ??
+          raw['items'] ??
+          raw['data'] ??
+          raw['result'];
+      items = list is List ? list : const [];
+    } else {
+      items = const [];
+    }
+    return items
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .where((e) => e['isToroltElem'] != true)
+        .toList();
+  }
 
+  KretaMessage _mergeMessages(KretaMessage existing, KretaMessage incoming) {
+    final preferIncomingBody =
+        incoming.cleanBody.length > existing.cleanBody.length ||
+            (incoming.body.isNotEmpty && existing.body.isEmpty);
+    return existing.copyWith(
+      messageId: existing.messageId ?? incoming.messageId,
+      sender: existing.sender == 'Iskolai értesítés' && incoming.sender.isNotEmpty
+          ? incoming.sender
+          : existing.sender,
+      senderTitle:
+          (existing.senderTitle == null || existing.senderTitle!.isEmpty)
+              ? incoming.senderTitle
+              : existing.senderTitle,
+      recipients: incoming.recipients.length > existing.recipients.length
+          ? incoming.recipients
+          : existing.recipients,
+      subject: (existing.subject == 'Üzenet' && incoming.subject.isNotEmpty)
+          ? incoming.subject
+          : existing.subject,
+      body: preferIncomingBody ? incoming.body : existing.body,
+      sentAt: incoming.sentAt.isAfter(existing.sentAt)
+          ? incoming.sentAt
+          : existing.sentAt,
+      isRead: existing.isRead || incoming.isRead,
+      isSent: existing.isSent || incoming.isSent,
+      hasAttachments: existing.hasAttachments || incoming.hasAttachments,
+      attachments: incoming.attachments.length > existing.attachments.length
+          ? incoming.attachments
+          : existing.attachments,
+      detailsLoaded: existing.detailsLoaded || incoming.detailsLoaded,
+    );
+  }
+
+  Future<List<KretaMessage>> _safeFetchEugyintezesFolder(
+    StoredSession session,
+    String url, {
+    bool? forceSent,
+    bool rethrowAuthErrors = false,
+  }) async {
     try {
-      final url = KretaEndpoints.getMessages(session.instituteCode);
-      final raw = await _getAuthenticatedJson(session, url);
-      if (raw is List) {
-        results.addAll(
-          raw.whereType<Map<String, dynamic>>().map(KretaMessage.fromJson),
-        );
-      } else if (raw is Map<String, dynamic>) {
-        final list = raw['lista'] ?? raw['uzenetek'] ?? raw['items'];
-        if (list is List) {
-          results.addAll(
-            list.whereType<Map<String, dynamic>>().map(KretaMessage.fromJson),
-          );
-        }
-      }
+      final raw = await _getEugyintezesJson(session, url);
+      if (raw == null) return const [];
+      return _extractMessageMaps(raw)
+          .map(
+            (m) => KretaMessage.fromJson(
+              m,
+              forceSent: forceSent,
+              detailsLoaded: false,
+            ),
+          )
+          .toList();
     } on TokenExpiredException {
-      rethrow;
+      if (rethrowAuthErrors) rethrow;
+      return const [];
     } on InvalidGrantException {
-      rethrow;
+      if (rethrowAuthErrors) rethrow;
+      return const [];
     } catch (_) {
-      // Supplementary fallback below if /ellenorzo/v3/sajat/Uzenetek is unavailable on the tenant
+      return const [];
+    }
+  }
+
+  Future<List<KretaMessage>> _safeFetchSystemBoard(
+    StoredSession session,
+    String url,
+  ) async {
+    try {
+      final raw = await _getAuthenticatedJson(session, url);
+      return _extractMessageMaps(raw)
+          .map(
+            (m) => KretaMessage.fromJson(
+              m,
+              forceSent: false,
+              isSystemMessage: true,
+              detailsLoaded: true,
+            ),
+          )
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Fetches ALL student messages by combining Kréta e-Ügyintézés mailbox
+  /// endpoints (`/postaladaelemek/sajat`, `/beerkezett`, `/elkuldott`) with
+  /// school noticeboard and infoboard system messages (`FaliujsagElemek` and
+  /// `Feljegyzesek`), deduplicating, applying local read persistence, and
+  /// sorting newest-first chronologically.
+  Future<List<KretaMessage>> fetchMessages(StoredSession session) async {
+    final sources = await Future.wait<List<KretaMessage>>([
+      _safeFetchEugyintezesFolder(
+        session,
+        KretaEndpoints.getEugyintezesSajatMessages(),
+        rethrowAuthErrors: true,
+      ),
+      _safeFetchEugyintezesFolder(
+        session,
+        KretaEndpoints.getEugyintezesInboxMessages(),
+        forceSent: false,
+      ),
+      _safeFetchEugyintezesFolder(
+        session,
+        KretaEndpoints.getEugyintezesSentMessages(),
+        forceSent: true,
+      ),
+      _safeFetchSystemBoard(
+        session,
+        KretaEndpoints.getNoticeBoard(session.instituteCode),
+      ),
+      _safeFetchSystemBoard(
+        session,
+        KretaEndpoints.getInfoBoard(session.instituteCode),
+      ),
+    ]);
+
+    final byKey = <String, KretaMessage>{};
+    void putMessage(String key, KretaMessage msg) {
+      final existing = byKey[key];
+      byKey[key] = existing == null ? msg : _mergeMessages(existing, msg);
     }
 
-    if (results.isEmpty) {
-      try {
-        final nbUrl = KretaEndpoints.getNoticeBoard(session.instituteCode);
-        final rawNb = await _getAuthenticatedJson(session, nbUrl);
-        if (rawNb is List) {
-          results.addAll(
-            rawNb.whereType<Map<String, dynamic>>().map(KretaMessage.fromJson),
-          );
-        }
-      } catch (_) {}
+    for (final msg in [...sources[0], ...sources[1], ...sources[2]]) {
+      putMessage('msg:${msg.uid}', msg);
+    }
+    for (final sysMsg in [...sources[3], ...sources[4]]) {
+      putMessage('sys:${sysMsg.uid}', sysMsg);
+    }
 
-      try {
-        final infoUrl = KretaEndpoints.getInfoBoard(session.instituteCode);
-        final rawInfo = await _getAuthenticatedJson(session, infoUrl);
-        if (rawInfo is List) {
-          results.addAll(
-            rawInfo
-                .whereType<Map<String, dynamic>>()
-                .map(KretaMessage.fromJson),
-          );
-        }
-      } catch (_) {}
+    final accountKey = TokenStorageService.accountKeyForSession(session);
+    final localReadIds =
+        await _storage.loadReadMessageIds(accountKey: accountKey);
+
+    final results = <KretaMessage>[];
+    for (final msg in byKey.values) {
+      final isLocallyRead = localReadIds.contains(msg.uid) ||
+          (msg.messageId != null && localReadIds.contains(msg.messageId)) ||
+          (msg.isSystemMessage && localReadIds.contains('sys:${msg.uid}'));
+      results.add(
+        isLocallyRead && !msg.isRead ? msg.copyWith(isRead: true) : msg,
+      );
     }
 
     for (final sent in _localSentMessages) {
@@ -776,8 +1162,153 @@ class KretaClient {
     return results;
   }
 
-  /// Sends a new message or reply via `/ellenorzo/v3/sajat/Uzenetek` and adds it
-  /// to the sent messages list.
+  /// Fetches full body, recipients, and attachment metadata for a single
+  /// e-Ügyintézés mailbox item (`/postaladaelemek/{id}`).
+  Future<KretaMessage> fetchMessageDetail(
+    StoredSession session,
+    KretaMessage message,
+  ) async {
+    if (message.isSystemMessage) {
+      return message.copyWith(detailsLoaded: true);
+    }
+
+    dynamic raw;
+    try {
+      raw = await _getEugyintezesJson(
+        session,
+        KretaEndpoints.getEugyintezesMessageDetail(message.uid),
+      );
+      if (raw is! Map) {
+        raw = await _getEugyintezesJson(
+          session,
+          KretaEndpoints.getEugyintezesMessageDetailV1(message.uid),
+        );
+      }
+    } on TokenExpiredException {
+      rethrow;
+    } on InvalidGrantException {
+      rethrow;
+    } catch (_) {
+      raw = null;
+    }
+
+    if (raw is! Map) {
+      return message;
+    }
+
+    final detailed = KretaMessage.fromJson(
+      Map<String, dynamic>.from(raw),
+      forceSent: message.isSent,
+      detailsLoaded: true,
+    );
+    return _mergeMessages(
+      message,
+      detailed.copyWith(detailsLoaded: true),
+    );
+  }
+
+  /// Marks [message] as read both locally in persistent secure storage and on
+  /// the Kréta e-Ügyintézés server (`/kommunikacio/uzenetek/olvasott`).
+  Future<void> markMessageAsRead(
+    StoredSession session,
+    KretaMessage message,
+  ) async {
+    final accountKey = TokenStorageService.accountKeyForSession(session);
+    final localKeys = <String>[
+      message.uid,
+      if (message.messageId != null && message.messageId!.isNotEmpty)
+        message.messageId!,
+      if (message.isSystemMessage) 'sys:${message.uid}',
+    ];
+    await _storage.markMessagesReadLocally(
+      localKeys,
+      accountKey: accountKey,
+    );
+
+    if (message.isSystemMessage || message.isSent) {
+      return;
+    }
+
+    final rawTargetId = (message.messageId?.trim().isNotEmpty == true)
+        ? message.messageId!.trim()
+        : message.uid.trim();
+    if (rawTargetId.isEmpty) return;
+
+    final serializedId = int.tryParse(rawTargetId) ?? rawTargetId;
+    final payload = <String, dynamic>{
+      'isOlvasott': true,
+      'uzenetAzonositoLista': [serializedId],
+    };
+
+    try {
+      final ok = await _postOrPutEugyintezes(
+        session,
+        KretaEndpoints.getMarkMessagesReadUrl(),
+        payload,
+      );
+      if (!ok) {
+        await _postOrPutEugyintezes(
+          session,
+          KretaEndpoints.getMarkMessagesReadV1Url(),
+          payload,
+        );
+      }
+    } on TokenExpiredException {
+      rethrow;
+    } on InvalidGrantException {
+      rethrow;
+    } catch (_) {
+      // Persistent local read state already saved above.
+    }
+  }
+
+  /// Downloads an attachment from Kréta e-Ügyintézés into temporary cache storage.
+  Future<File> downloadMessageAttachment(
+    StoredSession session,
+    KretaMessageAttachment attachment, {
+    Directory? targetDirectory,
+  }) async {
+    final urls = [
+      KretaEndpoints.getEugyintezesAttachmentUrl(attachment.id),
+      KretaEndpoints.getEugyintezesAttachmentMobileUrl(attachment.id),
+    ];
+
+    http.Response? successfulResponse;
+    int lastStatus = 0;
+    for (final url in urls) {
+      final response = await _sendWithRetryInterceptor(
+        session,
+        (accessToken) => _http.get(
+          Uri.parse(url),
+          headers: _eugyintezesHeaders(accessToken),
+        ),
+      );
+      lastStatus = response.statusCode;
+      if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
+        successfulResponse = response;
+        break;
+      }
+    }
+
+    if (successfulResponse == null) {
+      throw Exception(
+        'Csatolmány letöltése sikertelen (HTTP $lastStatus)',
+      );
+    }
+
+    final dir = targetDirectory ?? await getTemporaryDirectory();
+    final rawName =
+        attachment.fileName.replaceAll(RegExp(r'[\\/:*?"<>|]+'), '_').trim();
+    final safeName = rawName.isEmpty ? 'csatolmany.bin' : rawName;
+    final safeId =
+        attachment.id.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
+    final prefix = safeId.isEmpty ? 'att' : 'att_$safeId';
+    final file = File('${dir.path}/${prefix}_$safeName');
+    await file.writeAsBytes(successfulResponse.bodyBytes, flush: true);
+    return file;
+  }
+
+  /// Sends a new message or reply via e-Ügyintézés and adds it to sent history.
   Future<KretaMessage> sendMessage(
     StoredSession session, {
     required String recipient,
@@ -794,13 +1325,30 @@ class KretaClient {
       sentAt: DateTime.now(),
       isRead: true,
       isSent: true,
+      detailsLoaded: true,
     );
 
+    final payload = <String, dynamic>{
+      'targy': msg.subject,
+      'szoveg': msg.body,
+      'cimzettLista': const [],
+      'csatolmanyok': const [],
+    };
     try {
-      final url = KretaEndpoints.getMessages(session.instituteCode);
-      await _postAuthenticatedJson(session, url, msg.toJson());
+      final ok = await _postOrPutEugyintezes(
+        session,
+        KretaEndpoints.getSendEugyintezesMessageUrl(),
+        payload,
+      );
+      if (!ok) {
+        await _postOrPutEugyintezes(
+          session,
+          KretaEndpoints.getSendEugyintezesMessageV1Url(),
+          payload,
+        );
+      }
     } catch (_) {
-      // Retain in local sent messages even if institution blocks direct student POST on v3/sajat/Uzenetek
+      // Retain in local sent messages if direct free-text POST is unsupported.
     }
 
     _localSentMessages.insert(0, msg);
@@ -864,7 +1412,7 @@ class KretaClient {
       homeworks.sort((a, b) => b.creationDate.compareTo(a.creationDate));
     }
 
-    return DashboardData(
+    final payload = DashboardData(
       todaysLessons: todaysLessons,
       allGrades: allGrades,
       latestGrades: allGrades.take(5).toList(),
@@ -875,5 +1423,36 @@ class KretaClient {
       messages: results[6] as List<KretaMessage>,
       activeSession: _latestSession ?? session,
     );
+    await saveCachedDashboard(payload);
+    return payload;
+  }
+
+  /// Loads cached dashboard payload from secure local storage so Főoldal can
+  /// render cached cards immediately while background API sync completes.
+  Future<DashboardData?> loadCachedDashboard(StoredSession session) async {
+    try {
+      final acctKey = TokenStorageService.accountKeyForSession(session);
+      final raw = await _storage.loadDashboardCacheJson(acctKey);
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final readIds = await _storage.loadReadMessageIds(accountKey: acctKey);
+      return DashboardData.fromJson(
+        Map<String, dynamic>.from(decoded),
+        session,
+        readMessageIds: readIds,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Persists [data] per account for zero-wait startup rendering.
+  Future<void> saveCachedDashboard(DashboardData data) async {
+    try {
+      final acctKey =
+          TokenStorageService.accountKeyForSession(data.activeSession);
+      await _storage.saveDashboardCacheJson(acctKey, jsonEncode(data.toJson()));
+    } catch (_) {}
   }
 }

@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 /// Auth-related URLs (login, token) and Constants stay in the app (firka).
 class KretaEndpoints {
   static const String kretaBase = "e-kreta.hu";
+  static const String eugyintezesBase = "https://eugyintezes.e-kreta.hu";
   static DateFormat dateTimeFormat = DateFormat('yyyy-MM-dd');
 
   static String kreta(String iss) {
@@ -64,8 +65,40 @@ class KretaEndpoints {
   static String getTests(String iss, [DateTime? from, DateTime? to]) =>
       "${kreta(iss)}/ellenorzo/v3/sajat/BejelentettSzamonkeresek${dateQuery(from, to)}";
 
-  static String getMessages(String iss) =>
-      "${kreta(iss)}/ellenorzo/v3/sajat/Uzenetek";
+  static String getMessages(String iss) => getEugyintezesSajatMessages();
+
+  static String getEugyintezesSajatMessages() =>
+      "$eugyintezesBase/integration-kretamobile-api/v1/kommunikacio/postaladaelemek/sajat";
+
+  static String getEugyintezesInboxMessages() =>
+      "$eugyintezesBase/api/v1/kommunikacio/postaladaelemek/beerkezett";
+
+  static String getEugyintezesSentMessages() =>
+      "$eugyintezesBase/api/v1/kommunikacio/postaladaelemek/elkuldott";
+
+  static String getEugyintezesMessageDetail(String mailboxId) =>
+      "$eugyintezesBase/integration-kretamobile-api/v1/kommunikacio/postaladaelemek/$mailboxId";
+
+  static String getEugyintezesMessageDetailV1(String mailboxId) =>
+      "$eugyintezesBase/api/v1/kommunikacio/postaladaelemek/$mailboxId";
+
+  static String getMarkMessagesReadUrl() =>
+      "$eugyintezesBase/integration-kretamobile-api/v1/kommunikacio/uzenetek/olvasott";
+
+  static String getMarkMessagesReadV1Url() =>
+      "$eugyintezesBase/api/v1/kommunikacio/uzenetek/olvasott";
+
+  static String getSendEugyintezesMessageUrl() =>
+      "$eugyintezesBase/integration-kretamobile-api/v1/kommunikacio/uzenetek/kuld";
+
+  static String getSendEugyintezesMessageV1Url() =>
+      "$eugyintezesBase/api/v1/kommunikacio/uzenetek/kuld";
+
+  static String getEugyintezesAttachmentUrl(String attachmentId) =>
+      "$eugyintezesBase/api/v1/dokumentumok/uzenetek/$attachmentId";
+
+  static String getEugyintezesAttachmentMobileUrl(String attachmentId) =>
+      "$eugyintezesBase/integration-kretamobile-api/v1/dokumentumok/uzenetek/$attachmentId";
 
   static String getDktSubjects(String iss) =>
       "${kreta(iss)}/dktapi/intezmenyek/munkaterek/tanulok";

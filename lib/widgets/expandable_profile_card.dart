@@ -9,6 +9,7 @@ import 'package:kreta_api/kreta_api.dart';
 import '../services/token_storage_service.dart';
 import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
+import 'glass_card.dart';
 
 /// Sleek top-right CircleAvatar icon for the HomeScreen AppBar.
 /// Wrapped in a `Hero('profile_avatar_hero')` so tapping animates the avatar
@@ -117,7 +118,12 @@ Future<void> showStreamlinedProfileSheet({
       opaque: false,
       barrierDismissible: true,
       barrierLabel: 'Bezárás',
-      barrierColor: Colors.black.withValues(alpha: 0.65),
+      barrierColor: resolveSoftBlurBarrierColor(
+        context,
+        prefs: prefs,
+        solidDarkAlpha: 0.65,
+        solidLightAlpha: 0.45,
+      ),
       transitionDuration: const Duration(milliseconds: 320),
       reverseTransitionDuration: const Duration(milliseconds: 260),
       pageBuilder: (sheetContext, animation, secondaryAnimation) {
@@ -203,6 +209,7 @@ class _StreamlinedProfileModalSheetState
   }
 
   void _applyPrefs(UserProfilePrefs next) {
+    UserProfilePrefs.syncActiveGlobals(next);
     setState(() => _prefs = next);
     widget.onPrefsChanged(next);
   }
@@ -262,12 +269,9 @@ class _StreamlinedProfileModalSheetState
 
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
-      child: Container(
-        decoration: BoxDecoration(
-          color: theme.cardTheme.color,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
-          border: Border.all(color: theme.dividerColor),
-        ),
+      child: LiquidGlassSurface(
+        prefs: _prefs,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(22, 14, 22, 28),
           child: Column(

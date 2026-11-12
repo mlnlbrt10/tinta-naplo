@@ -15,6 +15,7 @@ import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
+import '../widgets/edge_fade_horizontal_scroll.dart';
 import '../widgets/frosted_inspection_modal.dart';
 import '../widgets/glass_card.dart';
 import 'about_app_screen.dart';
@@ -27,6 +28,415 @@ enum _AttendanceFilter {
 
   final String label;
   const _AttendanceFilter(this.label);
+}
+
+/// Absences and tardiness entries grouped into a single calendar day.
+class DailyOmissionGroup {
+  final DateTime day;
+  final List<Omission> entries;
+
+  const DailyOmissionGroup({
+    required this.day,
+    required this.entries,
+  });
+
+  /// Compact count/status badge label for the daily header pill.
+  String get summaryLabel {
+    final missedCount =
+        entries.where((o) => !OmissionsSummary.isTardiness(o)).length;
+    final tardyCount = entries.length - missedCount;
+    if (missedCount > 0 && tardyCount > 0) {
+      return '$missedCount óra • $tardyCount késés';
+    }
+    if (tardyCount > 0) {
+      return '$tardyCount késés';
+    }
+    return '$missedCount óra';
+  }
+
+  Color resolveAccentColor() {
+    if (entries.any((o) => o.state == OmissionState.unexcused)) {
+      return const Color(0xFFC62828);
+    }
+    if (entries.any(
+      (o) =>
+          o.state == OmissionState.pending || o.state == OmissionState.unknown,
+    )) {
+      return const Color(0xFFF9A825);
+    }
+    return const Color(0xFF2E7D32);
+  }
+}
+
+/// Groups omissions by local calendar date (newest day first), sorting entries
+/// within each day by lesson period (`classNo`) ascending.
+List<DailyOmissionGroup> groupOmissionsByDay(List<Omission> omissions) {
+  final grouped = <DateTime, List<Omission>>{};
+  for (final o in omissions) {
+    final local = o.date.toLocal();
+    final dayKey = DateTime(local.year, local.month, local.day);
+    grouped.putIfAbsent(dayKey, () => <Omission>[]).add(o);
+  }
+
+  final sortedDays = grouped.keys.toList()..sort((a, b) => b.compareTo(a));
+  return sortedDays.map((day) {
+    final entries = grouped[day]!
+      ..sort((a, b) {
+        final periodA = a.lesson?.classNo ?? 999;
+        final periodB = b.lesson?.classNo ?? 999;
+        final periodCmp = periodA.compareTo(periodB);
+        if (periodCmp != 0) return periodCmp;
+        final startA = a.lesson?.start ?? a.date;
+        final startB = b.lesson?.start ?? b.date;
+        final timeCmp = startA.compareTo(startB);
+        if (timeCmp != 0) return timeCmp;
+        return a.subject.name.compareTo(b.subject.name);
+      });
+    return DailyOmissionGroup(day: day, entries: List.unmodifiable(entries));
+  }).toList(growable: false);
+}
+
+/// Formats a calendar day concisely as Hungarian `Month Day. • Weekday`.
+String formatHungarianOmissionDay(DateTime day, {int? referenceYear}) {
+  const shortMonths = [
+    'Jan.',
+    'Feb.',
+    'Már.',
+    'Ápr.',
+    'Máj.',
+    'Jún.',
+    'Júl.',
+    'Aug.',
+    'Szept.',
+    'Okt.',
+    'Nov.',
+    'Dec.',
+  ];
+  const weekdays = [
+    '',
+    'Hétfő',
+    'Kedd',
+    'Szerda',
+    'Csütörtök',
+    'Péntek',
+    'Szombat',
+    'Vasárnap',
+  ];
+  final currentYear = referenceYear ?? DateTime.now().year;
+  final yearPrefix = day.year == currentYear ? '' : '${day.year}. ';
+  final month = shortMonths[(day.month - 1).clamp(0, 11)];
+  final weekday = weekdays[day.weekday.clamp(1, 7)];
+  return '$yearPrefix$month ${day.day}. • $weekday';
+}
+
+List<Omission> _filterOmissions(
+  OmissionsSummary summary,
+  _AttendanceFilter filter,
+) {
+  switch (filter) {
+    case _AttendanceFilter.certified:
+      return summary.missedLessons
+          .where((o) => o.state == OmissionState.excused)
+          .toList();
+    case _AttendanceFilter.uncertified:
+      return summary.missedLessons
+          .where((o) => o.state != OmissionState.excused)
+          .toList();
+    case _AttendanceFilter.tardiness:
+      return summary.tardinessEntries;
+    case _AttendanceFilter.all:
+      return summary.allOmissions;
+  }
+}
+
+Widget _buildOmissionFilterChips({
+  required _AttendanceFilter selected,
+  required ValueChanged<_AttendanceFilter> onSelected,
+  EdgeInsetsGeometry padding = const EdgeInsets.symmetric(horizontal: 16),
+}) {
+  return EdgeFadeHorizontalScroll(
+    padding: padding,
+    spacing: 8,
+    children: _AttendanceFilter.values.map((f) {
+      return ChoiceChip(
+        label: Text(f.label),
+        selected: selected == f,
+        onSelected: (_) => onSelected(f),
+      );
+    }).toList(),
+  );
+}
+
+Widget _buildEmptyOmissionCard({
+  required UserProfilePrefs prefs,
+  required String message,
+}) {
+  return SoftGlassCard(
+    prefs: prefs,
+    padding: const EdgeInsets.all(20),
+    borderRadius: OledTheme.largeRadius,
+    child: Row(
+      children: [
+        Icon(
+          Icons.verified_rounded,
+          color: Colors.greenAccent.withValues(alpha: 0.85),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(uwu(message)),
+        ),
+      ],
+    ),
+  );
+}
+
+void _showOmissionDetailModal(
+  BuildContext context, {
+  required UserProfilePrefs prefs,
+  required DateFormat dateFormat,
+  required Omission omission,
+}) {
+  final isLate = OmissionsSummary.isTardiness(omission);
+  final isExcused = omission.state == OmissionState.excused;
+  final isUnexcused = omission.state == OmissionState.unexcused;
+  final statusColor = isExcused
+      ? const Color(0xFF2E7D32)
+      : isUnexcused
+          ? const Color(0xFFC62828)
+          : const Color(0xFFF9A825);
+  final statusLabel = isExcused
+      ? 'Igazolt'
+      : isUnexcused
+          ? 'Igazolatlan'
+          : 'Igazolandó';
+  final subjDisplay = prefs.resolveSubjectName(
+    omission.subject.name,
+    omission.subject.uid,
+  );
+
+  showFrostedModal(
+    context: context,
+    closeMode: prefs.modalCloseMode,
+    prefs: prefs,
+    categoryLabel: isLate ? 'Késés' : 'Mulasztás / Hiányzás',
+    categoryIcon: Icons.event_busy_rounded,
+    accentColor: statusColor,
+    title: subjDisplay,
+    badgeText: isLate
+        ? '${omission.lateForMin ?? 0}p'
+        : (omission.lesson?.classNo != null ? '${omission.lesson!.classNo}.' : '!'),
+    rows: [
+      FrostedDetailRow(
+        icon: Icons.calendar_today_rounded,
+        label: 'Dátum',
+        value: dateFormat.format(omission.date.toLocal()),
+      ),
+      FrostedDetailRow(
+        icon: Icons.verified_user_rounded,
+        label: 'Státusz',
+        value: statusLabel,
+      ),
+      if (isLate)
+        FrostedDetailRow(
+          icon: Icons.timer_rounded,
+          label: 'Késés mértéke',
+          value: '${omission.lateForMin ?? 0} perc',
+        ),
+      if (omission.proofType != null &&
+          omission.proofType!.description.isNotEmpty)
+        FrostedDetailRow(
+          icon: Icons.description_rounded,
+          label: 'Igazolás típusa',
+          value: omission.proofType!.description,
+        ),
+      FrostedDetailRow(
+        icon: Icons.person_rounded,
+        label: 'Rögzítő tanár',
+        value: prefs.resolveTeacherName(omission.teacher),
+      ),
+    ],
+  );
+}
+
+class _DailyOmissionCard extends StatelessWidget {
+  final DailyOmissionGroup group;
+  final UserProfilePrefs prefs;
+  final DateFormat dateFormat;
+
+  const _DailyOmissionCard({
+    required this.group,
+    required this.prefs,
+    required this.dateFormat,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final headerColor = group.resolveAccentColor();
+    final hairlineColor = theme.dividerColor.withValues(alpha: 0.45);
+
+    return SoftGlassCard(
+      prefs: prefs,
+      borderRadius: OledTheme.largeRadius,
+      child: ClipRRect(
+        borderRadius: OledTheme.largeRadius,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 13, 16, 11),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.calendar_today_rounded,
+                  size: 16,
+                  color: headerColor,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    formatHungarianOmissionDay(group.day),
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: headerColor.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: headerColor.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  child: Text(
+                    group.summaryLabel,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: headerColor,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Divider(
+            height: 1,
+            thickness: 0.7,
+            color: theme.dividerColor.withValues(alpha: 0.55),
+          ),
+          for (int i = 0; i < group.entries.length; i++) ...[
+            _buildEntryRow(context, theme, scheme, group.entries[i]),
+            if (i < group.entries.length - 1)
+              Divider(
+                height: 1,
+                thickness: 0.6,
+                indent: 16,
+                endIndent: 16,
+                color: hairlineColor,
+              ),
+          ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEntryRow(
+    BuildContext context,
+    ThemeData theme,
+    ColorScheme scheme,
+    Omission omission,
+  ) {
+    final isLate = OmissionsSummary.isTardiness(omission);
+    final isExcused = omission.state == OmissionState.excused;
+    final isUnexcused = omission.state == OmissionState.unexcused;
+    final statusColor = isExcused
+        ? const Color(0xFF2E7D32)
+        : isUnexcused
+            ? const Color(0xFFC62828)
+            : const Color(0xFFF9A825);
+    final statusLabel = isExcused
+        ? 'Igazolt'
+        : isUnexcused
+            ? 'Igazolatlan'
+            : 'Igazolandó';
+    final subjDisplay = prefs.resolveSubjectName(
+      omission.subject.name,
+      omission.subject.uid,
+    );
+    final teacherName = prefs.resolveTeacherName(omission.teacher).trim();
+    final metaLine = teacherName.isEmpty
+        ? statusLabel
+        : '$statusLabel • $teacherName';
+
+    return InkWell(
+      onTap: () => _showOmissionDetailModal(
+        context,
+        prefs: prefs,
+        dateFormat: dateFormat,
+        omission: omission,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              decoration: BoxDecoration(
+                color: statusColor,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                isLate
+                    ? '${omission.lateForMin ?? 0} p'
+                    : (omission.lesson?.classNo != null
+                        ? '${omission.lesson!.classNo}. óra'
+                        : statusLabel),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    subjDisplay,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    metaLine,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: scheme.onSurface.withValues(alpha: 0.65),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 18,
+              color: scheme.onSurface.withValues(alpha: 0.5),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// Standalone full-screen App Settings page opened EXCLUSIVELY from the
@@ -79,21 +489,20 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(uwu('Alkalmazás beállítások')),
+    return AdaptiveBackgroundScaffold(
+      prefs: _prefs,
+      appBar: buildAdaptiveTransparentAppBar(
+        context,
+        title: uwu('Alkalmazás beállítások'),
       ),
-      body: ChristmasAndBackgroundOverlay(
+      body: MoreScreen(
+        session: widget.session,
+        student: widget.student,
+        kretaClient: widget.kretaClient,
         prefs: _prefs,
-        child: MoreScreen(
-          session: widget.session,
-          student: widget.student,
-          kretaClient: widget.kretaClient,
-          prefs: _prefs,
-          onPrefsChanged: _handlePrefsChanged,
-          onLogout: widget.onLogout,
-          settingsOnly: true,
-        ),
+        onPrefsChanged: _handlePrefsChanged,
+        onLogout: widget.onLogout,
+        settingsOnly: true,
       ),
     );
   }
@@ -162,9 +571,12 @@ class _MoreScreenState extends State<MoreScreen>
   _AttendanceFilter _attendanceFilter = _AttendanceFilter.all;
   bool _showSentMessages = false;
   bool _isLoadingModules = false;
-  String _appVersion = '1.2.6';
+  String _appVersion = '1.0.0';
   bool _initialEntrancePlayed = false;
   bool _entranceActive = false;
+
+  static const MethodChannel _fileChannel =
+      MethodChannel('hu.rekreta.rekreta_app/updater');
 
   late List<Omission> _omissions;
   late List<KretaMessage> _messages;
@@ -198,6 +610,7 @@ class _MoreScreenState extends State<MoreScreen>
     }).catchError((_) {});
     _omissions = List<Omission>.from(widget.initialOmissions);
     _messages = List<KretaMessage>.from(widget.initialMessages);
+    _loadPersistedReadIds();
     _homeStationController =
         TextEditingController(text: _currentPrefs.transitHomeStation);
     _homeTrainStationController =
@@ -217,11 +630,47 @@ class _MoreScreenState extends State<MoreScreen>
 
     if (!widget.settingsOnly &&
         widget.kretaClient != null &&
-        (_omissions.isEmpty && _messages.isEmpty)) {
+        (widget.messagesOnly || (_omissions.isEmpty && _messages.isEmpty))) {
       _refreshModules();
     } else if (widget.isActiveTab) {
       _armInitialEntranceIfNeeded();
     }
+  }
+
+  bool _isMessageRead(KretaMessage msg) {
+    if (msg.isRead) return true;
+    if (_readMessageIds.contains(msg.uid)) return true;
+    if (msg.messageId != null && _readMessageIds.contains(msg.messageId)) {
+      return true;
+    }
+    if (msg.isSystemMessage && _readMessageIds.contains('sys:${msg.uid}')) {
+      return true;
+    }
+    return false;
+  }
+
+  void _loadPersistedReadIds() {
+    const TokenStorageService()
+        .loadReadMessageIds(
+          accountKey: TokenStorageService.accountKeyForSession(widget.session),
+        )
+        .then((ids) {
+      if (!mounted || ids.isEmpty) return;
+      var changed = false;
+      setState(() {
+        _readMessageIds.addAll(ids);
+        for (var i = 0; i < _messages.length; i++) {
+          final m = _messages[i];
+          if (!m.isRead && _isMessageRead(m)) {
+            _messages[i] = m.copyWith(isRead: true);
+            changed = true;
+          }
+        }
+      });
+      if (changed) {
+        widget.onMessagesChanged?.call(List<KretaMessage>.of(_messages));
+      }
+    }).catchError((_) {});
   }
 
   void _armInitialEntranceIfNeeded() {
@@ -245,8 +694,13 @@ class _MoreScreenState extends State<MoreScreen>
     if (widget.initialOmissions.isNotEmpty && _omissions.isEmpty) {
       _omissions = List<Omission>.from(widget.initialOmissions);
     }
-    if (widget.initialMessages.isNotEmpty && _messages.isEmpty) {
-      _messages = List<KretaMessage>.from(widget.initialMessages);
+    if (widget.initialMessages != oldWidget.initialMessages &&
+        widget.initialMessages.isNotEmpty) {
+      _messages = widget.initialMessages
+          .map(
+            (m) => !m.isRead && _isMessageRead(m) ? m.copyWith(isRead: true) : m,
+          )
+          .toList();
     }
     if (widget.isActiveTab && !oldWidget.isActiveTab && !_isLoadingModules) {
       setState(() {
@@ -270,6 +724,7 @@ class _MoreScreenState extends State<MoreScreen>
   }
 
   void _updatePrefs(UserProfilePrefs nextPrefs) {
+    UserProfilePrefs.syncActiveGlobals(nextPrefs);
     setState(() => _currentPrefs = nextPrefs);
     widget.onPrefsChanged(nextPrefs);
   }
@@ -279,6 +734,26 @@ class _MoreScreenState extends State<MoreScreen>
     if (client == null) return;
     setState(() => _isLoadingModules = true);
     try {
+      if (widget.messagesOnly) {
+        final fetchedMessages = await client.fetchMessages(widget.session);
+        if (!mounted) return;
+        setState(() {
+          _messages = fetchedMessages
+              .map(
+                (m) => !m.isRead && _isMessageRead(m)
+                    ? m.copyWith(isRead: true)
+                    : m,
+              )
+              .toList();
+          _isLoadingModules = false;
+          if (widget.isActiveTab) {
+            _armInitialEntranceIfNeeded();
+          }
+        });
+        widget.onMessagesChanged?.call(List<KretaMessage>.of(_messages));
+        return;
+      }
+
       final results = await Future.wait<Object>([
         client.fetchOmissions(widget.session),
         client.fetchMessages(widget.session),
@@ -286,7 +761,12 @@ class _MoreScreenState extends State<MoreScreen>
       if (!mounted) return;
       setState(() {
         _omissions = results[0] as List<Omission>;
-        _messages = results[1] as List<KretaMessage>;
+        _messages = (results[1] as List<KretaMessage>)
+            .map(
+              (m) =>
+                  !m.isRead && _isMessageRead(m) ? m.copyWith(isRead: true) : m,
+            )
+            .toList();
         _isLoadingModules = false;
         if (widget.isActiveTab) {
           _armInitialEntranceIfNeeded();
@@ -320,33 +800,6 @@ class _MoreScreenState extends State<MoreScreen>
         themeStyle: style,
         appIconPreset: nextIcon,
       ),
-    );
-  }
-
-  void _toggleChristmasMode(bool enabled) {
-    HapticFeedback.mediumImpact();
-    final isOled = _currentPrefs.themeStyle == AppThemeStyle.oledPureBlack;
-    final String targetIcon = enabled
-        ? (isOled ? 'icon_christmas_oled' : 'icon_christmas')
-        : (isOled ? 'icon_oled' : 'icon_normal');
-    _updatePrefs(
-      _currentPrefs.copyWith(
-        christmasModeEnabled: enabled,
-        appIconPreset: targetIcon,
-      ),
-    );
-  }
-
-  void _selectAppIconPreset(String iconId) {
-    HapticFeedback.selectionClick();
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(
-        content: Text('Alkalmazás ikon módosítva! Újraindítás...'),
-        duration: Duration(milliseconds: 1500),
-      ));
-    _updatePrefs(
-      _currentPrefs.copyWith(appIconPreset: iconId),
     );
   }
 
@@ -388,37 +841,54 @@ class _MoreScreenState extends State<MoreScreen>
         .toUpperCase();
     final controller = TextEditingController(text: '#$currentHex');
 
-    final result = await showDialog<int>(
+    final result = await showSoftBlurDialog<int>(
       context: context,
+      prefs: _currentPrefs,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: Text('Érdemjegy ($grade) egyedi HEX színe'),
-          content: TextField(
-            controller: controller,
-            decoration: const InputDecoration(
-              labelText: 'HEX színkód (#RRGGBB)',
-              hintText: '#2E7D32',
-              prefixIcon: Icon(Icons.colorize_rounded),
+        final theme = Theme.of(dialogContext);
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Érdemjegy ($grade) egyedi HEX színe',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
             ),
-            autofocus: true,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Mégse'),
+            const SizedBox(height: 14),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                labelText: 'HEX színkód (#RRGGBB)',
+                hintText: '#2E7D32',
+                prefixIcon: Icon(Icons.colorize_rounded),
+              ),
+              autofocus: true,
             ),
-            FilledButton(
-              onPressed: () {
-                final cleaned = controller.text
-                    .trim()
-                    .replaceAll('#', '')
-                    .toUpperCase();
-                if (RegExp(r'^[0-9A-F]{6}$').hasMatch(cleaned)) {
-                  final parsed = int.parse('FF$cleaned', radix: 16);
-                  Navigator.of(dialogContext).pop(parsed);
-                }
-              },
-              child: const Text('Alkalmaz'),
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Mégse'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () {
+                    final cleaned = controller.text
+                        .trim()
+                        .replaceAll('#', '')
+                        .toUpperCase();
+                    if (RegExp(r'^[0-9A-F]{6}$').hasMatch(cleaned)) {
+                      final parsed = int.parse('FF$cleaned', radix: 16);
+                      Navigator.of(dialogContext).pop(parsed);
+                    }
+                  },
+                  child: const Text('Alkalmaz'),
+                ),
+              ],
             ),
           ],
         );
@@ -453,7 +923,7 @@ class _MoreScreenState extends State<MoreScreen>
       try {
         final dir = Directory(dirPath);
         if (dir.existsSync()) {
-          final file = File('${dir.path}/rekreta_settings_backup.json');
+          final file = File('${dir.path}/tinta_naplo_settings_backup.json');
           await file.writeAsString(jsonStr);
           savedFilePath = file.path;
           break;
@@ -464,48 +934,65 @@ class _MoreScreenState extends State<MoreScreen>
     await Clipboard.setData(ClipboardData(text: jsonStr));
     if (!mounted) return;
 
-    await showDialog<void>(
+    await showSoftBlurDialog<void>(
       context: context,
+      prefs: _currentPrefs,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Beállítások exportálva (JSON)'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (savedFilePath != null) ...[
-                  Text(
-                    'Mentve ide:\n$savedFilePath\n\nA JSON konfiguráció a vágólapra is felkerült.',
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                ] else
-                  const Text(
-                    'A JSON konfiguráció a vágólapra lett másolva.',
-                    style: TextStyle(fontSize: 13),
-                  ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.black26,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Text(
-                    jsonStr,
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 11,
-                    ),
-                  ),
-                ),
-              ],
+        final theme = Theme.of(dialogContext);
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Beállítások exportálva (JSON)',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
             ),
-          ),
-          actions: [
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Rendben'),
+            const SizedBox(height: 12),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 360),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (savedFilePath != null) ...[
+                      Text(
+                        'Mentve ide:\n$savedFilePath\n\nA JSON konfiguráció a vágólapra is felkerült.',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ] else
+                      const Text(
+                        'A JSON konfiguráció a vágólapra lett másolva.',
+                        style: TextStyle(fontSize: 13),
+                      ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.black26,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Text(
+                        jsonStr,
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Rendben'),
+              ),
             ),
           ],
         );
@@ -536,131 +1023,151 @@ class _MoreScreenState extends State<MoreScreen>
       } catch (_) {}
     }
 
-    final restoredPrefs = await showDialog<UserProfilePrefs>(
+    final restoredPrefs = await showSoftBlurDialog<UserProfilePrefs>(
       context: context,
+      prefs: _currentPrefs,
       builder: (dialogContext) {
         String? errorMsg;
         return StatefulBuilder(
           builder: (context, setModalState) {
-            return AlertDialog(
-              title: const Text('Beállítások importálása (JSON)'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (availableFiles.isNotEmpty) ...[
-                      const Text(
-                        'Talált JSON mentésfájlok a készüléken:',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      ...availableFiles.map((file) {
-                        final name = file.path.split('/').last;
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: OutlinedButton.icon(
-                            onPressed: () {
-                              try {
-                                final content = file.readAsStringSync();
-                                jsonController.text = content;
-                                pathController.text = file.path;
-                                setModalState(() => errorMsg = null);
-                              } catch (e) {
-                                setModalState(
-                                  () => errorMsg = 'Nem sikerült beolvasni: $e',
-                                );
-                              }
-                            },
-                            icon: const Icon(
-                              Icons.insert_drive_file_rounded,
-                              size: 16,
-                            ),
-                            label: Text(
-                              name,
-                              overflow: TextOverflow.ellipsis,
+            final theme = Theme.of(context);
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Beállítások importálása (JSON)',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (availableFiles.isNotEmpty) ...[
+                          const Text(
+                            'Talált JSON mentésfájlok a készüléken:',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
-                        );
-                      }),
-                      const SizedBox(height: 8),
-                    ],
-                    TextField(
-                      controller: pathController,
-                      decoration: InputDecoration(
-                        labelText: 'JSON fájl elérési útja (opcionális)',
-                        hintText: '/storage/.../rekreta_settings_backup.json',
-                        prefixIcon: const Icon(Icons.folder_open_rounded),
-                        suffixIcon: IconButton(
-                          tooltip: 'Beolvasás fájlból',
-                          onPressed: () {
-                            final p = pathController.text.trim();
-                            if (p.isEmpty) return;
-                            try {
-                              final f = File(p);
-                              jsonController.text = f.readAsStringSync();
-                              setModalState(() => errorMsg = null);
-                            } catch (e) {
-                              setModalState(
-                                () => errorMsg = 'Fájl hiba: $e',
-                              );
-                            }
-                          },
-                          icon: const Icon(Icons.file_upload_rounded),
+                          const SizedBox(height: 6),
+                          ...availableFiles.map((file) {
+                            final name = file.path.split('/').last;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: OutlinedButton.icon(
+                                onPressed: () {
+                                  try {
+                                    final content = file.readAsStringSync();
+                                    jsonController.text = content;
+                                    pathController.text = file.path;
+                                    setModalState(() => errorMsg = null);
+                                  } catch (e) {
+                                    setModalState(
+                                      () => errorMsg =
+                                          'Nem sikerült beolvasni: $e',
+                                    );
+                                  }
+                                },
+                                icon: const Icon(
+                                  Icons.insert_drive_file_rounded,
+                                  size: 16,
+                                ),
+                                label: Text(
+                                  name,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            );
+                          }),
+                          const SizedBox(height: 8),
+                        ],
+                        TextField(
+                          controller: pathController,
+                          decoration: InputDecoration(
+                            labelText: 'JSON fájl elérési útja (opcionális)',
+                            hintText: '/storage/.../tinta_naplo_settings_backup.json',
+                            prefixIcon: const Icon(Icons.folder_open_rounded),
+                            suffixIcon: IconButton(
+                              tooltip: 'Beolvasás fájlból',
+                              onPressed: () {
+                                final p = pathController.text.trim();
+                                if (p.isEmpty) return;
+                                try {
+                                  final f = File(p);
+                                  jsonController.text = f.readAsStringSync();
+                                  setModalState(() => errorMsg = null);
+                                } catch (e) {
+                                  setModalState(
+                                    () => errorMsg = 'Fájl hiba: $e',
+                                  );
+                                }
+                              },
+                              icon: const Icon(Icons.file_upload_rounded),
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: jsonController,
-                      maxLines: 5,
-                      decoration: const InputDecoration(
-                        labelText: 'Vagy illeszd be a JSON tartalmat',
-                        hintText: '{"schemaVersion": 2, ...}',
-                      ),
-                    ),
-                    if (errorMsg != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        errorMsg!,
-                        style: const TextStyle(
-                          color: Colors.redAccent,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: jsonController,
+                          maxLines: 5,
+                          decoration: const InputDecoration(
+                            labelText: 'Vagy illeszd be a JSON tartalmat',
+                            hintText: '{"schemaVersion": 2, ...}',
+                          ),
                         ),
-                      ),
-                    ],
+                        if (errorMsg != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            errorMsg!,
+                            style: const TextStyle(
+                              color: Colors.redAccent,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: const Text('Mégse'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: () {
+                        try {
+                          String raw = jsonController.text.trim();
+                          if (raw.isEmpty &&
+                              pathController.text.trim().isNotEmpty) {
+                            raw = File(pathController.text.trim())
+                                .readAsStringSync();
+                          }
+                          final parsed =
+                              UserProfilePrefs.fromExportJsonString(raw);
+                          Navigator.of(dialogContext).pop(parsed);
+                        } catch (e) {
+                          setModalState(
+                            () => errorMsg = 'Érvénytelen JSON formátum: $e',
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.restore_rounded, size: 18),
+                      label: const Text('Visszaállítás'),
+                    ),
                   ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Mégse'),
-                ),
-                FilledButton.icon(
-                  onPressed: () {
-                    try {
-                      String raw = jsonController.text.trim();
-                      if (raw.isEmpty &&
-                          pathController.text.trim().isNotEmpty) {
-                        raw = File(pathController.text.trim())
-                            .readAsStringSync();
-                      }
-                      final parsed =
-                          UserProfilePrefs.fromExportJsonString(raw);
-                      Navigator.of(dialogContext).pop(parsed);
-                    } catch (e) {
-                      setModalState(
-                        () => errorMsg = 'Érvénytelen JSON formátum: $e',
-                      );
-                    }
-                  },
-                  icon: const Icon(Icons.restore_rounded, size: 18),
-                  label: const Text('Visszaállítás'),
                 ),
               ],
             );
@@ -746,170 +1253,453 @@ class _MoreScreenState extends State<MoreScreen>
     return sorted;
   }
 
+  Future<void> _downloadAndOpenAttachment(
+    BuildContext feedbackContext,
+    KretaMessageAttachment attachment,
+    ValueNotifier<String?> downloadingIdNotifier,
+    bool Function() isSheetClosed,
+  ) async {
+    final client = widget.kretaClient;
+    if (client == null) return;
+    if (!isSheetClosed()) {
+      downloadingIdNotifier.value = attachment.id;
+    }
+    try {
+      final file = await client.downloadMessageAttachment(
+        widget.session,
+        attachment,
+      );
+      if (Platform.isAndroid) {
+        await _fileChannel.invokeMethod<String>('openFile', {
+          'filePath': file.path,
+        });
+      }
+    } catch (e) {
+      if (feedbackContext.mounted) {
+        ScaffoldMessenger.of(feedbackContext).showSnackBar(
+          SnackBar(
+            content: Text(
+              uwu('Csatolmány megnyitása sikertelen: $e'),
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (!isSheetClosed()) {
+        downloadingIdNotifier.value = null;
+      }
+    }
+  }
+
   void _openMessageDetailModal(KretaMessage msg) {
     HapticFeedback.lightImpact();
     setState(() {
       _readMessageIds.add(msg.uid);
-      final idx = _messages.indexWhere((m) => m.uid == msg.uid);
+      if (msg.messageId != null && msg.messageId!.isNotEmpty) {
+        _readMessageIds.add(msg.messageId!);
+      }
+      if (msg.isSystemMessage) {
+        _readMessageIds.add('sys:${msg.uid}');
+      }
+      final idx = _messages.indexWhere(
+        (m) => m.uid == msg.uid && m.isSystemMessage == msg.isSystemMessage,
+      );
       if (idx != -1) {
         _messages[idx] = _messages[idx].copyWith(isRead: true);
       }
     });
     widget.onMessagesChanged?.call(List<KretaMessage>.of(_messages));
 
+    final client = widget.kretaClient;
+    if (client != null) {
+      unawaited(
+        client.markMessageAsRead(widget.session, msg).catchError((_) {}),
+      );
+    } else {
+      unawaited(
+        const TokenStorageService().markMessagesReadLocally(
+          [
+            msg.uid,
+            if (msg.messageId != null && msg.messageId!.isNotEmpty)
+              msg.messageId!,
+            if (msg.isSystemMessage) 'sys:${msg.uid}',
+          ],
+          accountKey: TokenStorageService.accountKeyForSession(widget.session),
+        ),
+      );
+    }
+
+    final shouldFetchDetails =
+        !msg.isSystemMessage && !msg.detailsLoaded && client != null;
+    final msgNotifier = ValueNotifier<KretaMessage>(msg.copyWith(isRead: true));
+    final loadingNotifier = ValueNotifier<bool>(shouldFetchDetails);
+    final downloadingIdNotifier = ValueNotifier<String?>(null);
+    var sheetClosed = false;
+
+    if (shouldFetchDetails) {
+      client.fetchMessageDetail(widget.session, msg).then((detailed) {
+        final merged = detailed.copyWith(isRead: true, detailsLoaded: true);
+        if (!sheetClosed) {
+          msgNotifier.value = merged;
+          loadingNotifier.value = false;
+        }
+        if (mounted) {
+          setState(() {
+            final idx = _messages.indexWhere(
+              (m) =>
+                  m.uid == msg.uid && m.isSystemMessage == msg.isSystemMessage,
+            );
+            if (idx != -1) {
+              _messages[idx] = merged;
+            }
+          });
+          widget.onMessagesChanged?.call(List<KretaMessage>.of(_messages));
+        }
+      }).catchError((_) {
+        if (!sheetClosed) {
+          loadingNotifier.value = false;
+        }
+      });
+    }
+
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
+      barrierColor: resolveSoftBlurBarrierColor(context, prefs: _currentPrefs),
       builder: (sheetContext) {
         final theme = Theme.of(sheetContext);
         final scheme = theme.colorScheme;
-        return Container(
-          decoration: BoxDecoration(
-            color: theme.cardTheme.color,
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(32)),
-            border: Border.all(color: theme.dividerColor),
-          ),
+        return LiquidGlassSurface(
+          prefs: _currentPrefs,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
           child: DraggableScrollableSheet(
             initialChildSize: 0.78,
             minChildSize: 0.5,
             maxChildSize: 0.94,
             expand: false,
             builder: (context, scrollController) {
-              return SingleChildScrollView(
-                controller: scrollController,
-                padding: const EdgeInsets.fromLTRB(22, 14, 22, 32),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 42,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: scheme.onSurface.withValues(alpha: 0.24),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          width: 46,
-                          height: 46,
-                          decoration: BoxDecoration(
-                            color: scheme.primary.withValues(alpha: 0.18),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Icon(
-                            Icons.mail_rounded,
-                            color: scheme.primary,
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                msg.subject,
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w900,
+              return ValueListenableBuilder<KretaMessage>(
+                valueListenable: msgNotifier,
+                builder: (context, current, _) {
+                  final senderDisplay =
+                      _currentPrefs.resolveTeacherName(current.sender);
+                  final senderLine = current.senderTitle != null &&
+                          current.senderTitle!.isNotEmpty
+                      ? '$senderDisplay (${current.senderTitle})'
+                      : senderDisplay;
+                  return ValueListenableBuilder<bool>(
+                    valueListenable: loadingNotifier,
+                    builder: (context, isLoadingDetails, _) {
+                      return SingleChildScrollView(
+                        controller: scrollController,
+                        padding: const EdgeInsets.fromLTRB(22, 14, 22, 32),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Center(
+                              child: Container(
+                                width: 42,
+                                height: 4,
+                                decoration: BoxDecoration(
+                                  color: scheme.onSurface
+                                      .withValues(alpha: 0.24),
+                                  borderRadius: BorderRadius.circular(4),
                                 ),
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Feladó: ${_currentPrefs.resolveTeacherName(msg.sender)}',
-                                style: theme.textTheme.labelMedium?.copyWith(
-                                  color: scheme.primary,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              if (msg.recipients.isNotEmpty) ...[
-                                const SizedBox(height: 2),
-                                Text(
-                                  'Címzett: ${msg.recipients.join(", ")}',
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: scheme.onSurface
-                                        .withValues(alpha: 0.65),
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  width: 46,
+                                  height: 46,
+                                  decoration: BoxDecoration(
+                                    color:
+                                        scheme.primary.withValues(alpha: 0.18),
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: Icon(
+                                    current.isSystemMessage
+                                        ? Icons.campaign_rounded
+                                        : Icons.mail_rounded,
+                                    color: scheme.primary,
                                   ),
                                 ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        current.subject,
+                                        style: theme.textTheme.titleMedium
+                                            ?.copyWith(
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Feladó: $senderLine',
+                                        style: theme.textTheme.labelMedium
+                                            ?.copyWith(
+                                          color: scheme.primary,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      if (current.recipients.isNotEmpty) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Címzett: ${current.recipients.join(", ")}',
+                                          style: theme.textTheme.labelSmall
+                                              ?.copyWith(
+                                            color: scheme.onSurface
+                                                .withValues(alpha: 0.65),
+                                          ),
+                                        ),
+                                      ],
+                                      const SizedBox(height: 2),
+                                      Row(
+                                        children: [
+                                          Text(
+                                            _dateTimeFormat.format(
+                                              current.sentAt.toLocal(),
+                                            ),
+                                            style: theme.textTheme.labelSmall
+                                                ?.copyWith(
+                                              color: scheme.onSurface
+                                                  .withValues(alpha: 0.55),
+                                            ),
+                                          ),
+                                          if (current.isSystemMessage) ...[
+                                            const SizedBox(width: 8),
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 7,
+                                                vertical: 2,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: scheme.primary
+                                                    .withValues(alpha: 0.14),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                              ),
+                                              child: Text(
+                                                'Rendszer',
+                                                style: theme
+                                                    .textTheme.labelSmall
+                                                    ?.copyWith(
+                                                  color: scheme.primary,
+                                                  fontWeight: FontWeight.w700,
+                                                  fontSize: 10,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  onPressed: () =>
+                                      Navigator.of(sheetContext).pop(),
+                                  icon: const Icon(Icons.close_rounded),
+                                ),
                               ],
-                              const SizedBox(height: 2),
-                              Text(
-                                _dateTimeFormat.format(msg.sentAt.toLocal()),
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color:
-                                      scheme.onSurface.withValues(alpha: 0.55),
+                            ),
+                            if (isLoadingDetails) ...[
+                              const SizedBox(height: 12),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: const LinearProgressIndicator(
+                                  minHeight: 3,
                                 ),
                               ),
                             ],
-                          ),
+                            const SizedBox(height: 16),
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: scheme.surfaceContainerHigh,
+                                borderRadius: OledTheme.cardRadius,
+                                border: Border.all(color: theme.dividerColor),
+                              ),
+                              child: SelectableText(
+                                current.cleanBody.isNotEmpty
+                                    ? current.cleanBody
+                                    : (isLoadingDetails
+                                        ? 'Üzenet tartalmának betöltése...'
+                                        : 'Üres üzenetszöveg.'),
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  height: 1.45,
+                                  color: scheme.onSurface,
+                                ),
+                              ),
+                            ),
+                            if (current.attachments.isNotEmpty ||
+                                (current.hasAttachments &&
+                                    isLoadingDetails)) ...[
+                              const SizedBox(height: 14),
+                              Text(
+                                'Csatolmányok',
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  color:
+                                      scheme.onSurface.withValues(alpha: 0.78),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              if (current.attachments.isEmpty &&
+                                  isLoadingDetails)
+                                Text(
+                                  'Csatolmányok betöltése...',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: scheme.onSurface
+                                        .withValues(alpha: 0.6),
+                                  ),
+                                )
+                              else
+                                ValueListenableBuilder<String?>(
+                                  valueListenable: downloadingIdNotifier,
+                                  builder: (context, downloadingId, _) {
+                                    return Column(
+                                      children: current.attachments.map((att) {
+                                        final isDownloading =
+                                            downloadingId == att.id;
+                                        return Padding(
+                                          padding:
+                                              const EdgeInsets.only(bottom: 8),
+                                          child: InkWell(
+                                            borderRadius:
+                                                BorderRadius.circular(14),
+                                            onTap: isDownloading
+                                                ? null
+                                                : () =>
+                                                    _downloadAndOpenAttachment(
+                                                      sheetContext,
+                                                      att,
+                                                      downloadingIdNotifier,
+                                                      () => sheetClosed,
+                                                    ),
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 12,
+                                                vertical: 10,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color:
+                                                    scheme.surfaceContainerHigh,
+                                                borderRadius:
+                                                    BorderRadius.circular(14),
+                                                border: Border.all(
+                                                  color: theme.dividerColor,
+                                                ),
+                                              ),
+                                              child: Row(
+                                                children: [
+                                                  Icon(
+                                                    Icons.attach_file_rounded,
+                                                    size: 18,
+                                                    color: scheme.primary,
+                                                  ),
+                                                  const SizedBox(width: 10),
+                                                  Expanded(
+                                                    child: Text(
+                                                      att.fileName,
+                                                      style: theme
+                                                          .textTheme.bodySmall
+                                                          ?.copyWith(
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                      ),
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  if (isDownloading)
+                                                    const SizedBox(
+                                                      width: 16,
+                                                      height: 16,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                      ),
+                                                    )
+                                                  else
+                                                    Icon(
+                                                      Icons
+                                                          .download_rounded,
+                                                      size: 18,
+                                                      color: scheme.primary,
+                                                    ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      }).toList(),
+                                    );
+                                  },
+                                ),
+                            ],
+                            const SizedBox(height: 18),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: () =>
+                                        Navigator.of(sheetContext).pop(),
+                                    child: const Text('Bezárás'),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  flex: 2,
+                                  child: FilledButton.icon(
+                                    onPressed: () {
+                                      Navigator.of(sheetContext).pop();
+                                      _openMessageComposerDialog(
+                                        initialRecipient: current.sender,
+                                        initialSubject:
+                                            current.subject.startsWith('Re:')
+                                                ? current.subject
+                                                : 'Re: ${current.subject}',
+                                      );
+                                    },
+                                    icon: const Icon(
+                                      Icons.reply_rounded,
+                                      size: 18,
+                                    ),
+                                    label: const Text('Válasz küldése'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
-                        IconButton(
-                          onPressed: () => Navigator.of(sheetContext).pop(),
-                          icon: const Icon(Icons.close_rounded),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: scheme.surfaceContainerHigh,
-                        borderRadius: OledTheme.cardRadius,
-                        border: Border.all(color: theme.dividerColor),
-                      ),
-                      child: SelectableText(
-                        msg.cleanBody.isNotEmpty
-                            ? msg.cleanBody
-                            : 'Üres üzenetszöveg.',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          height: 1.45,
-                          color: scheme.onSurface,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => Navigator.of(sheetContext).pop(),
-                            child: const Text('Bezárás'),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          flex: 2,
-                          child: FilledButton.icon(
-                            onPressed: () {
-                              Navigator.of(sheetContext).pop();
-                              _openMessageComposerDialog(
-                                initialRecipient: msg.sender,
-                                initialSubject: msg.subject.startsWith('Re:')
-                                    ? msg.subject
-                                    : 'Re: ${msg.subject}',
-                              );
-                            },
-                            icon: const Icon(Icons.reply_rounded, size: 18),
-                            label: const Text('Válasz küldése'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                      );
+                    },
+                  );
+                },
               );
             },
           ),
         );
       },
-    );
+    ).whenComplete(() {
+      sheetClosed = true;
+      msgNotifier.dispose();
+      loadingNotifier.dispose();
+      downloadingIdNotifier.dispose();
+    });
   }
 
   /// Opens the Kréta Message Composer dialog with live teacher/staff
@@ -926,8 +1716,9 @@ class _MoreScreenState extends State<MoreScreen>
         TextEditingController(text: initialSubject ?? '');
     final bodyController = TextEditingController();
 
-    final sent = await showDialog<KretaMessage>(
+    final sent = await showSoftBlurDialog<KretaMessage>(
       context: context,
+      prefs: _currentPrefs,
       builder: (dialogContext) {
         bool isSending = false;
         return StatefulBuilder(
@@ -941,160 +1732,175 @@ class _MoreScreenState extends State<MoreScreen>
                   c.toLowerCase() != query;
             }).take(6).toList();
 
-            return AlertDialog(
-              title: Text(
-                initialRecipient != null ? 'Válasz üzenet' : 'Új Kréta üzenet',
-              ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    TextField(
-                      controller: recipientController,
-                      onChanged: (_) => setModalState(() {}),
-                      decoration: InputDecoration(
-                        labelText: 'Címzett (tanár / titkárság)',
-                        hintText: 'Kezdj el gépelni a kereséshez...',
-                        prefixIcon: const Icon(Icons.person_search_rounded),
-                        suffixIcon: recipientController.text.isNotEmpty
-                            ? IconButton(
-                                icon: const Icon(Icons.clear_rounded, size: 18),
-                                onPressed: () {
-                                  recipientController.clear();
-                                  setModalState(() {});
-                                },
-                              )
-                            : null,
-                      ),
-                    ),
-                    if (matchingContacts.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: scheme.surfaceContainerHigh,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: scheme.primary.withValues(alpha: 0.35),
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  initialRecipient != null ? 'Válasz üzenet' : 'Új Kréta üzenet',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TextField(
+                          controller: recipientController,
+                          onChanged: (_) => setModalState(() {}),
+                          decoration: InputDecoration(
+                            labelText: 'Címzett (tanár / titkárság)',
+                            hintText: 'Kezdj el gépelni a kereséshez...',
+                            prefixIcon: const Icon(Icons.person_search_rounded),
+                            suffixIcon: recipientController.text.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear_rounded, size: 18),
+                                    onPressed: () {
+                                      recipientController.clear();
+                                      setModalState(() {});
+                                    },
+                                  )
+                                : null,
                           ),
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
+                        if (matchingContacts.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: scheme.surfaceContainerHigh,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: scheme.primary.withValues(alpha: 0.35),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(
-                                  Icons.auto_awesome_rounded,
-                                  size: 13,
-                                  color: scheme.primary,
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.auto_awesome_rounded,
+                                      size: 13,
+                                      color: scheme.primary,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'Javasolt címzettek (Kréta névjegyzék):',
+                                      style: theme.textTheme.labelSmall?.copyWith(
+                                        color: scheme.primary,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 10.5,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  'Javasolt címzettek (Kréta névjegyzék):',
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: scheme.primary,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 10.5,
-                                  ),
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 6,
+                                  children: matchingContacts.map((contact) {
+                                    return ActionChip(
+                                      visualDensity: VisualDensity.compact,
+                                      avatar: Icon(
+                                        Icons.person_rounded,
+                                        size: 14,
+                                        color: scheme.primary,
+                                      ),
+                                      label: Text(
+                                        contact,
+                                        style: const TextStyle(
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      onPressed: () {
+                                        HapticFeedback.selectionClick();
+                                        recipientController.text = contact;
+                                        recipientController.selection =
+                                            TextSelection.fromPosition(
+                                          TextPosition(offset: contact.length),
+                                        );
+                                        setModalState(() {});
+                                      },
+                                    );
+                                  }).toList(),
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 6),
-                            Wrap(
-                              spacing: 6,
-                              runSpacing: 6,
-                              children: matchingContacts.map((contact) {
-                                return ActionChip(
-                                  visualDensity: VisualDensity.compact,
-                                  avatar: Icon(
-                                    Icons.person_rounded,
-                                    size: 14,
-                                    color: scheme.primary,
-                                  ),
-                                  label: Text(
-                                    contact,
-                                    style: const TextStyle(
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  onPressed: () {
-                                    HapticFeedback.selectionClick();
-                                    recipientController.text = contact;
-                                    recipientController.selection =
-                                        TextSelection.fromPosition(
-                                      TextPosition(offset: contact.length),
-                                    );
-                                    setModalState(() {});
-                                  },
-                                );
-                              }).toList(),
-                            ),
-                          ],
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: subjectController,
+                          decoration: const InputDecoration(
+                            labelText: 'Tárgy',
+                            hintText: 'pl. Hiányzás igazolása',
+                            prefixIcon: Icon(Icons.subject_rounded),
+                          ),
                         ),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: subjectController,
-                      decoration: const InputDecoration(
-                        labelText: 'Tárgy',
-                        hintText: 'pl. Hiányzás igazolása',
-                        prefixIcon: Icon(Icons.subject_rounded),
-                      ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: bodyController,
+                          maxLines: 5,
+                          decoration: const InputDecoration(
+                            labelText: 'Üzenet szövege',
+                            hintText: 'Írd ide az üzenetedet...',
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: bodyController,
-                      maxLines: 5,
-                      decoration: const InputDecoration(
-                        labelText: 'Üzenet szövege',
-                        hintText: 'Írd ide az üzenetedet...',
-                      ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: isSending
+                          ? null
+                          : () => Navigator.of(dialogContext).pop(),
+                      child: const Text('Mégse'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: isSending
+                          ? null
+                          : () async {
+                              final recip = recipientController.text.trim();
+                              final subj = subjectController.text.trim();
+                              final body = bodyController.text.trim();
+                              if (recip.isEmpty || subj.isEmpty || body.isEmpty) {
+                                return;
+                              }
+                              setModalState(() => isSending = true);
+                              final client =
+                                  widget.kretaClient ?? KretaClient();
+                              final created = await client.sendMessage(
+                                widget.session,
+                                recipient: recip,
+                                subject: subj,
+                                body: body,
+                                senderName: widget.student?.name ??
+                                    _currentPrefs.nickname ??
+                                    widget.session.userName ??
+                                    '',
+                              );
+                              if (dialogContext.mounted) {
+                                Navigator.of(dialogContext).pop(created);
+                              }
+                            },
+                      icon: const Icon(Icons.send_rounded, size: 18),
+                      label: Text(isSending ? 'Küldés...' : 'Küldés'),
                     ),
                   ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: isSending
-                      ? null
-                      : () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Mégse'),
-                ),
-                FilledButton.icon(
-                  onPressed: isSending
-                      ? null
-                      : () async {
-                          final recip = recipientController.text.trim();
-                          final subj = subjectController.text.trim();
-                          final body = bodyController.text.trim();
-                          if (recip.isEmpty || subj.isEmpty || body.isEmpty) {
-                            return;
-                          }
-                          setModalState(() => isSending = true);
-                          final client =
-                              widget.kretaClient ?? KretaClient();
-                          final created = await client.sendMessage(
-                            widget.session,
-                            recipient: recip,
-                            subject: subj,
-                            body: body,
-                            senderName: widget.student?.name ??
-                                _currentPrefs.nickname ??
-                                widget.session.userName ??
-                                '',
-                          );
-                          if (dialogContext.mounted) {
-                            Navigator.of(dialogContext).pop(created);
-                          }
-                        },
-                  icon: const Icon(Icons.send_rounded, size: 18),
-                  label: Text(isSending ? 'Küldés...' : 'Küldés'),
                 ),
               ],
             );
@@ -1108,6 +1914,7 @@ class _MoreScreenState extends State<MoreScreen>
         _messages.insert(0, sent);
         _showSentMessages = true;
       });
+      widget.onMessagesChanged?.call(List<KretaMessage>.of(_messages));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(uwu('Üzenet sikeresen elküldve: ${sent.subject}')),
@@ -1148,15 +1955,15 @@ class _MoreScreenState extends State<MoreScreen>
           physics: const BouncingScrollPhysics(
             parent: AlwaysScrollableScrollPhysics(),
           ),
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
-          children: [
-            if (widget.messagesOnly)
-              _buildMessagesModuleCard(theme, scheme)
-                  .staggeredEntrance(0, enabled: _entranceActive)
-            else
-              _buildAttendanceModuleCard(theme, scheme)
-                  .staggeredEntrance(0, enabled: _entranceActive),
-          ],
+          padding: widget.messagesOnly
+              ? const EdgeInsets.fromLTRB(16, 12, 16, 112)
+              : const EdgeInsets.fromLTRB(0, 12, 0, 112),
+          children: widget.messagesOnly
+              ? [
+                  _buildMessagesModuleCard(theme, scheme)
+                      .staggeredEntrance(0, enabled: _entranceActive),
+                ]
+              : _buildAttendanceTabChildren(theme, scheme),
         ),
       );
     }
@@ -1166,7 +1973,12 @@ class _MoreScreenState extends State<MoreScreen>
       physics: const BouncingScrollPhysics(
         parent: AlwaysScrollableScrollPhysics(),
       ),
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 36),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        adaptiveAppBarTopPadding(context),
+        16,
+        36,
+      ),
       children: [
         _SettingsAccordionCard(
           icon: Icons.manage_accounts_rounded,
@@ -1230,7 +2042,7 @@ class _MoreScreenState extends State<MoreScreen>
         _SettingsAccordionCard(
           icon: Icons.palette_rounded,
           title: 'Megjelenés és témák',
-          subtitle: 'OLED Fekete, Material You, Ikonok, Háttér és Ablakok',
+          subtitle: 'OLED Fekete, Material You, Háttér és Ablakok',
           christmasCap: _currentPrefs.christmasModeEnabled,
           prefs: _currentPrefs,
           stateListenable: _stateVersion,
@@ -1306,24 +2118,7 @@ class _MoreScreenState extends State<MoreScreen>
               ),
             ],
             const Divider(height: 20),
-            SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              activeThumbColor: const Color(0xFFFF5252),
-              title: const Text(
-                'Karácsonyi mód (Ünnepi hóesés)',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
-              ),
-              subtitle: Text(
-                'Fizikai alapú hóesés animáció a háttérben, havas kártyaszélek és ünnepi ikon',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: scheme.onSurface.withValues(alpha: 0.68),
-                ),
-              ),
-              value: _currentPrefs.christmasModeEnabled,
-              onChanged: _toggleChristmasMode,
-            ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
             Text(
               'Alkalmazás megjelenési módja:',
               style: theme.textTheme.labelMedium?.copyWith(
@@ -1395,9 +2190,9 @@ class _MoreScreenState extends State<MoreScreen>
               ),
             ),
             const SizedBox(height: 10),
-            Wrap(
+            EdgeFadeHorizontalScroll(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               spacing: 10,
-              runSpacing: 10,
               children: OledTheme.avatarColors.map((color) {
                 final colorVal = color.toARGB32();
                 final selected = !_currentPrefs.useDynamicColor &&
@@ -1430,112 +2225,6 @@ class _MoreScreenState extends State<MoreScreen>
                 );
               }).toList(),
             ),
-            const SizedBox(height: 18),
-            Text(
-              'Alkalmazás ikon választó (Azonnali váltás):',
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: scheme.onSurface.withValues(alpha: 0.72),
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 10),
-            GridView.count(
-              crossAxisCount: 2,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              mainAxisSpacing: 10,
-              crossAxisSpacing: 10,
-              childAspectRatio: 2.35,
-              children: AppIconPresetInfo.presets.map((preset) {
-                final resolvedActive =
-                    AppIconPresetInfo.resolve(_currentPrefs);
-                final selected = resolvedActive.id == preset.id;
-                return InkWell(
-                  borderRadius: BorderRadius.circular(18),
-                  onTap: () => _selectAppIconPreset(preset.id),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: selected
-                          ? scheme.primary.withValues(alpha: 0.18)
-                          : scheme.surfaceContainerHigh,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: selected ? scheme.primary : theme.dividerColor,
-                        width: selected ? 1.8 : 1.0,
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Image.asset(
-                            preset.assetPath,
-                            width: 42,
-                            height: 42,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) => Container(
-                              width: 42,
-                              height: 42,
-                              color: preset.backgroundColor,
-                              child: Icon(
-                                preset.icon,
-                                size: 22,
-                                color: preset.primaryColor,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                preset.label,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: selected
-                                      ? FontWeight.w900
-                                      : FontWeight.w700,
-                                  color: selected
-                                      ? scheme.primary
-                                      : scheme.onSurface,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                preset.subtitle,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: scheme.onSurface
-                                      .withValues(alpha: 0.62),
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (selected)
-                          Icon(
-                            Icons.check_circle_rounded,
-                            size: 18,
-                            color: scheme.primary,
-                          ),
-                      ],
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
             const SizedBox(height: 16),
             Text(
               'Háttér effektus / atmoszféra:',
@@ -1545,9 +2234,9 @@ class _MoreScreenState extends State<MoreScreen>
               ),
             ),
             const SizedBox(height: 8),
-            Wrap(
+            EdgeFadeHorizontalScroll(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               spacing: 8,
-              runSpacing: 8,
               children: BackgroundPresetInfo.presets.map((bg) {
                 final selected = _currentPrefs.backgroundPreset == bg.id;
                 return ChoiceChip(
@@ -1582,9 +2271,9 @@ class _MoreScreenState extends State<MoreScreen>
               ),
             ),
             const SizedBox(height: 8),
-            Wrap(
+            EdgeFadeHorizontalScroll(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               spacing: 8,
-              runSpacing: 8,
               children: ModalCloseButtonMode.values.map((mode) {
                 final selected = _currentPrefs.modalCloseMode == mode;
                 return ChoiceChip(
@@ -1676,9 +2365,9 @@ class _MoreScreenState extends State<MoreScreen>
               }).toList(),
             ),
             const SizedBox(height: 14),
-            Wrap(
+            EdgeFadeHorizontalScroll(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               spacing: 10,
-              runSpacing: 10,
               children: [
                 ...OledTheme.gradeColorPalette.map((paletteColor) {
                   final val = paletteColor.toARGB32();
@@ -1795,9 +2484,9 @@ class _MoreScreenState extends State<MoreScreen>
               ),
             ),
             const SizedBox(height: 8),
-            Wrap(
+            EdgeFadeHorizontalScroll(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               spacing: 8,
-              runSpacing: 8,
               children: [
                 ChoiceChip(
                   showCheckmark: false,
@@ -1918,116 +2607,6 @@ class _MoreScreenState extends State<MoreScreen>
         const SizedBox(height: 12),
 
         _SettingsAccordionCard(
-          icon: Icons.school_rounded,
-          title: 'Ösztöndíj kalkulátor',
-          subtitle: _currentPrefs.scholarshipBasicEducation
-              ? 'Ágazati alapoktatás (9–10. évf.)'
-              : 'Szakirányú oktatás (11. évfolyamtól)',
-          christmasCap: _currentPrefs.christmasModeEnabled,
-          prefs: _currentPrefs,
-          stateListenable: _stateVersion,
-          prefsGetter: () => _currentPrefs,
-          childrenBuilder: () => [
-            Text(
-              'Szakképzési ösztöndíj',
-              style: theme.textTheme.labelLarge
-                  ?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'Képzési szakasz:',
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: scheme.onSurface.withValues(alpha: 0.72),
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ChoiceChip(
-                  showCheckmark: false,
-                  label: const Text('Szakirányú oktatás'),
-                  selected: !_currentPrefs.scholarshipBasicEducation,
-                  onSelected: (_) => _updatePrefs(
-                    _currentPrefs.withExtra('scholarshipBasic', false),
-                  ),
-                ),
-                ChoiceChip(
-                  showCheckmark: false,
-                  label: const Text('Ágazati alapoktatás (9–10. évf.)'),
-                  selected: _currentPrefs.scholarshipBasicEducation,
-                  onSelected: (_) => _updatePrefs(
-                    _currentPrefs.withExtra('scholarshipBasic', true),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Text(
-              'Iskolatípus:',
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: scheme.onSurface.withValues(alpha: 0.72),
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ChoiceChip(
-                  showCheckmark: false,
-                  label: const Text('Technikum (8 000 Ft / hó)'),
-                  selected: _currentPrefs.scholarshipSchoolType == 'technikum',
-                  onSelected: (_) => _updatePrefs(
-                    _currentPrefs.withExtra('scholarshipSchoolType', 'technikum'),
-                  ),
-                ),
-                ChoiceChip(
-                  showCheckmark: false,
-                  label: const Text('Szakképző (16 000 Ft / hó)'),
-                  selected: _currentPrefs.scholarshipSchoolType == 'szakkepzo',
-                  onSelected: (_) => _updatePrefs(
-                    _currentPrefs.withExtra('scholarshipSchoolType', 'szakkepzo'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            for (final (range, amount) in const [
-              ('2,00 – 2,99', '8 000 Ft / hó'),
-              ('3,00 – 3,99', '25 000 Ft / hó'),
-              ('4,00 – 4,49', '42 000 Ft / hó'),
-              ('4,50 – 5,00', '59 000 Ft / hó'),
-            ])
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      '$range:',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    Text(
-                      amount,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: scheme.primary,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        ),
-        const SizedBox(height: 12),
-
-        _SettingsAccordionCard(
           icon: Icons.import_export_rounded,
           title: 'Beállítások exportálása / importálása',
           subtitle: 'JSON biztonsági mentés készítése és visszaállítása',
@@ -2069,7 +2648,7 @@ class _MoreScreenState extends State<MoreScreen>
         _SettingsAccordionCard(
           icon: Icons.info_outline_rounded,
           title: uwu('Rendszer / Névjegy'),
-          subtitle: 'reKRETA v$_appVersion • GitHub OTA frissítő',
+          subtitle: 'Tinta Napló v$_appVersion • GitHub OTA frissítő',
           christmasCap: _currentPrefs.christmasModeEnabled,
           prefs: _currentPrefs,
           stateListenable: _stateVersion,
@@ -2078,9 +2657,9 @@ class _MoreScreenState extends State<MoreScreen>
             _buildRow(
               scheme,
               uwu('Alkalmazás'),
-              uwu('reKRETA v$_appVersion'),
+              uwu('Tinta Napló v$_appVersion'),
             ),
-            _buildRow(scheme, uwu('GitHub'), 'github.com/mlnlbrt10/reKRETA'),
+            _buildRow(scheme, uwu('GitHub'), 'github.com/mlnlbrt10/tinta-naplo'),
             const SizedBox(height: 12),
             TactileBounce(
               onTap: () {
@@ -2502,9 +3081,9 @@ class _MoreScreenState extends State<MoreScreen>
           ),
         ),
         const SizedBox(height: 8),
-        Wrap(
+        EdgeFadeHorizontalScroll(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           spacing: 8,
-          runSpacing: 8,
           children: [
             for (final kmh in const [4.0, 5.0, 6.0])
               ChoiceChip(
@@ -2565,9 +3144,11 @@ class _MoreScreenState extends State<MoreScreen>
           ),
         ),
         const SizedBox(height: 8),
-        _DayCommuteEditor(
-          prefs: _currentPrefs,
-          onChanged: _updatePrefs,
+        _FullBleedChild(
+          child: _DayCommuteEditor(
+            prefs: _currentPrefs,
+            onChanged: _updatePrefs,
+          ),
         ),
         const Divider(height: 20),
         SwitchListTile.adaptive(
@@ -2664,340 +3245,165 @@ class _MoreScreenState extends State<MoreScreen>
   }
 
   /// Module 1: Hiányzások és Késések (`/ellenorzo/v3/sajat/Mulasztasok`).
-  Widget _buildAttendanceModuleCard(ThemeData theme, ColorScheme scheme) {
-    final summary = OmissionsSummary.fromList(_omissions);
-
-    List<Omission> filtered;
-    switch (_attendanceFilter) {
-      case _AttendanceFilter.certified:
-        filtered = summary.missedLessons
-            .where((o) => o.state == OmissionState.excused)
-            .toList();
-        break;
-      case _AttendanceFilter.uncertified:
-        filtered = summary.missedLessons
-            .where((o) => o.state != OmissionState.excused)
-            .toList();
-        break;
-      case _AttendanceFilter.tardiness:
-        filtered = summary.tardinessEntries;
-        break;
-      case _AttendanceFilter.all:
-        filtered = summary.allOmissions;
-        break;
-    }
-
-    return ChristmasSnowCap(
-      enabled: _currentPrefs.christmasModeEnabled,
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: theme.cardTheme.color,
-          borderRadius: OledTheme.largeRadius,
-          border: Border.all(color: theme.dividerColor),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(
-                    Icons.event_busy_rounded,
-                    color: scheme.primary,
-                    size: 22,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        uwu('Hiányzások és Késések'),
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      Text(
-                        'Mulasztott órák és késések részletes összesítése',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: scheme.onSurface.withValues(alpha: 0.62),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (_isLoadingModules)
-                  const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildStatPill(
-                    theme,
-                    scheme,
-                    label: 'Összes óra',
-                    value: '${summary.totalMissedHours} óra',
-                    color: scheme.primary,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _buildStatPill(
-                    theme,
-                    scheme,
-                    label: 'Igazolt',
-                    value: '${summary.certifiedHours} óra',
-                    color: const Color(0xFF2E7D32),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _buildStatPill(
-                    theme,
-                    scheme,
-                    label: 'Igazolatlan',
-                    value: '${summary.uncertifiedHours} óra',
-                    color: const Color(0xFFC62828),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _buildStatPill(
-                    theme,
-                    scheme,
-                    label: 'Késések',
-                    value: '${summary.totalTardinessMinutes} perc',
-                    color: const Color(0xFFF9A825),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: _AttendanceFilter.values.map((f) {
-                  final selected = _attendanceFilter == f;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: Text(f.label),
-                      selected: selected,
-                      onSelected: (_) =>
-                          setState(() => _attendanceFilter = f),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-            const SizedBox(height: 10),
-            if (filtered.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHigh,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.verified_rounded,
-                      color: Colors.greenAccent.withValues(alpha: 0.85),
-                      size: 20,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Nincs rögzített mulasztás vagy késés ebben a kategóriában.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurface.withValues(alpha: 0.78),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            else
-              ...List.generate(filtered.take(5).length, (idx) {
-                final omission = filtered[idx];
-                return _buildOmissionTile(theme, scheme, omission)
-                    .staggeredEntrance(idx + 1, enabled: _entranceActive);
-              }),
-            const SizedBox(height: 8),
-            // B5: Prominent "Összes hiányzás megtekintése" button
-            FilledButton.tonalIcon(
-              onPressed: _openAllOmissionsScreen,
-              icon: const Icon(Icons.list_alt_rounded, size: 18),
-              label: Text(
-                uwu(
-                  'Összes hiányzás megtekintése (${summary.allOmissions.length} tétel)',
-                ),
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 13),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOmissionTile(
+  List<Widget> _buildAttendanceTabChildren(
     ThemeData theme,
     ColorScheme scheme,
-    Omission omission,
   ) {
-    final isLate = OmissionsSummary.isTardiness(omission);
-    final isExcused = omission.state == OmissionState.excused;
-    final isUnexcused = omission.state == OmissionState.unexcused;
-    final statusColor = isExcused
-        ? const Color(0xFF2E7D32)
-        : isUnexcused
-            ? const Color(0xFFC62828)
-            : const Color(0xFFF9A825);
-    final statusLabel = isExcused
-        ? 'Igazolt'
-        : isUnexcused
-            ? 'Igazolatlan'
-            : 'Igazolandó';
-    final subjDisplay = _currentPrefs.resolveSubjectName(
-      omission.subject.name,
-      omission.subject.uid,
-    );
+    final summary = OmissionsSummary.fromList(_omissions);
+    final filtered = _filterOmissions(summary, _attendanceFilter);
+    final dailyGroups = groupOmissionsByDay(filtered);
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: TactileBounce(
-        onTap: () {
-          showFrostedModal(
-            context: context,
-            closeMode: _currentPrefs.modalCloseMode,
-            categoryLabel: isLate ? 'Késés' : 'Mulasztás / Hiányzás',
-            categoryIcon: Icons.event_busy_rounded,
-            accentColor: statusColor,
-            title: subjDisplay,
-            badgeText: isLate
-                ? '${omission.lateForMin ?? 0}p'
-                : (omission.lesson?.classNo != null
-                    ? '${omission.lesson!.classNo}.'
-                    : '!'),
-            rows: [
-              FrostedDetailRow(
-                icon: Icons.calendar_today_rounded,
-                label: 'Dátum',
-                value: _dateFormat.format(omission.date.toLocal()),
-              ),
-              FrostedDetailRow(
-                icon: Icons.verified_user_rounded,
-                label: 'Státusz',
-                value: statusLabel,
-              ),
-              if (isLate)
-                FrostedDetailRow(
-                  icon: Icons.timer_rounded,
-                  label: 'Késés mértéke',
-                  value: '${omission.lateForMin ?? 0} perc',
-                ),
-              if (omission.proofType != null &&
-                  omission.proofType!.description.isNotEmpty)
-                FrostedDetailRow(
-                  icon: Icons.description_rounded,
-                  label: 'Igazolás típusa',
-                  value: omission.proofType!.description,
-                ),
-              FrostedDetailRow(
-                icon: Icons.person_rounded,
-                label: 'Rögzítő tanár',
-                value: _currentPrefs.resolveTeacherName(omission.teacher),
-              ),
-            ],
-          );
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 14,
-            vertical: 10,
-          ),
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerHigh,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: statusColor.withValues(alpha: 0.55),
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: statusColor,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  isLate
-                      ? '${omission.lateForMin ?? 0} p'
-                      : (omission.lesson?.classNo != null
-                          ? '${omission.lesson!.classNo}. óra'
-                          : statusLabel),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    return [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: ChristmasSnowCap(
+          enabled: _currentPrefs.christmasModeEnabled,
+          child: SoftGlassCard(
+            prefs: _currentPrefs,
+            padding: const EdgeInsets.all(18),
+            borderRadius: OledTheme.largeRadius,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
                   children: [
-                    Text(
-                      subjDisplay,
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.w800,
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: scheme.primary.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        Icons.event_busy_rounded,
+                        color: scheme.primary,
+                        size: 22,
                       ),
                     ),
-                    Text(
-                      '${_dateFormat.format(omission.date.toLocal())} • $statusLabel',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurface.withValues(alpha: 0.65),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            uwu('Hiányzások és Késések'),
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          Text(
+                            'Mulasztott órák és késések részletes összesítése',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: scheme.onSurface.withValues(alpha: 0.62),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_isLoadingModules)
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildStatPill(
+                        theme,
+                        scheme,
+                        label: 'Összes óra',
+                        value: '${summary.totalMissedHours} óra',
+                        color: scheme.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _buildStatPill(
+                        theme,
+                        scheme,
+                        label: 'Igazolt',
+                        value: '${summary.certifiedHours} óra',
+                        color: const Color(0xFF2E7D32),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _buildStatPill(
+                        theme,
+                        scheme,
+                        label: 'Igazolatlan',
+                        value: '${summary.uncertifiedHours} óra',
+                        color: const Color(0xFFC62828),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _buildStatPill(
+                        theme,
+                        scheme,
+                        label: 'Késések',
+                        value: '${summary.totalTardinessMinutes} perc',
+                        color: const Color(0xFFF9A825),
                       ),
                     ),
                   ],
                 ),
-              ),
-              Icon(
-                Icons.chevron_right_rounded,
-                size: 18,
-                color: scheme.onSurface.withValues(alpha: 0.5),
-              ),
-            ],
+                const SizedBox(height: 14),
+                // B5: Prominent "Összes hiányzás megtekintése" button
+                FilledButton.tonalIcon(
+                  onPressed: _openAllOmissionsScreen,
+                  icon: const Icon(Icons.list_alt_rounded, size: 18),
+                  label: Text(
+                    uwu(
+                      'Összes hiányzás megtekintése (${summary.allOmissions.length} tétel)',
+                    ),
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
+        ).staggeredEntrance(0, enabled: _entranceActive),
       ),
-    );
+      const SizedBox(height: 12),
+      _buildOmissionFilterChips(
+        selected: _attendanceFilter,
+        onSelected: (f) => setState(() => _attendanceFilter = f),
+      ),
+      const SizedBox(height: 12),
+      if (dailyGroups.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: _buildEmptyOmissionCard(
+            prefs: _currentPrefs,
+            message:
+                'Nincs rögzített mulasztás vagy késés ebben a kategóriában.',
+          ),
+        )
+      else
+        for (int i = 0; i < dailyGroups.length; i++)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: _DailyOmissionCard(
+              group: dailyGroups[i],
+              prefs: _currentPrefs,
+              dateFormat: _dateFormat,
+            ).staggeredEntrance(
+              i < 6 ? i + 1 : 6,
+              enabled: _entranceActive,
+            ),
+          ),
+    ];
   }
 
   Widget _buildStatPill(
@@ -3050,7 +3456,7 @@ class _MoreScreenState extends State<MoreScreen>
     return ChristmasSnowCap(
       enabled: _currentPrefs.christmasModeEnabled,
       child: Container(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.symmetric(vertical: 18),
         decoration: BoxDecoration(
           color: theme.cardTheme.color,
           borderRadius: OledTheme.largeRadius,
@@ -3059,50 +3465,55 @@ class _MoreScreenState extends State<MoreScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(14),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: scheme.primary.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(
+                      Icons.mail_outline_rounded,
+                      color: scheme.primary,
+                      size: 22,
+                    ),
                   ),
-                  child: Icon(
-                    Icons.mail_outline_rounded,
-                    color: scheme.primary,
-                    size: 22,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        uwu('Kréta Üzenetek'),
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w900,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          uwu('Kréta Üzenetek'),
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
-                      ),
-                      Text(
-                        'Beérkezett és elküldött üzenetek',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: scheme.onSurface.withValues(alpha: 0.62),
+                        Text(
+                          'Beérkezett és elküldött üzenetek',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurface.withValues(alpha: 0.62),
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                FilledButton.tonalIcon(
-                  onPressed: () => _openMessageComposerDialog(),
-                  icon: const Icon(Icons.edit_rounded, size: 16),
-                  label: const Text('Új üzenet'),
-                ),
-              ],
+                  FilledButton.tonalIcon(
+                    onPressed: () => _openMessageComposerDialog(),
+                    icon: const Icon(Icons.edit_rounded, size: 16),
+                    label: const Text('Új üzenet'),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 12),
-            Row(
+            EdgeFadeHorizontalScroll(
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              spacing: 8,
               children: [
                 ChoiceChip(
                   avatar: const Icon(Icons.inbox_rounded, size: 16),
@@ -3112,7 +3523,6 @@ class _MoreScreenState extends State<MoreScreen>
                   onSelected: (_) =>
                       setState(() => _showSentMessages = false),
                 ),
-                const SizedBox(width: 8),
                 ChoiceChip(
                   avatar: const Icon(Icons.send_rounded, size: 16),
                   label: const Text('Elküldött'),
@@ -3124,140 +3534,191 @@ class _MoreScreenState extends State<MoreScreen>
               ],
             ),
             const SizedBox(height: 10),
-            if (visibleMessages.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHigh,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.mark_email_read_rounded,
-                      color: scheme.onSurface.withValues(alpha: 0.55),
-                      size: 20,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        _showSentMessages
-                            ? 'Még nincs elküldött üzenet. Koppints az „Új üzenet” gombra!'
-                            : 'Nincs megjeleníthető beérkezett üzenet.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurface.withValues(alpha: 0.75),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            else
-              ...visibleMessages.take(8).map((msg) {
-                final isRead =
-                    msg.isRead || _readMessageIds.contains(msg.uid);
-                final senderDisplay =
-                    _currentPrefs.resolveTeacherName(msg.sender);
-
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: TactileBounce(
-                    onTap: () => _openMessageDetailModal(msg),
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (visibleMessages.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
                         color: scheme.surfaceContainerHigh,
                         borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: !isRead
-                              ? scheme.primary.withValues(alpha: 0.7)
-                              : theme.dividerColor,
-                          width: !isRead ? 1.4 : 1.0,
-                        ),
                       ),
                       child: Row(
                         children: [
-                          Container(
-                            width: 10,
-                            height: 10,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: !isRead
-                                  ? scheme.primary
-                                  : scheme.onSurface.withValues(alpha: 0.25),
+                          Icon(
+                            Icons.mark_email_read_rounded,
+                            color: scheme.onSurface.withValues(alpha: 0.55),
+                            size: 20,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              _showSentMessages
+                                  ? 'Még nincs elküldött üzenet. Koppints az „Új üzenet” gombra!'
+                                  : 'Nincs megjeleníthető beérkezett üzenet.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: scheme.onSurface.withValues(alpha: 0.75),
+                              ),
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                        ],
+                      ),
+                    )
+                  else
+                    ...visibleMessages.map((msg) {
+                      final isRead = _isMessageRead(msg);
+                      final senderDisplay =
+                          _currentPrefs.resolveTeacherName(msg.sender);
+
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: TactileBounce(
+                          onTap: () => _openMessageDetailModal(msg),
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: scheme.surfaceContainerHigh,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: !isRead
+                                    ? scheme.primary.withValues(alpha: 0.7)
+                                    : theme.dividerColor,
+                                width: !isRead ? 1.4 : 1.0,
+                              ),
+                            ),
+                            child: Row(
                               children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        msg.isSent && msg.recipients.isNotEmpty
-                                            ? 'Címzett: ${msg.recipients.first}'
-                                            : senderDisplay,
-                                        style: theme.textTheme.labelMedium
+                                Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: !isRead
+                                        ? scheme.primary
+                                        : scheme.onSurface
+                                            .withValues(alpha: 0.25),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              msg.isSent &&
+                                                      msg.recipients.isNotEmpty
+                                                  ? 'Címzett: ${msg.recipients.first}'
+                                                  : senderDisplay,
+                                              style: theme.textTheme.labelMedium
+                                                  ?.copyWith(
+                                                fontWeight: !isRead
+                                                    ? FontWeight.w900
+                                                    : FontWeight.w700,
+                                                color: scheme.primary,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          if (msg.isSystemMessage) ...[
+                                            const SizedBox(width: 6),
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 6,
+                                                vertical: 1,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: scheme.primary
+                                                    .withValues(alpha: 0.12),
+                                                borderRadius:
+                                                    BorderRadius.circular(6),
+                                              ),
+                                              child: Text(
+                                                'Rendszer',
+                                                style: theme
+                                                    .textTheme.labelSmall
+                                                    ?.copyWith(
+                                                  fontSize: 9,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: scheme.primary,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                          if (msg.hasAttachments ||
+                                              msg.attachments.isNotEmpty) ...[
+                                            const SizedBox(width: 4),
+                                            Icon(
+                                              Icons.attach_file_rounded,
+                                              size: 13,
+                                              color: scheme.onSurface
+                                                  .withValues(alpha: 0.65),
+                                            ),
+                                          ],
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            _dateFormat
+                                                .format(msg.sentAt.toLocal()),
+                                            style: theme.textTheme.labelSmall
+                                                ?.copyWith(
+                                              color: scheme.onSurface
+                                                  .withValues(alpha: 0.58),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        msg.subject,
+                                        style: theme.textTheme.bodyMedium
                                             ?.copyWith(
                                           fontWeight: !isRead
                                               ? FontWeight.w900
-                                              : FontWeight.w700,
-                                          color: scheme.primary,
+                                              : FontWeight.w600,
                                         ),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                       ),
-                                    ),
-                                    Text(
-                                      _dateFormat.format(msg.sentAt.toLocal()),
-                                      style:
-                                          theme.textTheme.labelSmall?.copyWith(
-                                        color: scheme.onSurface
-                                            .withValues(alpha: 0.58),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  msg.subject,
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    fontWeight: !isRead
-                                        ? FontWeight.w900
-                                        : FontWeight.w600,
+                                      if (msg.cleanBody.isNotEmpty) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          msg.cleanBody,
+                                          style: theme.textTheme.bodySmall
+                                              ?.copyWith(
+                                            color: scheme.onSurface
+                                                .withValues(alpha: 0.65),
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ],
                                   ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                if (msg.cleanBody.isNotEmpty) ...[
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    msg.cleanBody,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: scheme.onSurface
-                                          .withValues(alpha: 0.65),
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ],
+                                const SizedBox(width: 8),
+                                Icon(
+                                  Icons.chevron_right_rounded,
+                                  size: 18,
+                                  color:
+                                      scheme.onSurface.withValues(alpha: 0.5),
+                                ),
                               ],
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          Icon(
-                            Icons.chevron_right_rounded,
-                            size: 18,
-                            color: scheme.onSurface.withValues(alpha: 0.5),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              }),
+                        ),
+                      );
+                    }),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -3438,222 +3899,56 @@ class _AllOmissionsScreenState extends State<AllOmissionsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     final summary = OmissionsSummary.fromList(widget.omissions);
+    final filtered = _filterOmissions(summary, _filter);
+    final dailyGroups = groupOmissionsByDay(filtered);
 
-    List<Omission> filtered;
-    switch (_filter) {
-      case _AttendanceFilter.certified:
-        filtered = summary.missedLessons
-            .where((o) => o.state == OmissionState.excused)
-            .toList();
-        break;
-      case _AttendanceFilter.uncertified:
-        filtered = summary.missedLessons
-            .where((o) => o.state != OmissionState.excused)
-            .toList();
-        break;
-      case _AttendanceFilter.tardiness:
-        filtered = summary.tardinessEntries;
-        break;
-      case _AttendanceFilter.all:
-        filtered = summary.allOmissions;
-        break;
-    }
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(uwu('Összes hiányzás és késés')),
+    return AdaptiveBackgroundScaffold(
+      prefs: widget.prefs,
+      appBar: buildAdaptiveTransparentAppBar(
+        context,
+        title: uwu('Összes hiányzás és késés'),
       ),
-      body: ChristmasAndBackgroundOverlay(
-        prefs: widget.prefs,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 36),
-          children: [
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: _AttendanceFilter.values.map((f) {
-                  final selected = _filter == f;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: Text(f.label),
-                      selected: selected,
-                      onSelected: (_) => setState(() => _filter = f),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            if (filtered.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: theme.cardTheme.color,
-                  borderRadius: OledTheme.largeRadius,
-                  border: Border.all(color: theme.dividerColor),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.verified_rounded,
-                      color: Colors.greenAccent.withValues(alpha: 0.85),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        uwu(
-                          'Nincs rögzített mulasztás vagy késés ebben a szűrőben.',
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            else
-              ...filtered.map((omission) {
-                final isLate = OmissionsSummary.isTardiness(omission);
-                final isExcused = omission.state == OmissionState.excused;
-                final isUnexcused = omission.state == OmissionState.unexcused;
-                final statusColor = isExcused
-                    ? const Color(0xFF2E7D32)
-                    : isUnexcused
-                        ? const Color(0xFFC62828)
-                        : const Color(0xFFF9A825);
-                final statusLabel = isExcused
-                    ? 'Igazolt'
-                    : isUnexcused
-                        ? 'Igazolatlan'
-                        : 'Igazolandó';
-                final subjDisplay = widget.prefs.resolveSubjectName(
-                  omission.subject.name,
-                  omission.subject.uid,
-                );
-
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: TactileBounce(
-                    onTap: () {
-                      showFrostedModal(
-                        context: context,
-                        closeMode: widget.prefs.modalCloseMode,
-                        categoryLabel:
-                            isLate ? 'Késés' : 'Mulasztás / Hiányzás',
-                        categoryIcon: Icons.event_busy_rounded,
-                        accentColor: statusColor,
-                        title: subjDisplay,
-                        badgeText: isLate
-                            ? '${omission.lateForMin ?? 0}p'
-                            : (omission.lesson?.classNo != null
-                                ? '${omission.lesson!.classNo}.'
-                                : '!'),
-                        rows: [
-                          FrostedDetailRow(
-                            icon: Icons.calendar_today_rounded,
-                            label: 'Dátum',
-                            value: _dateFormat.format(omission.date.toLocal()),
-                          ),
-                          FrostedDetailRow(
-                            icon: Icons.verified_user_rounded,
-                            label: 'Státusz',
-                            value: statusLabel,
-                          ),
-                          if (isLate)
-                            FrostedDetailRow(
-                              icon: Icons.timer_rounded,
-                              label: 'Késés mértéke',
-                              value: '${omission.lateForMin ?? 0} perc',
-                            ),
-                          if (omission.proofType != null &&
-                              omission.proofType!.description.isNotEmpty)
-                            FrostedDetailRow(
-                              icon: Icons.description_rounded,
-                              label: 'Igazolás típusa',
-                              value: omission.proofType!.description,
-                            ),
-                          FrostedDetailRow(
-                            icon: Icons.person_rounded,
-                            label: 'Rögzítő tanár',
-                            value: widget.prefs
-                                .resolveTeacherName(omission.teacher),
-                          ),
-                        ],
-                      );
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: theme.cardTheme.color,
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: statusColor.withValues(alpha: 0.55),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 9,
-                              vertical: 5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: statusColor,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              isLate
-                                  ? '${omission.lateForMin ?? 0} p'
-                                  : (omission.lesson?.classNo != null
-                                      ? '${omission.lesson!.classNo}. óra'
-                                      : statusLabel),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  subjDisplay,
-                                  style: theme.textTheme.labelLarge?.copyWith(
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  '${_dateFormat.format(omission.date.toLocal())} • $statusLabel • ${widget.prefs.resolveTeacherName(omission.teacher)}',
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: scheme.onSurface
-                                        .withValues(alpha: 0.65),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Icon(
-                            Icons.chevron_right_rounded,
-                            size: 18,
-                            color: scheme.onSurface.withValues(alpha: 0.5),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              }),
-          ],
+      body: ListView(
+        physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics(),
         ),
+        padding: EdgeInsets.fromLTRB(
+          0,
+          adaptiveAppBarTopPadding(context),
+          0,
+          36,
+        ),
+        children: [
+          _buildOmissionFilterChips(
+            selected: _filter,
+            onSelected: (f) => setState(() => _filter = f),
+          ),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (dailyGroups.isEmpty)
+                  _buildEmptyOmissionCard(
+                    prefs: widget.prefs,
+                    message:
+                        'Nincs rögzített mulasztás vagy késés ebben a szűrőben.',
+                  )
+                else
+                  for (final group in dailyGroups) ...[
+                    _DailyOmissionCard(
+                      group: group,
+                      prefs: widget.prefs,
+                      dateFormat: _dateFormat,
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3770,6 +4065,17 @@ class _SettingsAccordionCardState extends State<_SettingsAccordionCard> {
   }
 }
 
+/// Marks a settings child as full-bleed inside [_SettingsSubScreen] so
+/// horizontal scroll bars reach the card edges without outer padding clipping.
+class _FullBleedChild extends StatelessWidget {
+  final Widget child;
+
+  const _FullBleedChild({required this.child});
+
+  @override
+  Widget build(BuildContext context) => child;
+}
+
 /// Dedicated settings sub-screen pushed by [_SettingsAccordionCard].
 class _SettingsSubScreen extends StatelessWidget {
   final String title;
@@ -3796,30 +4102,44 @@ class _SettingsSubScreen extends StatelessWidget {
         final currentChildren = childrenBuilder != null
             ? childrenBuilder!()
             : const <Widget>[];
-        Widget body = ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
-          children: [
-            SoftGlassCard(
-              prefs: currentPrefs ?? const UserProfilePrefs(),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              borderRadius: OledTheme.largeRadius,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: currentChildren,
-              ),
+        return AdaptiveBackgroundScaffold(
+          prefs: currentPrefs,
+          appBar: buildAdaptiveTransparentAppBar(
+            context,
+            title: uwu(title),
+          ),
+          body: ListView(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
             ),
-          ],
-        );
-        if (currentPrefs != null) {
-          body = ChristmasAndBackgroundOverlay(
-            prefs: currentPrefs,
-            child: body,
-          );
-        }
-        return Scaffold(
-          appBar: AppBar(title: Text(uwu(title))),
-          body: body,
+            padding: EdgeInsets.fromLTRB(
+              16,
+              adaptiveAppBarTopPadding(context),
+              16,
+              40,
+            ),
+            children: [
+              SoftGlassCard(
+                prefs: currentPrefs ?? const UserProfilePrefs(),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                borderRadius: OledTheme.largeRadius,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final child in currentChildren)
+                      if (child is _FullBleedChild ||
+                          child is EdgeFadeHorizontalScroll)
+                        child
+                      else
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: child,
+                        ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -3960,9 +4280,9 @@ class _DayCommuteEditorState extends State<_DayCommuteEditor> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // Weekday selector (Hétfő – Péntek)
-        Wrap(
+        EdgeFadeHorizontalScroll(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           spacing: 6,
-          runSpacing: 6,
           children: [
             for (var i = 0; i < _days.length; i++)
               ChoiceChip(
@@ -3979,112 +4299,112 @@ class _DayCommuteEditorState extends State<_DayCommuteEditor> {
         ),
         const SizedBox(height: 10),
         // Direction selector: Odafele vs Hazafele
-        Row(
+        EdgeFadeHorizontalScroll(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          spacing: 8,
           children: [
-            Expanded(
-              child: ChoiceChip(
-                showCheckmark: false,
-                avatar: const Icon(Icons.wb_sunny_rounded, size: 16),
-                label: const Text('Odafele (Reggeli bejárás)'),
-                selected: _isMorning,
-                onSelected: (_) {
-                  if (_isMorning) return;
-                  setState(() => _isMorning = true);
-                  _syncTextController();
-                  _fetchOptions();
-                },
-              ),
+            ChoiceChip(
+              showCheckmark: false,
+              avatar: const Icon(Icons.wb_sunny_rounded, size: 16),
+              label: const Text('Odafele (Reggeli bejárás)'),
+              selected: _isMorning,
+              onSelected: (_) {
+                if (_isMorning) return;
+                setState(() => _isMorning = true);
+                _syncTextController();
+                _fetchOptions();
+              },
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: ChoiceChip(
-                showCheckmark: false,
-                avatar: const Icon(Icons.home_rounded, size: 16),
-                label: const Text('Hazafele (Délutáni hazaút)'),
-                selected: !_isMorning,
-                onSelected: (_) {
-                  if (!_isMorning) return;
-                  setState(() => _isMorning = false);
-                  _syncTextController();
-                  _fetchOptions();
-                },
-              ),
+            ChoiceChip(
+              showCheckmark: false,
+              avatar: const Icon(Icons.home_rounded, size: 16),
+              label: const Text('Hazafele (Délutáni hazaút)'),
+              selected: !_isMorning,
+              onSelected: (_) {
+                if (!_isMorning) return;
+                setState(() => _isMorning = false);
+                _syncTextController();
+                _fetchOptions();
+              },
             ),
           ],
         ),
         const SizedBox(height: 12),
         // Connecting local transit vs walking toggle
-        Text(
-          'Csatlakozás módja (${_days[_selected]} • ${_isMorning ? "Odafele" : "Hazafele"})',
-          style: theme.textTheme.labelMedium?.copyWith(
-            fontWeight: FontWeight.w700,
-            color: scheme.onSurface.withValues(alpha: 0.78),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Text(
+            'Csatlakozás módja (${_days[_selected]} • ${_isMorning ? "Odafele" : "Hazafele"})',
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: scheme.onSurface.withValues(alpha: 0.78),
+            ),
           ),
         ),
         const SizedBox(height: 6),
-        Row(
+        EdgeFadeHorizontalScroll(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          spacing: 8,
           children: [
-            Expanded(
-              child: ChoiceChip(
-                showCheckmark: false,
-                avatar: const Icon(Icons.directions_bus_rounded, size: 16),
-                label: const Text('Helyi járat használata'),
-                selected: useLocalBus,
-                onSelected: (_) {
-                  _save(useLocalBus: true);
-                  setState(() {});
-                  _fetchOptions();
-                },
-              ),
+            ChoiceChip(
+              showCheckmark: false,
+              avatar: const Icon(Icons.directions_bus_rounded, size: 16),
+              label: const Text('Helyi járat használata'),
+              selected: useLocalBus,
+              onSelected: (_) {
+                _save(useLocalBus: true);
+                setState(() {});
+                _fetchOptions();
+              },
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: ChoiceChip(
-                showCheckmark: false,
-                avatar: const Icon(Icons.directions_walk_rounded, size: 16),
-                label: const Text('Gyaloglás'),
-                selected: !useLocalBus,
-                onSelected: (_) {
-                  _save(useLocalBus: false);
-                  setState(() {});
-                  _fetchOptions();
-                },
-              ),
+            ChoiceChip(
+              showCheckmark: false,
+              avatar: const Icon(Icons.directions_walk_rounded, size: 16),
+              label: const Text('Gyaloglás'),
+              selected: !useLocalBus,
+              onSelected: (_) {
+                _save(useLocalBus: false);
+                setState(() {});
+                _fetchOptions();
+              },
             ),
           ],
         ),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'Menetrend szerinti indulások (${_isMorning ? "Reggel" : "Délután"})',
-                style: theme.textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: scheme.onSurface.withValues(alpha: 0.78),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Menetrend szerinti indulások (${_isMorning ? "Reggel" : "Délután"})',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: scheme.onSurface.withValues(alpha: 0.78),
+                  ),
                 ),
               ),
-            ),
-            if (_loadingOptions)
-              const SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Járatok frissítése',
-                onPressed: _fetchOptions,
-                icon: const Icon(Icons.refresh_rounded, size: 18),
-              ),
-          ],
+              if (_loadingOptions)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Járatok frissítése',
+                  onPressed: _fetchOptions,
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                ),
+            ],
+          ),
         ),
         if (_scheduledOptions.isNotEmpty) ...[
           const SizedBox(height: 6),
-          Wrap(
+          EdgeFadeHorizontalScroll(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             spacing: 6,
-            runSpacing: 6,
             children: [
               ChoiceChip(
                 showCheckmark: false,
@@ -4113,7 +4433,7 @@ class _DayCommuteEditorState extends State<_DayCommuteEditor> {
           ),
         ] else if (!_loadingOptions) ...[
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             child: Text(
               widget.prefs.transitConfigured
                   ? 'Nincs lekérdezhető menetrendi indulás erre az időszakra, vagy add meg kézzel alább.'
@@ -4126,28 +4446,31 @@ class _DayCommuteEditorState extends State<_DayCommuteEditor> {
           ),
         ],
         const SizedBox(height: 8),
-        TextField(
-          controller: _lineController,
-          decoration: InputDecoration(
-            labelText:
-                '${_days[_selected]} (${_isMorning ? "Odafele" : "Hazafele"}): kiválasztott indulás / járat',
-            hintText: 'pl. 07:09 S150',
-            prefixIcon: const Icon(Icons.schedule_rounded, size: 18),
-            suffixIcon: _lineController.text.isNotEmpty
-                ? IconButton(
-                    icon: const Icon(Icons.clear_rounded, size: 18),
-                    onPressed: () {
-                      _lineController.clear();
-                      _save(line: '');
-                      setState(() {});
-                    },
-                  )
-                : null,
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: TextField(
+            controller: _lineController,
+            decoration: InputDecoration(
+              labelText:
+                  '${_days[_selected]} (${_isMorning ? "Odafele" : "Hazafele"}): kiválasztott indulás / járat',
+              hintText: 'pl. 07:09 S150',
+              prefixIcon: const Icon(Icons.schedule_rounded, size: 18),
+              suffixIcon: _lineController.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear_rounded, size: 18),
+                      onPressed: () {
+                        _lineController.clear();
+                        _save(line: '');
+                        setState(() {});
+                      },
+                    )
+                  : null,
+            ),
+            onChanged: (v) {
+              _save(line: v.trim());
+              setState(() {});
+            },
           ),
-          onChanged: (v) {
-            _save(line: v.trim());
-            setState(() {});
-          },
         ),
       ],
     );

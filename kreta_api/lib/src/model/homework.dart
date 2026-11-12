@@ -79,6 +79,23 @@ class Homework extends UidObj {
     );
   }
 
+  @override
+  Map<String, dynamic> toJson() => {
+        'Uid': uid,
+        'Tantargy': subject.toJson(),
+        'TantargyNeve': subjectName,
+        'RogzitoTanarNeve': teacherName,
+        'Szoveg': description,
+        'FeladasDatuma': startDate.toUtc().toIso8601String(),
+        'HataridoDatuma': dueDate.toUtc().toIso8601String(),
+        'RogzitesIdopontja': creationDate.toUtc().toIso8601String(),
+        'IsTanarRogzitette': isCreatedByTeacher,
+        'IsMegoldva': isDone,
+        'IsBeadhato': canBeSubmitted,
+        'OsztalyCsoport': classGroup.toJson(),
+        'IsCsatolasEngedelyezes': canAttach,
+      };
+
   static String stripHtmlTags(String input) {
     if (input.isEmpty) return '';
     final withLineBreaks = input
