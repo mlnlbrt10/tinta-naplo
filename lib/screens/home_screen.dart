@@ -68,6 +68,26 @@ class NextLessonStatus {
     this.remainingMinutes = 0,
   });
 
+  static String formatRemainingLessonsLabel(int remaining) {
+    if (remaining <= 0) return 'Ma már nincs több órád!';
+    if (remaining == 1) return 'Már csak 1 órád van hátra';
+    return 'Még $remaining órád van hátra';
+  }
+
+  static String formatFirstLessonCountdown(Duration remaining) {
+    if (remaining.isNegative || remaining == Duration.zero) {
+      return 'Kezdés: hamarosan';
+    }
+    final totalSeconds = remaining.inSeconds;
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (hours >= 1) {
+      return 'Kezdés: $hoursó ${minutes}p ${seconds}mp';
+    }
+    return 'Kezdés: ${minutes}p ${seconds}mp';
+  }
+
   /// Evaluates the 'Következő óra' card state machine comparing local
   /// `KezdetIdopont` (`lesson.start.toLocal()`) and `VegIdopont` (`lesson.end.toLocal()`)
   /// against [now], normalized by [DateUtils.dateOnly].
@@ -146,37 +166,18 @@ class NextLessonStatus {
       final subjName = prefs != null
           ? prefs.resolveSubjectName(rawSubj, firstLesson.subject?.uid)
           : rawSubj;
+      final countdownStr = formatFirstLessonCountdown(diff);
 
-      if (diff <= const Duration(hours: 2)) {
-        final totalMins = diff.inMinutes.clamp(1, 120);
-        final String countdownStr;
-        if (totalMins >= 60) {
-          final hrs = totalMins ~/ 60;
-          final remMins = totalMins % 60;
-          countdownStr = remMins > 0
-              ? 'Első óráig: $hrs óra $remMins perc'
-              : 'Első óráig: $hrs óra';
-        } else {
-          countdownStr = 'Első óráig: $totalMins perc';
-        }
-        return NextLessonStatus(
-          phase: NextLessonPhase.beforeFirstWithinTwoHours,
-          targetLesson: firstLesson,
-          headline: subjName,
-          countdownLabel: countdownStr,
-          remainingLessonsCount: remainingCount,
-          totalLessonsCount: totalCount,
-        );
-      } else {
-        return NextLessonStatus(
-          phase: NextLessonPhase.beforeFirstFarAway,
-          targetLesson: firstLesson,
-          headline: subjName,
-          countdownLabel: 'Még messze van az első órád',
-          remainingLessonsCount: remainingCount,
-          totalLessonsCount: totalCount,
-        );
-      }
+      return NextLessonStatus(
+        phase: diff <= const Duration(hours: 2)
+            ? NextLessonPhase.beforeFirstWithinTwoHours
+            : NextLessonPhase.beforeFirstFarAway,
+        targetLesson: firstLesson,
+        headline: subjName,
+        countdownLabel: countdownStr,
+        remainingLessonsCount: remainingCount,
+        totalLessonsCount: totalCount,
+      );
     }
 
     // Between lessons during the school day
@@ -316,30 +317,127 @@ class _KeepAliveTabWrapperState extends State<_KeepAliveTabWrapper>
   }
 }
 
-class _AnimatedFeedCollapse extends StatelessWidget {
-  final bool visible;
-  final Widget child;
+class _LiveFirstLessonCountdownText extends StatefulWidget {
+  final DateTime targetStartLocal;
+  final TextStyle? style;
+  final String Function(String) textTransform;
+  final VoidCallback? onReachedStart;
 
-  const _AnimatedFeedCollapse({
-    super.key,
-    required this.visible,
-    required this.child,
+  const _LiveFirstLessonCountdownText({
+    required this.targetStartLocal,
+    this.style,
+    required this.textTransform,
+    this.onReachedStart,
   });
 
   @override
+  State<_LiveFirstLessonCountdownText> createState() =>
+      _LiveFirstLessonCountdownTextState();
+}
+
+class _LiveFirstLessonCountdownTextState
+    extends State<_LiveFirstLessonCountdownText>
+    with WidgetsBindingObserver {
+  Timer? _timer;
+  Duration _remaining = Duration.zero;
+  AppLifecycleState? _lifecycleState;
+  bool _notifiedStart = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycleState = WidgetsBinding.instance.lifecycleState;
+    WidgetsBinding.instance.addObserver(this);
+    _refreshRemaining(notifyParent: false);
+  }
+
+  void _syncTimer() {
+    if (!mounted) return;
+    final tickerEnabled = TickerMode.valuesOf(context).enabled;
+    final appActive = _lifecycleState == null ||
+        _lifecycleState == AppLifecycleState.resumed;
+    final shouldTick =
+        tickerEnabled && appActive && _remaining > Duration.zero;
+    if (shouldTick && _timer == null) {
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
+        _refreshRemaining(notifyParent: true);
+      });
+    } else if (!shouldTick && _timer != null) {
+      _timer!.cancel();
+      _timer = null;
+    }
+  }
+
+  void _refreshRemaining({required bool notifyParent}) {
+    final diff = widget.targetStartLocal.difference(DateTime.now());
+    final clamped = diff.isNegative ? Duration.zero : diff;
+    if (notifyParent && mounted) {
+      setState(() => _remaining = clamped);
+    } else {
+      _remaining = clamped;
+    }
+    if (clamped <= Duration.zero) {
+      _timer?.cancel();
+      _timer = null;
+      if (notifyParent && !_notifiedStart) {
+        _notifiedStart = true;
+        widget.onReachedStart?.call();
+      }
+    } else {
+      _notifiedStart = false;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _LiveFirstLessonCountdownText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.targetStartLocal != widget.targetStartLocal) {
+      _notifiedStart = false;
+      _refreshRemaining(notifyParent: false);
+    }
+    _syncTimer();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lifecycleState = state;
+    if (state == AppLifecycleState.resumed) {
+      _refreshRemaining(notifyParent: true);
+    }
+    _syncTimer();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return ClipRect(
-      child: AnimatedSize(
-        duration: const Duration(milliseconds: 260),
-        curve: Curves.easeOutCubic,
-        alignment: Alignment.topCenter,
-        child: AnimatedOpacity(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          opacity: visible ? 1.0 : 0.0,
-          child: visible
-              ? child
-              : const SizedBox(width: double.infinity, height: 0),
+    final formatted = widget.textTransform(
+      NextLessonStatus.formatFirstLessonCountdown(_remaining),
+    );
+    return RepaintBoundary(
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            formatted,
+            maxLines: 1,
+            softWrap: false,
+            style: widget.style,
+          ),
         ),
       ),
     );
@@ -1074,7 +1172,14 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         activeGroupIndex++;
       }
+      const int animatedPreviewLimit = 18;
       final hasAnyMatching = feedRows.isNotEmpty;
+      final previewRows = hasAnyMatching
+          ? feedRows.take(animatedPreviewLimit).toList()
+          : const <_HomeFeedRow>[];
+      final tailRows = feedRows.length > animatedPreviewLimit
+          ? feedRows.sublist(animatedPreviewLimit)
+          : const <_HomeFeedRow>[];
 
       tabChild = CustomScrollView(
         key: const ValueKey<String>('home-live-feed'),
@@ -1133,71 +1238,84 @@ class _HomeScreenState extends State<HomeScreen> {
                     key: const ValueKey('home-chips'),
                   ),
                   const SizedBox(height: 18),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: _AnimatedFeedCollapse(
-                      key: const ValueKey<String>('feed-empty-collapse'),
-                      visible: !hasAnyMatching,
-                      child: _buildEmptyStateCard(
-                        theme,
-                        scheme,
-                        icon: Icons.inbox_rounded,
-                        message: uwu(
-                          'Nincs megjeleníthető elem ebben a kategóriában.',
-                        ),
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ),
           ),
-          if (feedRows.isNotEmpty)
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              0,
+              16,
+              tailRows.isEmpty ? 116 : 0,
+            ),
+            sliver: SliverToBoxAdapter(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 240),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                layoutBuilder: (currentChild, previousChildren) => Stack(
+                  alignment: Alignment.topCenter,
+                  children: <Widget>[
+                    for (final prev in previousChildren)
+                      HeroMode(
+                        enabled: false,
+                        child: IgnorePointer(child: prev),
+                      ),
+                    if (currentChild != null) currentChild,
+                  ],
+                ),
+                transitionBuilder: (child, animation) => FadeTransition(
+                  opacity: animation,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, 0.03),
+                      end: Offset.zero,
+                    ).animate(animation),
+                    child: ScaleTransition(
+                      scale:
+                          Tween<double>(begin: 0.98, end: 1.0).animate(animation),
+                      child: child,
+                    ),
+                  ),
+                ),
+                child: KeyedSubtree(
+                  key: ValueKey<ActivityFeedFilter>(_feedFilter),
+                  child: !hasAnyMatching
+                      ? _buildEmptyStateCard(
+                          theme,
+                          scheme,
+                          icon: Icons.inbox_rounded,
+                          message: uwu(
+                            'Nincs megjeleníthető elem ebben a kategóriában.',
+                          ),
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (final row in previewRows)
+                              _buildFeedRowWidget(theme, scheme, row, today),
+                          ],
+                        ),
+                ),
+              ),
+            ),
+          ),
+          if (tailRows.isNotEmpty)
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 116),
               sliver: SliverList(
                 delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final row = feedRows[index];
-                    if (row is _HomeFeedHeaderRow) {
-                      final header = _buildFeedDayHeaderRow(
-                        theme,
-                        scheme,
-                        row.day,
-                        row.matchingCount,
-                        today,
-                        topSpacing: row.groupIndex > 0 ? 20 : 0,
-                      );
-                      return RepaintBoundary(
-                        child: _maybeHomeEntrance(
-                          header,
-                          row.groupIndex < 6 ? row.groupIndex + 2 : 8,
-                          key: ValueKey('day-${row.day.toIso8601String()}'),
-                        ),
-                      );
-                    }
-                    final itemRow = row as _HomeFeedItemRow;
-                    final tile = Padding(
-                      padding:
-                          EdgeInsets.only(top: itemRow.itemIndex > 0 ? 2 : 0),
-                      child:
-                          _buildActivityFeedTile(theme, scheme, itemRow.item),
-                    );
-                    final staggerIndex = itemRow.groupIndex + itemRow.itemIndex;
-                    return RepaintBoundary(
-                      child: _maybeHomeEntrance(
-                        tile,
-                        staggerIndex < 6 ? staggerIndex + 2 : 8,
-                        key: ValueKey('feed-item-${itemRow.item.uniqueKey}'),
-                      ),
-                    );
-                  },
-                  childCount: feedRows.length,
+                  (context, index) => _buildFeedRowWidget(
+                    theme,
+                    scheme,
+                    tailRows[index],
+                    today,
+                  ),
+                  childCount: tailRows.length,
                 ),
               ),
-            )
-          else
-            const SliverPadding(padding: EdgeInsets.only(bottom: 116)),
+            ),
         ],
       );
     }
@@ -1219,6 +1337,44 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         child: tabChild,
+      ),
+    );
+  }
+
+  Widget _buildFeedRowWidget(
+    ThemeData theme,
+    ColorScheme scheme,
+    _HomeFeedRow row,
+    DateTime today,
+  ) {
+    if (row is _HomeFeedHeaderRow) {
+      final header = _buildFeedDayHeaderRow(
+        theme,
+        scheme,
+        row.day,
+        row.matchingCount,
+        today,
+        topSpacing: row.groupIndex > 0 ? 20 : 0,
+      );
+      return RepaintBoundary(
+        child: _maybeHomeEntrance(
+          header,
+          row.groupIndex < 6 ? row.groupIndex + 2 : 8,
+          key: ValueKey('day-${row.day.toIso8601String()}'),
+        ),
+      );
+    }
+    final itemRow = row as _HomeFeedItemRow;
+    final tile = Padding(
+      padding: EdgeInsets.only(top: itemRow.itemIndex > 0 ? 2 : 0),
+      child: _buildActivityFeedTile(theme, scheme, itemRow.item),
+    );
+    final staggerIndex = itemRow.groupIndex + itemRow.itemIndex;
+    return RepaintBoundary(
+      child: _maybeHomeEntrance(
+        tile,
+        staggerIndex < 6 ? staggerIndex + 2 : 8,
+        key: ValueKey('feed-item-${itemRow.item.uniqueKey}'),
       ),
     );
   }
@@ -1311,9 +1467,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final upcoming = status.upcomingLesson;
     final isOngoing = status.phase == NextLessonPhase.ongoing;
 
-    final progressText = status.phase == NextLessonPhase.completedForToday
-        ? 'Ma már nincs több órád!'
-        : 'Ma még ${status.remainingLessonsCount}/${status.totalLessonsCount} óra';
+    final progressText = NextLessonStatus.formatRemainingLessonsLabel(
+      status.remainingLessonsCount,
+    );
 
     final heroTag =
         currentOrNext != null ? 'home_lesson_num_${currentOrNext.uid}' : null;
@@ -1773,15 +1929,30 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: Text(
-                          status.countdownLabel,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            color: scheme.primary,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
+                        child: (status.phase ==
+                                    NextLessonPhase.beforeFirstFarAway ||
+                                status.phase ==
+                                    NextLessonPhase.beforeFirstWithinTwoHours)
+                            ? _LiveFirstLessonCountdownText(
+                                targetStartLocal: currentOrNext.start.toLocal(),
+                                textTransform: uwu,
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  color: scheme.primary,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                                onReachedStart: () {
+                                  if (mounted) _countdownTick.value++;
+                                },
+                              )
+                            : Text(
+                                status.countdownLabel,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  color: scheme.primary,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
                       ),
                     ],
                   ),
@@ -1880,54 +2051,77 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildFilterChipBar(ThemeData theme, ColorScheme scheme) {
     return RepaintBoundary(
       child: EdgeFadeHorizontalScroll(
-      controller: _chipBarController,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      spacing: 8,
-      children: ActivityFeedFilter.values.map((filter) {
-        final selected = _feedFilter == filter;
-        return TactileBounce(
-          onTap: () => setState(() => _feedFilter = filter),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            padding: const EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 9,
-            ),
-            decoration: BoxDecoration(
-              color: selected ? scheme.primary : theme.cardTheme.color,
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(
-                color: selected ? scheme.primary : theme.dividerColor,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  filter.icon,
-                  size: 16,
-                  color: selected
-                      ? scheme.onPrimary
-                      : scheme.onSurface.withValues(alpha: 0.72),
+        controller: _chipBarController,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        spacing: 8,
+        children: ActivityFeedFilter.values.map((filter) {
+          final selected = _feedFilter == filter;
+          return TactileBounce(
+            onTap: () {
+              if (_feedFilter != filter) {
+                setState(() => _feedFilter = filter);
+              }
+            },
+            child: AnimatedScale(
+              scale: selected ? 1.02 : 0.98,
+              duration: const Duration(milliseconds: 240),
+              curve: Curves.easeOutCubic,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 240),
+                curve: Curves.easeOutCubic,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 9,
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  uwu(filter.label),
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                    color: selected
-                        ? scheme.onPrimary
-                        : scheme.onSurface.withValues(alpha: 0.85),
+                decoration: BoxDecoration(
+                  color: selected ? scheme.primary : theme.cardTheme.color,
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(
+                    color: selected ? scheme.primary : theme.dividerColor,
                   ),
                 ),
-              ],
+                child: TweenAnimationBuilder<double>(
+                  tween: Tween<double>(end: selected ? 1.0 : 0.0),
+                  duration: const Duration(milliseconds: 240),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, t, _) {
+                    final iconColor = Color.lerp(
+                      scheme.onSurface.withValues(alpha: 0.72),
+                      scheme.onPrimary,
+                      t,
+                    );
+                    final textColor = Color.lerp(
+                      scheme.onSurface.withValues(alpha: 0.85),
+                      scheme.onPrimary,
+                      t,
+                    );
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          filter.icon,
+                          size: 16,
+                          color: iconColor,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          uwu(filter.label),
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight:
+                                selected ? FontWeight.w800 : FontWeight.w600,
+                            color: textColor,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
             ),
-          ),
-        );
-      }).toList(),
-    ),
+          );
+        }).toList(),
+      ),
     );
   }
 

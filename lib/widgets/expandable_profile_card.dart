@@ -124,8 +124,8 @@ Future<void> showStreamlinedProfileSheet({
         solidDarkAlpha: 0.65,
         solidLightAlpha: 0.45,
       ),
-      transitionDuration: const Duration(milliseconds: 320),
-      reverseTransitionDuration: const Duration(milliseconds: 260),
+      transitionDuration: const Duration(milliseconds: 250),
+      reverseTransitionDuration: const Duration(milliseconds: 230),
       pageBuilder: (sheetContext, animation, secondaryAnimation) {
         final curved = CurvedAnimation(
           parent: animation,
@@ -136,26 +136,34 @@ Future<void> showStreamlinedProfileSheet({
           backgroundColor: Colors.transparent,
           body: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () => Navigator.of(sheetContext).pop(),
+            onTap: () {
+              if (ModalRoute.of(sheetContext)?.isCurrent ?? true) {
+                Navigator.of(sheetContext).pop();
+              }
+            },
             child: Align(
               alignment: Alignment.bottomCenter,
               child: SlideTransition(
                 position: Tween<Offset>(
-                  begin: const Offset(0, 0.28),
+                  begin: const Offset(0, 0.16),
                   end: Offset.zero,
                 ).animate(curved),
-                child: GestureDetector(
-                  onTap: () {},
-                  child: _StreamlinedProfileModalSheet(
-                    student: student,
-                    session: session,
-                    initialPrefs: prefs,
-                    onPrefsChanged: onPrefsChanged,
-                    contentOpacityAnimation: curved,
-                    onOpenFullSettings: () {
-                      Navigator.of(sheetContext).pop();
-                      onOpenFullSettings();
-                    },
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: 0.96, end: 1.0).animate(curved),
+                  alignment: Alignment.bottomCenter,
+                  child: GestureDetector(
+                    onTap: () {},
+                    child: _StreamlinedProfileModalSheet(
+                      student: student,
+                      session: session,
+                      initialPrefs: prefs,
+                      onPrefsChanged: onPrefsChanged,
+                      contentOpacityAnimation: curved,
+                      onOpenFullSettings: () {
+                        Navigator.of(sheetContext).pop();
+                        onOpenFullSettings();
+                      },
+                    ),
                   ),
                 ),
               ),

@@ -181,7 +181,7 @@ void main() {
     );
     expect(farBefore.phase, NextLessonPhase.beforeFirstFarAway);
     expect(farBefore.headline, 'Matematika');
-    expect(farBefore.countdownLabel, 'Még messze van az első órád');
+    expect(farBefore.countdownLabel, 'Kezdés: 2ó 30p 0mp');
 
     // 2. Within 2 hours before first lesson (07:15 -> 45 mins before 08:00)
     final nearBefore = NextLessonStatus.evaluate(
@@ -189,7 +189,16 @@ void main() {
       DateTime(2026, 11, 10, 7, 15),
     );
     expect(nearBefore.phase, NextLessonPhase.beforeFirstWithinTwoHours);
-    expect(nearBefore.countdownLabel, contains('Első óráig:'));
+    expect(nearBefore.countdownLabel, 'Kezdés: 45p 0mp');
+
+    expect(
+      NextLessonStatus.formatRemainingLessonsLabel(1),
+      'Már csak 1 órád van hátra',
+    );
+    expect(
+      NextLessonStatus.formatRemainingLessonsLabel(5),
+      'Még 5 órád van hátra',
+    );
 
     // 3. Currently ongoing lesson (08:20 -> between 08:00 and 08:45)
     final ongoing = NextLessonStatus.evaluate(
@@ -1511,13 +1520,17 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Matematika'), findsOneWidget);
-      expect(find.text('Ma még 5/5 óra'), findsOneWidget);
+      expect(find.text('Még 5 órád van hátra'), findsOneWidget);
+      expect(find.text('Dr. Ujvári Sándor'), findsOneWidget);
+      expect(find.textContaining('Kezdés:'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.textContaining('Kezdés:'), findsOneWidget);
       expect(find.text('Dr. Ujvári Sándor'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'showFrostedModal and showSoftBlurDialog render BackdropFilter from frame 0 without Opacity or FadeTransition ancestors',
+    'showFrostedModal and showSoftBlurDialog render BackdropFilter from frame 0 through smooth reverse fade-out without Opacity or FadeTransition ancestors',
     (tester) async {
       late BuildContext capturedCtx;
       await tester.pumpWidget(
@@ -1533,7 +1546,7 @@ void main() {
         ),
       );
 
-      // Soft Blur ON: showFrostedModal must blur immediately mid-animation.
+      // Soft Blur ON: showFrostedModal blurs immediately mid-open and fades blur smoothly on close.
       showFrostedModal(
         context: capturedCtx,
         categoryLabel: 'TESZT',
@@ -1566,10 +1579,21 @@ void main() {
         ),
         findsNothing,
       );
-      Navigator.of(capturedCtx).pop();
       await tester.pumpAndSettle();
+      final modalSettledFilter =
+          tester.widget<BackdropFilter>(find.byType(BackdropFilter)).filter;
 
-      // Soft Blur ON: showSoftBlurDialog must blur immediately mid-animation.
+      Navigator.of(capturedCtx).pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 115));
+      expect(find.byType(BackdropFilter), findsOneWidget);
+      final modalMidCloseFilter =
+          tester.widget<BackdropFilter>(find.byType(BackdropFilter)).filter;
+      expect(modalMidCloseFilter, isNot(equals(modalSettledFilter)));
+      await tester.pumpAndSettle();
+      expect(find.byType(BackdropFilter), findsNothing);
+
+      // Soft Blur ON: showSoftBlurDialog blurs immediately mid-open and fades blur smoothly on close.
       showSoftBlurDialog<void>(
         context: capturedCtx,
         prefs: const UserProfilePrefs(cardBlurEnabled: true),
@@ -1592,8 +1616,19 @@ void main() {
         ),
         findsNothing,
       );
-      Navigator.of(capturedCtx).pop();
       await tester.pumpAndSettle();
+      final dialogSettledFilter =
+          tester.widget<BackdropFilter>(find.byType(BackdropFilter)).filter;
+
+      Navigator.of(capturedCtx).pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 115));
+      expect(find.byType(BackdropFilter), findsOneWidget);
+      final dialogMidCloseFilter =
+          tester.widget<BackdropFilter>(find.byType(BackdropFilter)).filter;
+      expect(dialogMidCloseFilter, isNot(equals(dialogSettledFilter)));
+      await tester.pumpAndSettle();
+      expect(find.byType(BackdropFilter), findsNothing);
 
       // Soft Blur OFF: zero BackdropFilter even on frame 0 and settled.
       showFrostedModal(
@@ -1681,6 +1716,85 @@ void main() {
       );
       await tester.pump();
       expect(tester.binding.transientCallbackCount, greaterThan(0));
+    },
+  );
+
+  testWidgets(
+    'Főoldal filter chips crossfade feed content smoothly with AnimatedSwitcher without duplicate Hero conflicts',
+    (tester) async {
+      final session = StoredSession(
+        accessToken: 'acc',
+        refreshToken: 'ref',
+        idToken: 'id',
+        instituteCode: 'klik001',
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
+      );
+      final grade = _makeGrade(uid: 'g-flt-1', subjectName: 'Biológia', value: 5);
+      final hw = Homework.fromJson({
+        'Uid': 'hw-flt-1',
+        'RogzitesIdopontja': '2026-11-12T09:00:00',
+        'FeladasDatuma': '2026-11-12T09:00:00',
+        'HataridoDatuma': '2026-11-15T08:00:00',
+        'Szoveg': 'Növénytan feladatlap',
+        'RogzitoTanarNeve': 'Tanár',
+        'Tantargy': {
+          'Uid': 'sub-bio',
+          'Nev': 'Kémia',
+          'Kategoria': {'Uid': 'k', 'Nev': 'k', 'Leiras': 'k'},
+        },
+      });
+      final cached = DashboardData(
+        student: null,
+        todaysLessons: const [],
+        allGrades: [grade],
+        latestGrades: [grade],
+        homeworks: [hw],
+        tests: const [],
+        omissions: const [],
+        messages: const [],
+        activeSession: session,
+      );
+      final completer = Completer<DashboardData>()..complete(cached);
+      final client = _StubHomeKretaClient(fetchCompleter: completer);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: OledTheme.buildTheme(
+            prefs: const UserProfilePrefs(themeStyle: AppThemeStyle.oledPureBlack),
+          ),
+          home: HomeScreen(
+            initialSession: session,
+            initialCachedData: cached,
+            kretaClient: client,
+            prefs: const UserProfilePrefs(themeStyle: AppThemeStyle.oledPureBlack),
+            onPrefsChanged: (_) {},
+            onLogout: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey<ActivityFeedFilter>(ActivityFeedFilter.all)), findsOneWidget);
+      expect(find.text('Biológia'), findsOneWidget);
+      expect(find.textContaining('Növénytan feladatlap'), findsOneWidget);
+
+      await tester.tap(find.text('Jegyek'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 120));
+
+      // Mid-transition both outgoing & incoming subtrees exist safely inside AnimatedSwitcher.
+      expect(find.byKey(const ValueKey<ActivityFeedFilter>(ActivityFeedFilter.grades)), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpAndSettle();
+      expect(find.text('Biológia'), findsOneWidget);
+      expect(find.textContaining('Növénytan feladatlap'), findsNothing);
+
+      await tester.tap(find.text('Házik'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey<ActivityFeedFilter>(ActivityFeedFilter.homeworks)), findsOneWidget);
+      expect(find.textContaining('Növénytan feladatlap'), findsOneWidget);
+      expect(find.text('Biológia'), findsNothing);
     },
   );
 }

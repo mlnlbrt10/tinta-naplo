@@ -356,8 +356,8 @@ class GitHubUpdaterService {
         opaque: false,
         barrierDismissible: true,
         barrierLabel: 'Bezárás',
-        transitionDuration: const Duration(milliseconds: 280),
-        reverseTransitionDuration: const Duration(milliseconds: 240),
+        transitionDuration: const Duration(milliseconds: 250),
+        reverseTransitionDuration: const Duration(milliseconds: 230),
         pageBuilder: (dialogContext, animation, secondaryAnimation) {
           final fadeCurved = CurvedAnimation(
             parent: animation,
@@ -366,8 +366,8 @@ class GitHubUpdaterService {
           );
           final scaleCurved = CurvedAnimation(
             parent: animation,
-            curve: Curves.easeOutBack,
-            reverseCurve: Curves.easeInOutCubic,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
           );
           final barrierBase = resolveSoftBlurBarrierColor(
             dialogContext,
@@ -378,17 +378,25 @@ class GitHubUpdaterService {
           return Stack(
             children: [
               Positioned.fill(
-                child: AnimatedBuilder(
-                  animation: fadeCurved,
-                  builder: (context, _) => ColoredBox(
-                    color: barrierBase.withValues(
-                      alpha: barrierBase.a * fadeCurved.value.clamp(0.0, 1.0),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    if (ModalRoute.of(dialogContext)?.isCurrent ?? true) {
+                      Navigator.of(dialogContext).pop();
+                    }
+                  },
+                  child: AnimatedBuilder(
+                    animation: fadeCurved,
+                    builder: (context, _) => ColoredBox(
+                      color: barrierBase.withValues(
+                        alpha: barrierBase.a * fadeCurved.value.clamp(0.0, 1.0),
+                      ),
                     ),
                   ),
                 ),
               ),
               ScaleTransition(
-                scale: Tween<double>(begin: 0.90, end: 1.0).animate(scaleCurved),
+                scale: Tween<double>(begin: 0.96, end: 1.0).animate(scaleCurved),
                 child: _FrostedUpdateDialogContent(
                   release: release,
                   currentVersion: currentVersion,

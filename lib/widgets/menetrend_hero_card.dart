@@ -429,8 +429,8 @@ Future<void> showMenetrendDetailsModal(
         solidDarkAlpha: 0.72,
         solidLightAlpha: 0.48,
       ),
-      transitionDuration: const Duration(milliseconds: 280),
-      reverseTransitionDuration: const Duration(milliseconds: 240),
+      transitionDuration: const Duration(milliseconds: 250),
+      reverseTransitionDuration: const Duration(milliseconds: 230),
       pageBuilder: (ctx, animation, secondaryAnimation) {
         return _MenetrendDetailsModalSheet(
           evaluation: evaluation,
@@ -485,8 +485,8 @@ class _MenetrendDetailsModalSheetState
     );
     final scaleCurved = CurvedAnimation(
       parent: widget.animation,
-      curve: Curves.easeOutBack,
-      reverseCurve: Curves.easeInOutCubic,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
     );
 
     return Scaffold(
@@ -496,7 +496,11 @@ class _MenetrendDetailsModalSheetState
           Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTap: () => Navigator.of(context).pop(),
+              onTap: () {
+                if (ModalRoute.of(context)?.isCurrent ?? true) {
+                  Navigator.of(context).pop();
+                }
+              },
               child: const ColoredBox(color: Colors.transparent),
             ),
           ),
@@ -504,7 +508,7 @@ class _MenetrendDetailsModalSheetState
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 28),
               child: ScaleTransition(
-                scale: Tween<double>(begin: 0.90, end: 1.0).animate(
+                scale: Tween<double>(begin: 0.96, end: 1.0).animate(
                   scaleCurved,
                 ),
                 child: RepaintBoundary(

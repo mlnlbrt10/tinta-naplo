@@ -1384,11 +1384,16 @@ class _MoreScreenState extends State<MoreScreen>
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       barrierColor: resolveSoftBlurBarrierColor(context, prefs: _currentPrefs),
+      sheetAnimationStyle: const AnimationStyle(
+        duration: Duration(milliseconds: 250),
+        reverseDuration: Duration(milliseconds: 230),
+      ),
       builder: (sheetContext) {
         final theme = Theme.of(sheetContext);
         final scheme = theme.colorScheme;
         return LiquidGlassSurface(
           prefs: _currentPrefs,
+          contentOpacityAnimation: ModalRoute.of(sheetContext)?.animation,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
           child: DraggableScrollableSheet(
             initialChildSize: 0.78,

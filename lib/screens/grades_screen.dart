@@ -824,6 +824,10 @@ class _GradesScreenState extends State<GradesScreen>
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       barrierColor: resolveSoftBlurBarrierColor(context, prefs: widget.prefs),
+      sheetAnimationStyle: const AnimationStyle(
+        duration: Duration(milliseconds: 250),
+        reverseDuration: Duration(milliseconds: 230),
+      ),
       builder: (modalContext) {
         return _ScholarshipAndBreakdownDialog(
           allGrades: widget.allGrades,
@@ -1786,6 +1790,7 @@ class _ScholarshipAndBreakdownDialogState
 
     return LiquidGlassSurface(
       prefs: _prefs,
+      contentOpacityAnimation: ModalRoute.of(context)?.animation,
       borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
       child: DraggableScrollableSheet(
         initialChildSize: 0.85,
@@ -2431,6 +2436,10 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       barrierColor: resolveSoftBlurBarrierColor(context, prefs: _prefs),
+      sheetAnimationStyle: const AnimationStyle(
+        duration: Duration(milliseconds: 250),
+        reverseDuration: Duration(milliseconds: 230),
+      ),
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (context, setModalState) {
@@ -2442,6 +2451,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
               padding: EdgeInsets.only(bottom: bottomInset),
               child: LiquidGlassSurface(
                 prefs: _prefs,
+                contentOpacityAnimation: ModalRoute.of(sheetContext)?.animation,
                 borderRadius:
                     const BorderRadius.vertical(top: Radius.circular(32)),
                 child: SingleChildScrollView(
