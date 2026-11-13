@@ -28,6 +28,7 @@ Lesson _makeLesson({
   required DateTime start,
   required DateTime end,
   String stateName = 'Megtartott',
+  String teacherName = 'Teszt Tanár',
   int count = 1,
 }) {
   return Lesson.fromJson({
@@ -39,7 +40,7 @@ Lesson _makeLesson({
     'Oraszam': count,
     'OraEvesSorszama': count,
     'OsztalyCsoport': {'Uid': 'g1', 'Nev': '11.A'},
-    'TanarNeve': 'Teszt Tanár',
+    'TanarNeve': teacherName,
     'Tantargy': {
       'Uid': 'sub_$subjectName',
       'Nev': subjectName,
@@ -179,6 +180,7 @@ void main() {
       DateTime(2026, 11, 10, 5, 30),
     );
     expect(farBefore.phase, NextLessonPhase.beforeFirstFarAway);
+    expect(farBefore.headline, 'Matematika');
     expect(farBefore.countdownLabel, 'Még messze van az első órád');
 
     // 2. Within 2 hours before first lesson (07:15 -> 45 mins before 08:00)
@@ -374,6 +376,15 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 500));
 
+    expect(
+      find.byWidgetPredicate(
+        (w) =>
+            w is Image &&
+            w.image is AssetImage &&
+            (w.image as AssetImage).assetName == 'assets/images/tinta_icon.png',
+      ),
+      findsOneWidget,
+    );
     expect(find.textContaining('Karácsonyi OLED'), findsOneWidget);
     expect(find.text('v1.0.0'), findsOneWidget);
   });
@@ -760,7 +771,7 @@ void main() {
       );
       expect(midFade.opacity.value, inInclusiveRange(0.05, 0.95));
       expect(midScale.scale.value, greaterThan(1.0));
-      expect(midScale.scale.value, lessThanOrEqualTo(1.05));
+      expect(midScale.scale.value, lessThanOrEqualTo(1.04));
 
       await tester.pump(const Duration(milliseconds: 300));
       expect(dismissed, isTrue);
@@ -1091,7 +1102,7 @@ void main() {
   );
 
   testWidgets(
-    'LiquidGlassSurface upgrades Soft Blur to sigma>=28 luminous frost while keeping solid state clean',
+    'LiquidGlassSurface uses GPU-efficient sigma 16 crystal-clear blur when Soft Blur is ON and clean solid surface when OFF',
     (tester) async {
       const blurOnPrefs = UserProfilePrefs(
         themeStyle: AppThemeStyle.oledPureBlack,
@@ -1103,7 +1114,7 @@ void main() {
         cardBlurEnabled: false,
       );
 
-      expect(resolveSoftBlurBackdropSigma(blurOnPrefs), greaterThanOrEqualTo(28.0));
+      expect(resolveSoftBlurBackdropSigma(blurOnPrefs), closeTo(16.0, 0.01));
 
       late Color barrierBlurOn;
       late Color barrierBlurOff;
@@ -1164,8 +1175,12 @@ void main() {
       final glassDeco = glassContainer.decoration! as BoxDecoration;
       expect(glassDeco.gradient, isA<LinearGradient>());
       final grad = glassDeco.gradient! as LinearGradient;
-      expect(grad.colors.first.a, lessThan(0.35));
-      expect(grad.colors.last.a, lessThan(0.25));
+      expect(grad.colors.first.a, lessThanOrEqualTo(0.08));
+      expect(grad.colors.last.a, closeTo(0.0, 0.001));
+      expect(
+        (glassDeco.border! as Border).top.color.a,
+        closeTo(0.14, 0.01),
+      );
 
       // Switch to Soft Blur OFF: clean solid surface without BackdropFilter
       await tester.pumpWidget(
@@ -1433,6 +1448,239 @@ void main() {
         tester.getTopLeft(find.text('Zene')).dy,
         lessThan(tester.getTopLeft(find.text('Biológia')).dy),
       );
+    },
+  );
+
+  testWidgets(
+    'NextLesson hero card displays real subject headline, unclipped 5/5 pill, and full teacher name',
+    (tester) async {
+      final session = StoredSession(
+        accessToken: 'acc',
+        refreshToken: 'ref',
+        idToken: 'id',
+        instituteCode: 'klik001',
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
+      );
+      final now = DateTime.now();
+      final firstStart = now.hour < 20
+          ? now.add(const Duration(hours: 3))
+          : DateTime(now.year, now.month, now.day, 23, 55);
+      final lessons = List<Lesson>.generate(
+        5,
+        (i) => _makeLesson(
+          uid: 'hero-l-$i',
+          subjectName: i == 0 ? 'Matematika' : 'Tantárgy $i',
+          start: firstStart.add(Duration(minutes: i)),
+          end: firstStart.add(Duration(minutes: i + 1)),
+          teacherName: 'Dr. Ujvári Sándor',
+          count: i + 1,
+        ),
+      );
+      final cached = DashboardData(
+        student: null,
+        todaysLessons: lessons,
+        allGrades: const [],
+        latestGrades: const [],
+        homeworks: const [],
+        tests: const [],
+        omissions: const [],
+        messages: const [],
+        activeSession: session,
+      );
+      final completer = Completer<DashboardData>()..complete(cached);
+      final client = _StubHomeKretaClient(fetchCompleter: completer);
+
+      await tester.binding.setSurfaceSize(const Size(360, 780));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: OledTheme.buildTheme(
+            prefs: const UserProfilePrefs(themeStyle: AppThemeStyle.oledPureBlack),
+          ),
+          home: HomeScreen(
+            initialSession: session,
+            initialCachedData: cached,
+            kretaClient: client,
+            prefs: const UserProfilePrefs(themeStyle: AppThemeStyle.oledPureBlack),
+            onPrefsChanged: (_) {},
+            onLogout: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Matematika'), findsOneWidget);
+      expect(find.text('Ma még 5/5 óra'), findsOneWidget);
+      expect(find.text('Dr. Ujvári Sándor'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'showFrostedModal and showSoftBlurDialog render BackdropFilter from frame 0 without Opacity or FadeTransition ancestors',
+    (tester) async {
+      late BuildContext capturedCtx;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (ctx) {
+                capturedCtx = ctx;
+                return const SizedBox.expand();
+              },
+            ),
+          ),
+        ),
+      );
+
+      // Soft Blur ON: showFrostedModal must blur immediately mid-animation.
+      showFrostedModal(
+        context: capturedCtx,
+        categoryLabel: 'TESZT',
+        categoryIcon: Icons.info_outline_rounded,
+        accentColor: Colors.teal,
+        title: 'Azonnali elmosódás',
+        rows: const [
+          FrostedDetailRow(
+            icon: Icons.schedule_rounded,
+            label: 'Idő',
+            value: '08:00',
+          ),
+        ],
+        prefs: const UserProfilePrefs(cardBlurEnabled: true),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 24));
+      expect(find.byType(BackdropFilter), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.byType(BackdropFilter),
+          matching: find.byType(Opacity),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.ancestor(
+          of: find.byType(BackdropFilter),
+          matching: find.byType(FadeTransition),
+        ),
+        findsNothing,
+      );
+      Navigator.of(capturedCtx).pop();
+      await tester.pumpAndSettle();
+
+      // Soft Blur ON: showSoftBlurDialog must blur immediately mid-animation.
+      showSoftBlurDialog<void>(
+        context: capturedCtx,
+        prefs: const UserProfilePrefs(cardBlurEnabled: true),
+        builder: (_) => const Text('Dialog tartalom'),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 24));
+      expect(find.byType(BackdropFilter), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.byType(BackdropFilter),
+          matching: find.byType(Opacity),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.ancestor(
+          of: find.byType(BackdropFilter),
+          matching: find.byType(FadeTransition),
+        ),
+        findsNothing,
+      );
+      Navigator.of(capturedCtx).pop();
+      await tester.pumpAndSettle();
+
+      // Soft Blur OFF: zero BackdropFilter even on frame 0 and settled.
+      showFrostedModal(
+        context: capturedCtx,
+        categoryLabel: 'TESZT',
+        categoryIcon: Icons.info_outline_rounded,
+        accentColor: Colors.teal,
+        title: 'Nincs elmosódás',
+        rows: const [],
+        prefs: const UserProfilePrefs(cardBlurEnabled: false),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 24));
+      expect(find.byType(BackdropFilter), findsNothing);
+      await tester.pumpAndSettle();
+      expect(find.byType(BackdropFilter), findsNothing);
+      Navigator.of(capturedCtx).pop();
+      await tester.pumpAndSettle();
+
+      showSoftBlurDialog<void>(
+        context: capturedCtx,
+        prefs: const UserProfilePrefs(cardBlurEnabled: false),
+        builder: (_) => const Text('Solid dialog'),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 24));
+      expect(find.byType(BackdropFilter), findsNothing);
+      await tester.pumpAndSettle();
+      expect(find.byType(BackdropFilter), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'ChristmasAndBackgroundOverlay pauses its ambient ticker when TickerMode is disabled',
+    (tester) async {
+      const snowPrefs = UserProfilePrefs(
+        themeStyle: AppThemeStyle.oledPureBlack,
+        christmasModeEnabled: true,
+      );
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: TickerMode(
+              enabled: true,
+              child: ChristmasAndBackgroundOverlay(
+                prefs: snowPrefs,
+                child: SizedBox.expand(),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 32));
+      expect(tester.binding.transientCallbackCount, greaterThan(0));
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: TickerMode(
+              enabled: false,
+              child: ChristmasAndBackgroundOverlay(
+                prefs: snowPrefs,
+                child: SizedBox.expand(),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(tester.binding.transientCallbackCount, 0);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: TickerMode(
+              enabled: true,
+              child: ChristmasAndBackgroundOverlay(
+                prefs: snowPrefs,
+                child: SizedBox.expand(),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(tester.binding.transientCallbackCount, greaterThan(0));
     },
   );
 }

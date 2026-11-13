@@ -39,7 +39,9 @@ class _ReKretaAppState extends State<ReKretaApp> {
   DashboardData? _cachedDashboard;
   UserProfilePrefs _prefs = const UserProfilePrefs();
   bool _isRestoringSession = true;
+  bool _isSplashLoading = true;
   bool _showSplashOverlay = true;
+  bool _splashIconPrecached = false;
 
   final TextEditingController _instituteController = TextEditingController();
   final TextEditingController _usernameController = TextEditingController();
@@ -62,6 +64,15 @@ class _ReKretaAppState extends State<ReKretaApp> {
   void initState() {
     super.initState();
     _restoreSavedSessionAndPrefs();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_splashIconPrecached) {
+      _splashIconPrecached = true;
+      precacheImage(const AssetImage('assets/images/tinta_icon.png'), context);
+    }
   }
 
   @override
@@ -98,6 +109,14 @@ class _ReKretaAppState extends State<ReKretaApp> {
       if (!mounted) return;
       _set(() => _isRestoringSession = false);
     }
+    // Dismiss the splash overlay right after the first real screen frame builds
+    // and paints underneath so the 450ms easeOutCubic dissolve stays smooth.
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _isSplashLoading) {
+        _set(() => _isSplashLoading = false);
+      }
+    });
   }
 
   Future<void> _updatePrefs(UserProfilePrefs nextPrefs) async {
@@ -164,7 +183,8 @@ class _ReKretaAppState extends State<ReKretaApp> {
                 child ?? const SizedBox.shrink(),
                 if (_showSplashOverlay)
                   TintaSplashOverlay(
-                    isLoading: _isRestoringSession,
+                    key: const ValueKey<String>('tinta-splash-overlay'),
+                    isLoading: _isSplashLoading,
                     accentColor: activeTheme.colorScheme.primary,
                     onDismissed: () {
                       if (mounted) {

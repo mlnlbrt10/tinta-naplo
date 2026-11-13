@@ -27,7 +27,7 @@ class TintaSplashOverlay extends StatefulWidget {
 }
 
 class _TintaSplashOverlayState extends State<TintaSplashOverlay>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   static const Duration _exitDuration = Duration(milliseconds: 450);
 
   late final AnimationController _breathController;
@@ -39,14 +39,18 @@ class _TintaSplashOverlayState extends State<TintaSplashOverlay>
 
   bool _isExiting = false;
   bool _dismissNotified = false;
+  bool _logoPrecached = false;
+  AppLifecycleState? _lifecycleState;
 
   @override
   void initState() {
     super.initState();
+    _lifecycleState = WidgetsBinding.instance.lifecycleState;
+    WidgetsBinding.instance.addObserver(this);
     _breathController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1600),
-    )..repeat(reverse: true);
+    );
     _breathCurve = CurvedAnimation(
       parent: _breathController,
       curve: Curves.easeInOutSine,
@@ -55,7 +59,7 @@ class _TintaSplashOverlayState extends State<TintaSplashOverlay>
     _progressController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1350),
-    )..repeat();
+    );
 
     _exitController = AnimationController(
       vsync: this,
@@ -66,7 +70,7 @@ class _TintaSplashOverlayState extends State<TintaSplashOverlay>
       curve: Curves.easeOutCubic,
     );
     _exitFade = Tween<double>(begin: 1.0, end: 0.0).animate(curvedExit);
-    _exitScale = Tween<double>(begin: 1.0, end: 1.05).animate(curvedExit);
+    _exitScale = Tween<double>(begin: 1.0, end: 1.04).animate(curvedExit);
 
     _exitController.addStatusListener((status) {
       if (status == AnimationStatus.completed && !_dismissNotified) {
@@ -82,6 +86,46 @@ class _TintaSplashOverlayState extends State<TintaSplashOverlay>
         if (mounted) _beginExit();
       });
     }
+  }
+
+  void _syncAmbientTickers() {
+    if (!mounted) return;
+    final tickerEnabled = TickerMode.valuesOf(context).enabled;
+    final appActive =
+        _lifecycleState == null || _lifecycleState == AppLifecycleState.resumed;
+    if (!_isExiting && tickerEnabled && appActive) {
+      if (!_breathController.isAnimating) {
+        _breathController.repeat(reverse: true);
+      }
+      if (!_progressController.isAnimating) {
+        _progressController.repeat();
+      }
+    } else {
+      if (_breathController.isAnimating) {
+        _breathController.stop(canceled: false);
+      }
+      if (_isExiting && _progressController.isAnimating) {
+        _progressController.stop(canceled: false);
+      } else if (!tickerEnabled || !appActive) {
+        _progressController.stop(canceled: false);
+      }
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_logoPrecached) {
+      _logoPrecached = true;
+      precacheImage(const AssetImage('assets/images/tinta_icon.png'), context);
+    }
+    _syncAmbientTickers();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lifecycleState = state;
+    _syncAmbientTickers();
   }
 
   @override
@@ -101,6 +145,7 @@ class _TintaSplashOverlayState extends State<TintaSplashOverlay>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _breathController.dispose();
     _progressController.dispose();
     _exitController.dispose();
@@ -160,23 +205,25 @@ class _TintaSplashOverlayState extends State<TintaSplashOverlay>
                           ),
                         );
                       },
-                      child: ShaderMask(
-                        blendMode: BlendMode.dstIn,
-                        shaderCallback: (rect) => const RadialGradient(
-                          colors: [
-                            Colors.white,
-                            Colors.white,
-                            Colors.transparent,
-                          ],
-                          stops: [0.0, 0.89, 0.99],
-                        ).createShader(rect),
-                        child: Image.asset(
-                          'assets/images/tinta_icon.png',
-                          width: 192,
-                          height: 192,
-                          fit: BoxFit.contain,
-                          gaplessPlayback: true,
-                          filterQuality: FilterQuality.medium,
+                      child: RepaintBoundary(
+                        child: ShaderMask(
+                          blendMode: BlendMode.dstIn,
+                          shaderCallback: (rect) => const RadialGradient(
+                            colors: [
+                              Colors.white,
+                              Colors.white,
+                              Colors.transparent,
+                            ],
+                            stops: [0.0, 0.89, 0.99],
+                          ).createShader(rect),
+                          child: Image.asset(
+                            'assets/images/tinta_icon.png',
+                            width: 192,
+                            height: 192,
+                            fit: BoxFit.contain,
+                            gaplessPlayback: true,
+                            filterQuality: FilterQuality.medium,
+                          ),
                         ),
                       ),
                     ),

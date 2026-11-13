@@ -903,114 +903,132 @@ class _GradesScreenState extends State<GradesScreen>
         edgeOffset: 8,
         strokeWidth: 2.6,
         onRefresh: widget.onRefresh,
-        child: ListView(
+        child: CustomScrollView(
           physics: const BouncingScrollPhysics(
             parent: AlwaysScrollableScrollPhysics(),
           ),
-          padding: const EdgeInsets.fromLTRB(0, 12, 0, 160),
-          children: [
-            _enter(
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: TactileBounce(
-                  pressedScale: 0.98,
-                  onTap: () => _openScholarshipAndBreakdownModal(
-                    subjects,
-                    _overallGhostGrades.isNotEmpty
-                        ? simulatedOverallAvg
-                        : baseOverallAvg,
-                  ),
-                  child: _buildCumulativeAverageCard(
-                    theme,
-                    scheme,
-                    baseAverage: baseOverallAvg,
-                    simulatedAverage: simulatedOverallAvg,
-                    subjectCount: subjects.length,
-                    gradeCount: numericGradeCount,
-                  ),
-                ),
-              ),
-              0,
-              const ValueKey('grades-top'),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: AnimatedCrossFade(
-                firstChild: const SizedBox.shrink(),
-                secondChild: Padding(
-                  padding: const EdgeInsets.only(top: 14),
-                  child: _buildOverallGhostSimulatorCard(
-                    theme,
-                    scheme,
-                    baseAverage: baseOverallAvg,
-                    simulatedAverage: simulatedOverallAvg,
-                  ),
-                ),
-                crossFadeState:
-                    (_showSimulatorPanel || _overallGhostGrades.isNotEmpty)
-                        ? CrossFadeState.showSecond
-                        : CrossFadeState.showFirst,
-                duration: const Duration(milliseconds: 240),
-              ),
-            ),
-            const SizedBox(height: 22),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.star_rounded,
-                    size: 20,
-                    color: scheme.primary,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      uwu('Tantárgyak és kerekített átlagok'),
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.only(top: 12),
+              sliver: SliverToBoxAdapter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _enter(
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: TactileBounce(
+                          pressedScale: 0.98,
+                          onTap: () => _openScholarshipAndBreakdownModal(
+                            subjects,
+                            _overallGhostGrades.isNotEmpty
+                                ? simulatedOverallAvg
+                                : baseOverallAvg,
+                          ),
+                          child: _buildCumulativeAverageCard(
+                            theme,
+                            scheme,
+                            baseAverage: baseOverallAvg,
+                            simulatedAverage: simulatedOverallAvg,
+                            subjectCount: subjects.length,
+                            gradeCount: numericGradeCount,
+                          ),
+                        ),
+                      ),
+                      0,
+                      const ValueKey('grades-top'),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: AnimatedSize(
+                        duration: const Duration(milliseconds: 240),
+                        curve: Curves.easeOutCubic,
+                        alignment: Alignment.topCenter,
+                        child: (_showSimulatorPanel ||
+                                _overallGhostGrades.isNotEmpty)
+                            ? Padding(
+                                padding: const EdgeInsets.only(top: 14),
+                                child: _buildOverallGhostSimulatorCard(
+                                  theme,
+                                  scheme,
+                                  baseAverage: baseOverallAvg,
+                                  simulatedAverage: simulatedOverallAvg,
+                                ),
+                              )
+                            : const SizedBox.shrink(),
                       ),
                     ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: scheme.surfaceContainerHigh,
-                      borderRadius: BorderRadius.circular(22),
-                    ),
-                    child: Text(
-                      '${subjects.length} tantárgy',
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        color: scheme.onSurface.withValues(alpha: 0.72),
+                    const SizedBox(height: 22),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.star_rounded,
+                            size: 20,
+                            color: scheme.primary,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              uwu('Tantárgyak és kerekített átlagok'),
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: scheme.surfaceContainerHigh,
+                              borderRadius: BorderRadius.circular(22),
+                            ),
+                            child: Text(
+                              '${subjects.length} tantárgy',
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                color: scheme.onSurface.withValues(alpha: 0.72),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 10),
+                    _buildSortBar(theme, scheme),
+                    const SizedBox(height: 12),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(height: 10),
-            _buildSortBar(theme, scheme),
-            const SizedBox(height: 12),
             if (subjects.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _buildEmptyCard(theme, scheme),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 160),
+                sliver: SliverToBoxAdapter(
+                  child: _buildEmptyCard(theme, scheme),
+                ),
               )
             else
-              ...List.generate(subjects.length, (idx) {
-                final subj = subjects[idx];
-                return _enter(
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: _buildSubjectTile(context, theme, scheme, subj),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 160),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, idx) {
+                      final subj = subjects[idx];
+                      return RepaintBoundary(
+                        child: _enter(
+                          _buildSubjectTile(context, theme, scheme, subj),
+                          idx < 7 ? idx + 1 : 7,
+                          ValueKey('subj-${subj.heroId}'),
+                        ),
+                      );
+                    },
+                    childCount: subjects.length,
                   ),
-                  idx + 1,
-                  ValueKey('subj-${subj.heroId}'),
-                );
-              }),
+                ),
+              ),
           ],
         ),
       ),
@@ -1228,7 +1246,7 @@ class _GradesScreenState extends State<GradesScreen>
     required double? baseAverage,
     required double? simulatedAverage,
   }) {
-    return LiquidGlassSurface(
+    return SoftGlassCard(
       prefs: widget.prefs,
       padding: const EdgeInsets.symmetric(vertical: 18),
       borderRadius: OledTheme.largeRadius,
@@ -2684,7 +2702,10 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
           },
         );
       },
-    );
+    ).whenComplete(() {
+      subjController.dispose();
+      teacherController.dispose();
+    });
   }
 
   Widget _buildModalThresholdRow(
@@ -2798,138 +2819,162 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
           ),
         ],
       ),
-      body: ListView(
+      body: CustomScrollView(
         physics: const BouncingScrollPhysics(
           parent: AlwaysScrollableScrollPhysics(),
         ),
-        padding: EdgeInsets.fromLTRB(0, 12, 0, bottomSafePadding),
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Hero(
-              tag: subjectHeroTag,
-              child: Material(
-                type: MaterialType.transparency,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 240),
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: theme.cardTheme.color,
-                    borderRadius: OledTheme.largeRadius,
-                    border: Border.all(
-                      color: avgColor.withValues(alpha: 0.6),
-                      width: 1.4,
-                    ),
-                  ),
-                  child: SingleChildScrollView(
-                    physics: const NeverScrollableScrollPhysics(),
-                    child: Row(
-                      children: [
-                        AnimatedContainer(
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.only(top: 12),
+            sliver: SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Hero(
+                      tag: subjectHeroTag,
+                      child: Material(
+                        type: MaterialType.transparency,
+                        child: AnimatedContainer(
                           duration: const Duration(milliseconds: 240),
-                          width: 66,
-                          height: 66,
-                          alignment: Alignment.center,
+                          padding: const EdgeInsets.all(18),
                           decoration: BoxDecoration(
-                            color: avgColor,
-                            borderRadius: OledTheme.badgeRadius,
+                            color: theme.cardTheme.color,
+                            borderRadius: OledTheme.largeRadius,
+                            border: Border.all(
+                              color: avgColor.withValues(alpha: 0.6),
+                              width: 1.4,
+                            ),
                           ),
-                          child: activeAvg != null
-                              ? AnimatedNumberText(
-                                  value: activeAvg,
-                                  fractionDigits: 2,
-                                  style: theme.textTheme.titleLarge?.copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w900,
+                          child: SingleChildScrollView(
+                            physics: const NeverScrollableScrollPhysics(),
+                            child: Row(
+                              children: [
+                                AnimatedContainer(
+                                  duration: const Duration(milliseconds: 240),
+                                  width: 66,
+                                  height: 66,
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    color: avgColor,
+                                    borderRadius: OledTheme.badgeRadius,
                                   ),
-                                )
-                              : Text(
-                                  '–',
-                                  style: theme.textTheme.titleLarge?.copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w900,
-                                  ),
+                                  child: activeAvg != null
+                                      ? AnimatedNumberText(
+                                          value: activeAvg,
+                                          fractionDigits: 2,
+                                          style: theme.textTheme.titleLarge
+                                              ?.copyWith(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        )
+                                      : Text(
+                                          '–',
+                                          style: theme.textTheme.titleLarge
+                                              ?.copyWith(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
                                 ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                displaySubjectName,
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                roundedStanding != null
-                                    ? '$roundedStanding (${widget.summary.grades.length} db jegy)'
-                                    : '${widget.summary.grades.length} rögzített értékelés',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: scheme.onSurface.withValues(alpha: 0.72),
-                                ),
-                              ),
-                              if (_ghostGrades.isNotEmpty && baseAvg != null) ...[
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Eredeti átlag: ${baseAvg.toStringAsFixed(2)} • +${_ghostGrades.length} szellemjegy',
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: scheme.primary,
-                                    fontWeight: FontWeight.w700,
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        displaySubjectName,
+                                        style: theme.textTheme.titleMedium
+                                            ?.copyWith(
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        roundedStanding != null
+                                            ? '$roundedStanding (${widget.summary.grades.length} db jegy)'
+                                            : '${widget.summary.grades.length} rögzített értékelés',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                          color: scheme.onSurface
+                                              .withValues(alpha: 0.72),
+                                        ),
+                                      ),
+                                      if (_ghostGrades.isNotEmpty &&
+                                          baseAvg != null) ...[
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Eredeti átlag: ${baseAvg.toStringAsFixed(2)} • +${_ghostGrades.length} szellemjegy',
+                                          style: theme.textTheme.labelSmall
+                                              ?.copyWith(
+                                            color: scheme.primary,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
                                   ),
                                 ),
                               ],
-                            ],
+                            ),
                           ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildSubjectSimulatorCard(
+                    theme,
+                    scheme,
+                    targetThreshold: targetThreshold,
+                    needed5Count100: needed5Count100,
+                    needed5Count200: needed5Count200,
+                  ).staggeredEntrance(0),
+                  const SizedBox(height: 20),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Rögzített jegyek (koppints a részletekért)',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: _openSubjectCustomizationModal,
+                          icon: const Icon(Icons.edit_note_rounded, size: 18),
+                          label: const Text('Testreszabás'),
                         ),
                       ],
                     ),
                   ),
-                ),
+                  const SizedBox(height: 10),
+                ],
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          _buildSubjectSimulatorCard(
-            theme,
-            scheme,
-            targetThreshold: targetThreshold,
-            needed5Count100: needed5Count100,
-            needed5Count200: needed5Count200,
-          ).staggeredEntrance(0),
-          const SizedBox(height: 20),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Rögzített jegyek (koppints a részletekért)',
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                TextButton.icon(
-                  onPressed: _openSubjectCustomizationModal,
-                  icon: const Icon(Icons.edit_note_rounded, size: 18),
-                  label: const Text('Testreszabás'),
-                ),
-              ],
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, bottomSafePadding),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, idx) {
+                  final grade = widget.summary.grades[idx];
+                  return RepaintBoundary(
+                    child: _buildGradeDetailCard(context, theme, scheme, grade)
+                        .staggeredEntrance(idx < 8 ? idx + 1 : 8),
+                  );
+                },
+                childCount: widget.summary.grades.length,
+              ),
             ),
           ),
-          const SizedBox(height: 10),
-          ...List.generate(widget.summary.grades.length, (idx) {
-            final grade = widget.summary.grades[idx];
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _buildGradeDetailCard(context, theme, scheme, grade)
-                  .staggeredEntrance(idx + 1),
-            );
-          }),
         ],
       ),
     );
@@ -3195,6 +3240,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
         : '100%';
     final modeText = grade.mode?.description;
     final teacherDisplay = _prefs.resolveTeacherName(grade.teacher);
+    final heroTag = 'subj_grade_${grade.uid}';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -3203,6 +3249,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
         onTap: () => showGradeInspectionModal(
           context,
           grade,
+          heroTag: heroTag,
           prefs: _prefs,
         ),
         child: SoftGlassCard(
@@ -3212,19 +3259,25 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 48,
-                height: 48,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: badgeColor,
-                  borderRadius: OledTheme.badgeRadius,
-                ),
-                child: Text(
-                  badgeText,
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
+              Hero(
+                tag: heroTag,
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: Container(
+                    width: 48,
+                    height: 48,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: badgeColor,
+                      borderRadius: OledTheme.badgeRadius,
+                    ),
+                    child: Text(
+                      badgeText,
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                   ),
                 ),
               ),

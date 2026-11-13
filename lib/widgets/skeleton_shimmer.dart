@@ -19,20 +19,50 @@ class HomeSkeletonFeed extends StatefulWidget {
 }
 
 class _HomeSkeletonFeedState extends State<HomeSkeletonFeed>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final AnimationController _shimmerController;
+  AppLifecycleState? _lifecycleState;
 
   @override
   void initState() {
     super.initState();
+    _lifecycleState = WidgetsBinding.instance.lifecycleState;
+    WidgetsBinding.instance.addObserver(this);
     _shimmerController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1350),
-    )..repeat();
+    );
+  }
+
+  void _syncTicker() {
+    if (!mounted) return;
+    final tickerEnabled = TickerMode.valuesOf(context).enabled;
+    final routeIsCurrent = ModalRoute.of(context)?.isCurrent ?? true;
+    final appActive =
+        _lifecycleState == null || _lifecycleState == AppLifecycleState.resumed;
+    final shouldAnimate = tickerEnabled && routeIsCurrent && appActive;
+    if (shouldAnimate && !_shimmerController.isAnimating) {
+      _shimmerController.repeat();
+    } else if (!shouldAnimate && _shimmerController.isAnimating) {
+      _shimmerController.stop(canceled: false);
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncTicker();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lifecycleState = state;
+    _syncTicker();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _shimmerController.dispose();
     super.dispose();
   }

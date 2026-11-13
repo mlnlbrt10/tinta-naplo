@@ -148,6 +148,9 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
         title: uwu('Az alkalmazásról'),
       ),
       body: ListView(
+        physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics(),
+        ),
         padding: EdgeInsets.fromLTRB(
           16,
           adaptiveAppBarTopPadding(context),
@@ -183,9 +186,24 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
       ),
       child: Column(
         children: [
-          AppBrandIconBadge(
-            prefs: _currentPrefs,
-            size: 88,
+          Container(
+            width: 88,
+            height: 88,
+            decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.14),
+                width: 1,
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Image.asset(
+              'assets/images/tinta_icon.png',
+              width: 88,
+              height: 88,
+              fit: BoxFit.cover,
+            ),
           ),
           const SizedBox(height: 16),
           Text(

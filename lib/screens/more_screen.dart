@@ -195,6 +195,7 @@ void _showOmissionDetailModal(
   required UserProfilePrefs prefs,
   required DateFormat dateFormat,
   required Omission omission,
+  String? heroTag,
 }) {
   final isLate = OmissionsSummary.isTardiness(omission);
   final isExcused = omission.state == OmissionState.excused;
@@ -218,6 +219,7 @@ void _showOmissionDetailModal(
     context: context,
     closeMode: prefs.modalCloseMode,
     prefs: prefs,
+    heroTag: heroTag,
     categoryLabel: isLate ? 'Késés' : 'Mulasztás / Hiányzás',
     categoryIcon: Icons.event_busy_rounded,
     accentColor: statusColor,
@@ -376,33 +378,47 @@ class _DailyOmissionCard extends StatelessWidget {
         ? statusLabel
         : '$statusLabel • $teacherName';
 
-    return InkWell(
+    final heroTag =
+        'omission_${omission.uid}_${omission.date.millisecondsSinceEpoch}';
+
+    return TactileBounce(
+      pressedScale: 0.97,
       onTap: () => _showOmissionDetailModal(
         context,
         prefs: prefs,
         dateFormat: dateFormat,
         omission: omission,
+        heroTag: heroTag,
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-              decoration: BoxDecoration(
-                color: statusColor,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                isLate
-                    ? '${omission.lateForMin ?? 0} p'
-                    : (omission.lesson?.classNo != null
-                        ? '${omission.lesson!.classNo}. óra'
-                        : statusLabel),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
+            Hero(
+              tag: heroTag,
+              child: Material(
+                type: MaterialType.transparency,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: statusColor,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    isLate
+                        ? '${omission.lateForMin ?? 0} p'
+                        : (omission.lesson?.classNo != null
+                            ? '${omission.lesson!.classNo}. óra'
+                            : statusLabel),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -1951,19 +1967,13 @@ class _MoreScreenState extends State<MoreScreen>
         edgeOffset: 8,
         strokeWidth: 2.6,
         onRefresh: _refreshModules,
-        child: ListView(
+        child: CustomScrollView(
           physics: const BouncingScrollPhysics(
             parent: AlwaysScrollableScrollPhysics(),
           ),
-          padding: widget.messagesOnly
-              ? const EdgeInsets.fromLTRB(16, 12, 16, 112)
-              : const EdgeInsets.fromLTRB(0, 12, 0, 112),
-          children: widget.messagesOnly
-              ? [
-                  _buildMessagesModuleCard(theme, scheme)
-                      .staggeredEntrance(0, enabled: _entranceActive),
-                ]
-              : _buildAttendanceTabChildren(theme, scheme),
+          slivers: widget.messagesOnly
+              ? _buildMessagesSlivers(theme, scheme)
+              : _buildAttendanceTabSlivers(theme, scheme),
         ),
       );
     }
@@ -3245,7 +3255,7 @@ class _MoreScreenState extends State<MoreScreen>
   }
 
   /// Module 1: Hiányzások és Késések (`/ellenorzo/v3/sajat/Mulasztasok`).
-  List<Widget> _buildAttendanceTabChildren(
+  List<Widget> _buildAttendanceTabSlivers(
     ThemeData theme,
     ColorScheme scheme,
   ) {
@@ -3254,155 +3264,170 @@ class _MoreScreenState extends State<MoreScreen>
     final dailyGroups = groupOmissionsByDay(filtered);
 
     return [
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: ChristmasSnowCap(
-          enabled: _currentPrefs.christmasModeEnabled,
-          child: SoftGlassCard(
-            prefs: _currentPrefs,
-            padding: const EdgeInsets.all(18),
-            borderRadius: OledTheme.largeRadius,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: scheme.primary.withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(14),
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        sliver: SliverToBoxAdapter(
+          child: ChristmasSnowCap(
+            enabled: _currentPrefs.christmasModeEnabled,
+            child: SoftGlassCard(
+              prefs: _currentPrefs,
+              padding: const EdgeInsets.all(18),
+              borderRadius: OledTheme.largeRadius,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: scheme.primary.withValues(alpha: 0.18),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(
+                          Icons.event_busy_rounded,
+                          color: scheme.primary,
+                          size: 22,
+                        ),
                       ),
-                      child: Icon(
-                        Icons.event_busy_rounded,
-                        color: scheme.primary,
-                        size: 22,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            uwu('Hiányzások és Késések'),
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w900,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              uwu('Hiányzások és Késések'),
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w900,
+                              ),
                             ),
-                          ),
-                          Text(
-                            'Mulasztott órák és késések részletes összesítése',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: scheme.onSurface.withValues(alpha: 0.62),
+                            Text(
+                              'Mulasztott órák és késések részletes összesítése',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: scheme.onSurface.withValues(alpha: 0.62),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    if (_isLoadingModules)
-                      const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildStatPill(
-                        theme,
-                        scheme,
-                        label: 'Összes óra',
-                        value: '${summary.totalMissedHours} óra',
-                        color: scheme.primary,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _buildStatPill(
-                        theme,
-                        scheme,
-                        label: 'Igazolt',
-                        value: '${summary.certifiedHours} óra',
-                        color: const Color(0xFF2E7D32),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _buildStatPill(
-                        theme,
-                        scheme,
-                        label: 'Igazolatlan',
-                        value: '${summary.uncertifiedHours} óra',
-                        color: const Color(0xFFC62828),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _buildStatPill(
-                        theme,
-                        scheme,
-                        label: 'Késések',
-                        value: '${summary.totalTardinessMinutes} perc',
-                        color: const Color(0xFFF9A825),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                // B5: Prominent "Összes hiányzás megtekintése" button
-                FilledButton.tonalIcon(
-                  onPressed: _openAllOmissionsScreen,
-                  icon: const Icon(Icons.list_alt_rounded, size: 18),
-                  label: Text(
-                    uwu(
-                      'Összes hiányzás megtekintése (${summary.allOmissions.length} tétel)',
-                    ),
-                    style: const TextStyle(fontWeight: FontWeight.w800),
+                      if (_isLoadingModules)
+                        const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                    ],
                   ),
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 13),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(18),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildStatPill(
+                          theme,
+                          scheme,
+                          label: 'Összes óra',
+                          value: '${summary.totalMissedHours} óra',
+                          color: scheme.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildStatPill(
+                          theme,
+                          scheme,
+                          label: 'Igazolt',
+                          value: '${summary.certifiedHours} óra',
+                          color: const Color(0xFF2E7D32),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildStatPill(
+                          theme,
+                          scheme,
+                          label: 'Igazolatlan',
+                          value: '${summary.uncertifiedHours} óra',
+                          color: const Color(0xFFC62828),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildStatPill(
+                          theme,
+                          scheme,
+                          label: 'Késések',
+                          value: '${summary.totalTardinessMinutes} perc',
+                          color: const Color(0xFFF9A825),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  // B5: Prominent "Összes hiányzás megtekintése" button
+                  FilledButton.tonalIcon(
+                    onPressed: _openAllOmissionsScreen,
+                    icon: const Icon(Icons.list_alt_rounded, size: 18),
+                    label: Text(
+                      uwu(
+                        'Összes hiányzás megtekintése (${summary.allOmissions.length} tétel)',
+                      ),
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ).staggeredEntrance(0, enabled: _entranceActive),
+          ).staggeredEntrance(0, enabled: _entranceActive),
+        ),
       ),
-      const SizedBox(height: 12),
-      _buildOmissionFilterChips(
-        selected: _attendanceFilter,
-        onSelected: (f) => setState(() => _attendanceFilter = f),
+      const SliverToBoxAdapter(child: SizedBox(height: 12)),
+      SliverToBoxAdapter(
+        child: _buildOmissionFilterChips(
+          selected: _attendanceFilter,
+          onSelected: (f) => setState(() => _attendanceFilter = f),
+        ),
       ),
-      const SizedBox(height: 12),
+      const SliverToBoxAdapter(child: SizedBox(height: 12)),
       if (dailyGroups.isEmpty)
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: _buildEmptyOmissionCard(
-            prefs: _currentPrefs,
-            message:
-                'Nincs rögzített mulasztás vagy késés ebben a kategóriában.',
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 112),
+          sliver: SliverToBoxAdapter(
+            child: _buildEmptyOmissionCard(
+              prefs: _currentPrefs,
+              message:
+                  'Nincs rögzített mulasztás vagy késés ebben a kategóriában.',
+            ),
           ),
         )
       else
-        for (int i = 0; i < dailyGroups.length; i++)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-            child: _DailyOmissionCard(
-              group: dailyGroups[i],
-              prefs: _currentPrefs,
-              dateFormat: _dateFormat,
-            ).staggeredEntrance(
-              i < 6 ? i + 1 : 6,
-              enabled: _entranceActive,
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 112),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, i) => RepaintBoundary(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _DailyOmissionCard(
+                    group: dailyGroups[i],
+                    prefs: _currentPrefs,
+                    dateFormat: _dateFormat,
+                  ).staggeredEntrance(
+                    i < 6 ? i + 1 : 6,
+                    enabled: _entranceActive,
+                  ),
+                ),
+              ),
+              childCount: dailyGroups.length,
             ),
           ),
+        ),
     ];
   }
 
@@ -3448,276 +3473,279 @@ class _MoreScreenState extends State<MoreScreen>
   }
 
   /// Module 2: Kréta Üzenetek (`/ellenorzo/v3/sajat/Uzenetek` — Beérkezett / Elküldött).
-  Widget _buildMessagesModuleCard(ThemeData theme, ColorScheme scheme) {
+  List<Widget> _buildMessagesSlivers(ThemeData theme, ColorScheme scheme) {
     final visibleMessages = _messages
         .where((m) => _showSentMessages ? m.isSent : !m.isSent)
         .toList();
 
-    return ChristmasSnowCap(
-      enabled: _currentPrefs.christmasModeEnabled,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 18),
-        decoration: BoxDecoration(
-          color: theme.cardTheme.color,
-          borderRadius: OledTheme.largeRadius,
-          border: Border.all(color: theme.dividerColor),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18),
-              child: Row(
+    return [
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        sliver: SliverToBoxAdapter(
+          child: ChristmasSnowCap(
+            enabled: _currentPrefs.christmasModeEnabled,
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 18),
+              decoration: BoxDecoration(
+                color: theme.cardTheme.color,
+                borderRadius: OledTheme.largeRadius,
+                border: Border.all(color: theme.dividerColor),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: scheme.primary.withValues(alpha: 0.18),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Icon(
-                      Icons.mail_outline_rounded,
-                      color: scheme.primary,
-                      size: 22,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 18),
+                    child: Row(
                       children: [
-                        Text(
-                          uwu('Kréta Üzenetek'),
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w900,
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: scheme.primary.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Icon(
+                            Icons.mail_outline_rounded,
+                            color: scheme.primary,
+                            size: 22,
                           ),
                         ),
-                        Text(
-                          'Beérkezett és elküldött üzenetek',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.onSurface.withValues(alpha: 0.62),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                uwu('Kréta Üzenetek'),
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              Text(
+                                'Beérkezett és elküldött üzenetek',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color:
+                                      scheme.onSurface.withValues(alpha: 0.62),
+                                ),
+                              ),
+                            ],
                           ),
+                        ),
+                        FilledButton.tonalIcon(
+                          onPressed: () => _openMessageComposerDialog(),
+                          icon: const Icon(Icons.edit_rounded, size: 16),
+                          label: const Text('Új üzenet'),
                         ),
                       ],
                     ),
                   ),
-                  FilledButton.tonalIcon(
-                    onPressed: () => _openMessageComposerDialog(),
-                    icon: const Icon(Icons.edit_rounded, size: 16),
-                    label: const Text('Új üzenet'),
+                  const SizedBox(height: 12),
+                  EdgeFadeHorizontalScroll(
+                    padding: const EdgeInsets.symmetric(horizontal: 18),
+                    spacing: 8,
+                    children: [
+                      ChoiceChip(
+                        avatar: const Icon(Icons.inbox_rounded, size: 16),
+                        label: const Text('Beérkezett'),
+                        showCheckmark: false,
+                        selected: !_showSentMessages,
+                        onSelected: (_) =>
+                            setState(() => _showSentMessages = false),
+                      ),
+                      ChoiceChip(
+                        avatar: const Icon(Icons.send_rounded, size: 16),
+                        label: const Text('Elküldött'),
+                        showCheckmark: false,
+                        selected: _showSentMessages,
+                        onSelected: (_) =>
+                            setState(() => _showSentMessages = true),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 12),
-            EdgeFadeHorizontalScroll(
-              padding: const EdgeInsets.symmetric(horizontal: 18),
-              spacing: 8,
-              children: [
-                ChoiceChip(
-                  avatar: const Icon(Icons.inbox_rounded, size: 16),
-                  label: const Text('Beérkezett'),
-                  showCheckmark: false,
-                  selected: !_showSentMessages,
-                  onSelected: (_) =>
-                      setState(() => _showSentMessages = false),
-                ),
-                ChoiceChip(
-                  avatar: const Icon(Icons.send_rounded, size: 16),
-                  label: const Text('Elküldött'),
-                  showCheckmark: false,
-                  selected: _showSentMessages,
-                  onSelected: (_) =>
-                      setState(() => _showSentMessages = true),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+          ).staggeredEntrance(0, enabled: _entranceActive),
+        ),
+      ),
+      const SliverToBoxAdapter(child: SizedBox(height: 10)),
+      if (visibleMessages.isEmpty)
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 112),
+          sliver: SliverToBoxAdapter(
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: theme.dividerColor),
+              ),
+              child: Row(
                 children: [
-                  if (visibleMessages.isEmpty)
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: scheme.surfaceContainerHigh,
-                        borderRadius: BorderRadius.circular(18),
+                  Icon(
+                    Icons.mark_email_read_rounded,
+                    color: scheme.onSurface.withValues(alpha: 0.55),
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _showSentMessages
+                          ? 'Még nincs elküldött üzenet. Koppints az „Új üzenet” gombra!'
+                          : 'Nincs megjeleníthető beérkezett üzenet.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurface.withValues(alpha: 0.75),
                       ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.mark_email_read_rounded,
-                            color: scheme.onSurface.withValues(alpha: 0.55),
-                            size: 20,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              _showSentMessages
-                                  ? 'Még nincs elküldött üzenet. Koppints az „Új üzenet” gombra!'
-                                  : 'Nincs megjeleníthető beérkezett üzenet.',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: scheme.onSurface.withValues(alpha: 0.75),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  else
-                    ...visibleMessages.map((msg) {
-                      final isRead = _isMessageRead(msg);
-                      final senderDisplay =
-                          _currentPrefs.resolveTeacherName(msg.sender);
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        )
+      else
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 112),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, idx) => RepaintBoundary(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _buildMessageTile(theme, scheme, visibleMessages[idx]),
+                ).staggeredEntrance(
+                  idx < 8 ? idx + 1 : 8,
+                  enabled: _entranceActive,
+                ),
+              ),
+              childCount: visibleMessages.length,
+            ),
+          ),
+        ),
+    ];
+  }
 
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: TactileBounce(
-                          onTap: () => _openMessageDetailModal(msg),
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: scheme.surfaceContainerHigh,
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(
-                                color: !isRead
-                                    ? scheme.primary.withValues(alpha: 0.7)
-                                    : theme.dividerColor,
-                                width: !isRead ? 1.4 : 1.0,
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 10,
-                                  height: 10,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: !isRead
-                                        ? scheme.primary
-                                        : scheme.onSurface
-                                            .withValues(alpha: 0.25),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              msg.isSent &&
-                                                      msg.recipients.isNotEmpty
-                                                  ? 'Címzett: ${msg.recipients.first}'
-                                                  : senderDisplay,
-                                              style: theme.textTheme.labelMedium
-                                                  ?.copyWith(
-                                                fontWeight: !isRead
-                                                    ? FontWeight.w900
-                                                    : FontWeight.w700,
-                                                color: scheme.primary,
-                                              ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                          if (msg.isSystemMessage) ...[
-                                            const SizedBox(width: 6),
-                                            Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                horizontal: 6,
-                                                vertical: 1,
-                                              ),
-                                              decoration: BoxDecoration(
-                                                color: scheme.primary
-                                                    .withValues(alpha: 0.12),
-                                                borderRadius:
-                                                    BorderRadius.circular(6),
-                                              ),
-                                              child: Text(
-                                                'Rendszer',
-                                                style: theme
-                                                    .textTheme.labelSmall
-                                                    ?.copyWith(
-                                                  fontSize: 9,
-                                                  fontWeight: FontWeight.w700,
-                                                  color: scheme.primary,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                          if (msg.hasAttachments ||
-                                              msg.attachments.isNotEmpty) ...[
-                                            const SizedBox(width: 4),
-                                            Icon(
-                                              Icons.attach_file_rounded,
-                                              size: 13,
-                                              color: scheme.onSurface
-                                                  .withValues(alpha: 0.65),
-                                            ),
-                                          ],
-                                          const SizedBox(width: 6),
-                                          Text(
-                                            _dateFormat
-                                                .format(msg.sentAt.toLocal()),
-                                            style: theme.textTheme.labelSmall
-                                                ?.copyWith(
-                                              color: scheme.onSurface
-                                                  .withValues(alpha: 0.58),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 3),
-                                      Text(
-                                        msg.subject,
-                                        style: theme.textTheme.bodyMedium
-                                            ?.copyWith(
-                                          fontWeight: !isRead
-                                              ? FontWeight.w900
-                                              : FontWeight.w600,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      if (msg.cleanBody.isNotEmpty) ...[
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          msg.cleanBody,
-                                          style: theme.textTheme.bodySmall
-                                              ?.copyWith(
-                                            color: scheme.onSurface
-                                                .withValues(alpha: 0.65),
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Icon(
-                                  Icons.chevron_right_rounded,
-                                  size: 18,
-                                  color:
-                                      scheme.onSurface.withValues(alpha: 0.5),
-                                ),
-                              ],
+  Widget _buildMessageTile(
+    ThemeData theme,
+    ColorScheme scheme,
+    KretaMessage msg,
+  ) {
+    final isRead = _isMessageRead(msg);
+    final senderDisplay = _currentPrefs.resolveTeacherName(msg.sender);
+
+    return TactileBounce(
+      onTap: () => _openMessageDetailModal(msg),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: !isRead
+                ? scheme.primary.withValues(alpha: 0.7)
+                : theme.dividerColor,
+            width: !isRead ? 1.4 : 1.0,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: !isRead
+                    ? scheme.primary
+                    : scheme.onSurface.withValues(alpha: 0.25),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          msg.isSent && msg.recipients.isNotEmpty
+                              ? 'Címzett: ${msg.recipients.first}'
+                              : senderDisplay,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight:
+                                !isRead ? FontWeight.w900 : FontWeight.w700,
+                            color: scheme.primary,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (msg.isSystemMessage) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: scheme.primary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            'Rendszer',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: scheme.primary,
                             ),
                           ),
                         ),
-                      );
-                    }),
+                      ],
+                      if (msg.hasAttachments || msg.attachments.isNotEmpty) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.attach_file_rounded,
+                          size: 13,
+                          color: scheme.onSurface.withValues(alpha: 0.65),
+                        ),
+                      ],
+                      const SizedBox(width: 6),
+                      Text(
+                        _dateFormat.format(msg.sentAt.toLocal()),
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurface.withValues(alpha: 0.58),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    msg.subject,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: !isRead ? FontWeight.w900 : FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (msg.cleanBody.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      msg.cleanBody,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurface.withValues(alpha: 0.65),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ],
               ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 18,
+              color: scheme.onSurface.withValues(alpha: 0.5),
             ),
           ],
         ),
@@ -3909,45 +3937,51 @@ class _AllOmissionsScreenState extends State<AllOmissionsScreen> {
         context,
         title: uwu('Összes hiányzás és késés'),
       ),
-      body: ListView(
+      body: CustomScrollView(
         physics: const BouncingScrollPhysics(
           parent: AlwaysScrollableScrollPhysics(),
         ),
-        padding: EdgeInsets.fromLTRB(
-          0,
-          adaptiveAppBarTopPadding(context),
-          0,
-          36,
-        ),
-        children: [
-          _buildOmissionFilterChips(
-            selected: _filter,
-            onSelected: (f) => setState(() => _filter = f),
-          ),
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (dailyGroups.isEmpty)
-                  _buildEmptyOmissionCard(
-                    prefs: widget.prefs,
-                    message:
-                        'Nincs rögzített mulasztás vagy késés ebben a szűrőben.',
-                  )
-                else
-                  for (final group in dailyGroups) ...[
-                    _DailyOmissionCard(
-                      group: group,
-                      prefs: widget.prefs,
-                      dateFormat: _dateFormat,
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-              ],
+        slivers: [
+          SliverPadding(
+            padding: EdgeInsets.only(top: adaptiveAppBarTopPadding(context)),
+            sliver: SliverToBoxAdapter(
+              child: _buildOmissionFilterChips(
+                selected: _filter,
+                onSelected: (f) => setState(() => _filter = f),
+              ),
             ),
           ),
+          const SliverToBoxAdapter(child: SizedBox(height: 12)),
+          if (dailyGroups.isEmpty)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 36),
+              sliver: SliverToBoxAdapter(
+                child: _buildEmptyOmissionCard(
+                  prefs: widget.prefs,
+                  message:
+                      'Nincs rögzített mulasztás vagy késés ebben a szűrőben.',
+                ),
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 36),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, i) => RepaintBoundary(
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: _DailyOmissionCard(
+                        group: dailyGroups[i],
+                        prefs: widget.prefs,
+                        dateFormat: _dateFormat,
+                      ).staggeredEntrance(i < 6 ? i : 6),
+                    ),
+                  ),
+                  childCount: dailyGroups.length,
+                ),
+              ),
+            ),
         ],
       ),
     );

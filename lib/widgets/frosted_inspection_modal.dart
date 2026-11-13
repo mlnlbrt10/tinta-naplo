@@ -47,8 +47,8 @@ Future<void> showFrostedModal({
         solidDarkAlpha: 0.54,
         solidLightAlpha: 0.42,
       ),
-      transitionDuration: const Duration(milliseconds: 180),
-      reverseTransitionDuration: const Duration(milliseconds: 160),
+      transitionDuration: const Duration(milliseconds: 280),
+      reverseTransitionDuration: const Duration(milliseconds: 240),
       pageBuilder: (dialogContext, animation, secondaryAnimation) {
         final theme = Theme.of(dialogContext);
         final scheme = theme.colorScheme;
@@ -57,10 +57,15 @@ Future<void> showFrostedModal({
             ? const Color(0xFF14181F).withValues(alpha: 0.96)
             : Colors.white.withValues(alpha: 0.97);
 
-        final curved = CurvedAnimation(
+        final fadeCurved = CurvedAnimation(
           parent: animation,
           curve: Curves.easeOutCubic,
           reverseCurve: Curves.easeInCubic,
+        );
+        final scaleCurved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutBack,
+          reverseCurve: Curves.easeInOutCubic,
         );
 
         Widget badgeOrIcon;
@@ -140,6 +145,7 @@ Future<void> showFrostedModal({
                       padding: const EdgeInsets.all(22),
                       borderRadius: OledTheme.largeRadius,
                       solidColor: cardBg,
+                      contentOpacityAnimation: fadeCurved,
                       border: isSoftBlur
                           ? null
                           : Border.all(
@@ -268,13 +274,17 @@ Future<void> showFrostedModal({
                             Container(
                               padding: const EdgeInsets.all(14),
                               decoration: BoxDecoration(
-                                color: scheme.surfaceContainerHighest
-                                    .withValues(alpha: isSoftBlur ? 0.36 : 0.65),
+                                color: isSoftBlur
+                                    ? Colors.black.withValues(
+                                        alpha: isDark ? 0.18 : 0.05,
+                                      )
+                                    : scheme.surfaceContainerHighest
+                                        .withValues(alpha: 0.65),
                                 borderRadius: OledTheme.cardRadius,
                                 border: Border.all(
                                   color: isSoftBlur
                                       ? Colors.white.withValues(
-                                          alpha: isDark ? 0.14 : 0.38,
+                                          alpha: isDark ? 0.14 : 0.22,
                                         )
                                       : theme.dividerColor,
                                 ),
@@ -334,13 +344,17 @@ Future<void> showFrostedModal({
                               Container(
                                 padding: const EdgeInsets.all(14),
                                 decoration: BoxDecoration(
-                                  color: scheme.surfaceContainerHighest
-                                      .withValues(alpha: isSoftBlur ? 0.30 : 0.50),
+                                  color: isSoftBlur
+                                      ? Colors.black.withValues(
+                                          alpha: isDark ? 0.16 : 0.04,
+                                        )
+                                      : scheme.surfaceContainerHighest
+                                          .withValues(alpha: 0.50),
                                   borderRadius: OledTheme.cardRadius,
                                   border: Border.all(
                                     color: isSoftBlur
                                         ? Colors.white.withValues(
-                                            alpha: isDark ? 0.14 : 0.38,
+                                            alpha: isDark ? 0.14 : 0.22,
                                           )
                                         : theme.dividerColor,
                                   ),
@@ -409,12 +423,9 @@ Future<void> showFrostedModal({
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: () => Navigator.of(dialogContext).pop(),
-          child: FadeTransition(
-            opacity: curved,
-            child: ScaleTransition(
-              scale: Tween<double>(begin: 0.92, end: 1.0).animate(curved),
-              child: RepaintBoundary(child: modalCard),
-            ),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.90, end: 1.0).animate(scaleCurved),
+            child: RepaintBoundary(child: modalCard),
           ),
         );
       },

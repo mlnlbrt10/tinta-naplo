@@ -232,12 +232,14 @@ class _LiquidSpringPillTrackState extends State<LiquidSpringPillTrack>
               );
 
               if (widget.clipBorderRadius != null) {
-                return ClipRRect(
-                  borderRadius: widget.clipBorderRadius!,
-                  child: stack,
+                return RepaintBoundary(
+                  child: ClipRRect(
+                    borderRadius: widget.clipBorderRadius!,
+                    child: stack,
+                  ),
                 );
               }
-              return stack;
+              return RepaintBoundary(child: stack);
             },
           );
         },
@@ -538,23 +540,24 @@ class _StaggeredEntranceItemState extends State<StaggeredEntranceItem>
 
   @override
   Widget build(BuildContext context) {
-    if (_curved == null) {
+    if (_completed || _curved == null) {
       return widget.child;
     }
     return RepaintBoundary(
-      child: AnimatedBuilder(
-        animation: _curved!,
-        child: widget.child,
-        builder: (context, child) {
-          final t = _completed ? 1.0 : _curved!.value.clamp(0.0, 1.0);
-          return Opacity(
-            opacity: t,
-            child: Transform.translate(
-              offset: Offset(0.0, (1.0 - t) * widget.slideOffsetPx),
+      child: FadeTransition(
+        opacity: _curved!,
+        child: AnimatedBuilder(
+          animation: _curved!,
+          child: widget.child,
+          builder: (context, child) {
+            final dy =
+                (1.0 - _curved!.value.clamp(0.0, 1.0)) * widget.slideOffsetPx;
+            return Transform.translate(
+              offset: Offset(0.0, dy),
               child: child,
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }

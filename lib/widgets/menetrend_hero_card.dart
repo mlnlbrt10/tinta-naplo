@@ -92,78 +92,70 @@ class MenetrendHeroCard extends StatelessWidget {
         evaluation: evaluation,
         prefs: prefs,
       ),
-      child: Hero(
-        tag: 'menetrend_hero_card',
-        flightShuttleBuilder: (
-          flightContext,
-          animation,
-          flightDirection,
-          fromHeroContext,
-          toHeroContext,
-        ) {
-          return Material(
-            type: MaterialType.transparency,
-            child: toHeroContext.widget,
-          );
-        },
-        child: Material(
-          type: MaterialType.transparency,
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  OledTheme.surfaceDark,
-                  primary.withValues(alpha: 0.14),
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(
-                color: primary.withValues(alpha: 0.35),
-                width: 1.2,
-              ),
+      child: Material(
+        type: MaterialType.transparency,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                OledTheme.surfaceDark,
+                primary.withValues(alpha: 0.14),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: primary.withValues(alpha: 0.35),
+              width: 1.2,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: primary.withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _iconForMode(trip.mode),
-                            size: 14,
-                            color: primary,
+                    Row(
+                  children: [
+                    Hero(
+                      tag: 'menetrend_hero_card',
+                      child: Material(
+                        type: MaterialType.transparency,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 4,
                           ),
-                          const SizedBox(width: 5),
-                          Text(
-                            UwuHelper.apply(modeBadgeText),
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.6,
-                              color: primary,
-                            ),
+                          decoration: BoxDecoration(
+                            color: primary.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(999),
                           ),
-                        ],
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _iconForMode(trip.mode),
+                                size: 14,
+                                color: primary,
+                              ),
+                              const SizedBox(width: 5),
+                              Text(
+                                UwuHelper.apply(modeBadgeText),
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.6,
+                                  color: primary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                     const Spacer(),
@@ -417,8 +409,7 @@ class MenetrendHeroCard extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
+      );
   }
 }
 
@@ -438,8 +429,8 @@ Future<void> showMenetrendDetailsModal(
         solidDarkAlpha: 0.72,
         solidLightAlpha: 0.48,
       ),
-      transitionDuration: const Duration(milliseconds: 180),
-      reverseTransitionDuration: const Duration(milliseconds: 160),
+      transitionDuration: const Duration(milliseconds: 280),
+      reverseTransitionDuration: const Duration(milliseconds: 240),
       pageBuilder: (ctx, animation, secondaryAnimation) {
         return _MenetrendDetailsModalSheet(
           evaluation: evaluation,
@@ -487,10 +478,15 @@ class _MenetrendDetailsModalSheetState
     final schoolArrive = trip.effectiveArrival
         .add(Duration(minutes: trip.walkToDestinationMinutes));
 
-    final curved = CurvedAnimation(
+    final fadeCurved = CurvedAnimation(
       parent: widget.animation,
       curve: Curves.easeOutCubic,
       reverseCurve: Curves.easeInCubic,
+    );
+    final scaleCurved = CurvedAnimation(
+      parent: widget.animation,
+      curve: Curves.easeOutBack,
+      reverseCurve: Curves.easeInOutCubic,
     );
 
     return Scaffold(
@@ -507,26 +503,25 @@ class _MenetrendDetailsModalSheetState
           Center(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 28),
-              child: FadeTransition(
-                opacity: curved,
-                child: ScaleTransition(
-                  scale: Tween<double>(begin: 0.92, end: 1.0).animate(curved),
-                  child: RepaintBoundary(
-                    child: Hero(
-                      tag: 'menetrend_hero_card',
-                      child: Material(
-                        type: MaterialType.transparency,
-                        child: LiquidGlassSurface(
-                          prefs: widget.prefs,
-                          solidColor: const Color(0xF0121212),
-                          borderRadius: BorderRadius.circular(24),
-                          border: resolveSoftBlurEnabled(widget.prefs)
-                              ? null
-                              : Border.all(
-                                  color: primary.withValues(alpha: 0.4),
-                                  width: 1.2,
-                                ),
-                          child: ConstrainedBox(
+              child: ScaleTransition(
+                scale: Tween<double>(begin: 0.90, end: 1.0).animate(
+                  scaleCurved,
+                ),
+                child: RepaintBoundary(
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: LiquidGlassSurface(
+                      prefs: widget.prefs,
+                      solidColor: const Color(0xF0121212),
+                      borderRadius: BorderRadius.circular(24),
+                      contentOpacityAnimation: fadeCurved,
+                      border: resolveSoftBlurEnabled(widget.prefs)
+                          ? null
+                          : Border.all(
+                              color: primary.withValues(alpha: 0.4),
+                              width: 1.2,
+                            ),
+                      child: ConstrainedBox(
                         constraints: const BoxConstraints(
                           maxWidth: 460,
                           maxHeight: 640,
@@ -542,18 +537,29 @@ class _MenetrendDetailsModalSheetState
                                     const EdgeInsets.symmetric(horizontal: 20),
                                 child: Row(
                                   children: [
-                                    Container(
-                                      padding: const EdgeInsets.all(10),
-                                      decoration: BoxDecoration(
-                                        color: primary.withValues(alpha: 0.16),
-                                        borderRadius: BorderRadius.circular(14),
-                                      ),
-                                      child: Icon(
-                                        trip.mode == MenetrendTransportMode.rail
-                                            ? Icons.train_rounded
-                                            : Icons.directions_bus_filled_rounded,
-                                        color: primary,
-                                        size: 22,
+                                    Hero(
+                                      tag: 'menetrend_hero_card',
+                                      child: Material(
+                                        type: MaterialType.transparency,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(10),
+                                          decoration: BoxDecoration(
+                                            color: primary.withValues(
+                                              alpha: 0.16,
+                                            ),
+                                            borderRadius:
+                                                BorderRadius.circular(14),
+                                          ),
+                                          child: Icon(
+                                            trip.mode ==
+                                                    MenetrendTransportMode.rail
+                                                ? Icons.train_rounded
+                                                : Icons
+                                                    .directions_bus_filled_rounded,
+                                            color: primary,
+                                            size: 22,
+                                          ),
+                                        ),
                                       ),
                                     ),
                                     const SizedBox(width: 12),
@@ -875,9 +881,7 @@ class _MenetrendDetailsModalSheetState
                           ),
                         ),
                       ),
-                      ),
                     ),
-                  ),
                   ),
                 ),
               ),

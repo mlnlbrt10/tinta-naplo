@@ -747,7 +747,7 @@ class _TimetableScreenState extends State<TimetableScreen>
   }
 
   Widget _buildExpandableFilterCard(ThemeData theme, ColorScheme scheme) {
-    return LiquidGlassSurface(
+    return SoftGlassCard(
       prefs: widget.prefs,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       borderRadius: BorderRadius.circular(18),
@@ -1128,7 +1128,7 @@ class _TimetableScreenState extends State<TimetableScreen>
     final isCancelled = isLessonCancelled(lesson) && !isPlaceholder;
     final hasSub = lesson.substituteTeacher != null &&
         lesson.substituteTeacher!.trim().isNotEmpty;
-    final heroTag = 'lesson_num_${lesson.uid}';
+    final heroTag = 'weekly_lesson_num_${lesson.uid}';
     final rawSubject = lesson.subject?.name ?? lesson.name;
     final subjectDisplay =
         widget.prefs.resolveSubjectName(rawSubject, lesson.subject?.uid);

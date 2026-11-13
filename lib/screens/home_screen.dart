@@ -171,7 +171,7 @@ class NextLessonStatus {
         return NextLessonStatus(
           phase: NextLessonPhase.beforeFirstFarAway,
           targetLesson: firstLesson,
-          headline: 'Még messze van az első órád',
+          headline: subjName,
           countdownLabel: 'Még messze van az első órád',
           remainingLessonsCount: remainingCount,
           totalLessonsCount: totalCount,
@@ -394,6 +394,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   String? _error;
   Timer? _countdownTimer;
+  final ValueNotifier<int> _countdownTick = ValueNotifier<int>(0);
 
   final DateFormat _timeFormat = DateFormat('HH:mm');
 
@@ -411,7 +412,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     _countdownTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (mounted && _selectedIndex == 0) {
-        setState(() {});
+        _countdownTick.value++;
       }
     });
   }
@@ -460,6 +461,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _countdownTimer?.cancel();
+    _countdownTick.dispose();
     _tabPageController.dispose();
     _chipBarController.dispose();
     super.dispose();
@@ -503,11 +505,21 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_data == null) {
       final cached = await widget.kretaClient.loadCachedDashboard(_session);
       if (mounted && cached != null && _data == null) {
+        final playInitialEntrance = !_homeInitialEntrancePlayed;
         setState(() {
           _data = cached;
           _isLoading = false;
           _error = null;
+          if (playInitialEntrance) {
+            _homeInitialEntrancePlayed = true;
+            _homeEntranceActive = true;
+          }
         });
+        if (playInitialEntrance) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _homeEntranceActive = false;
+          });
+        }
       }
     }
 
@@ -897,9 +909,10 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ];
 
-    return SafeArea(
-      top: false,
-      child: Padding(
+    return RepaintBoundary(
+      child: SafeArea(
+        top: false,
+        child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
         child: LiquidGlassSurface(
           prefs: widget.prefs,
@@ -969,6 +982,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+    ),
     );
   }
 
@@ -1036,87 +1050,154 @@ class _HomeScreenState extends State<HomeScreen> {
       final allFeedItems = _buildAllFeedItems();
       final today = DateUtils.dateOnly(DateTime.now());
       final allDayGroups = _groupFeedItemsByDay(allFeedItems, today);
-      final hasAnyMatching =
-          allFeedItems.any((item) => item.matchesFilter(_feedFilter));
+      final feedRows = <_HomeFeedRow>[];
+      int activeGroupIndex = 0;
+      for (final group in allDayGroups) {
+        final matchingItems =
+            group.items.where((it) => it.matchesFilter(_feedFilter)).toList();
+        if (matchingItems.isEmpty) continue;
+        feedRows.add(
+          _HomeFeedHeaderRow(
+            day: group.day,
+            matchingCount: matchingItems.length,
+            groupIndex: activeGroupIndex,
+          ),
+        );
+        for (int i = 0; i < matchingItems.length; i++) {
+          feedRows.add(
+            _HomeFeedItemRow(
+              item: matchingItems[i],
+              itemIndex: i,
+              groupIndex: activeGroupIndex,
+            ),
+          );
+        }
+        activeGroupIndex++;
+      }
+      final hasAnyMatching = feedRows.isNotEmpty;
 
-      tabChild = ListView(
+      tabChild = CustomScrollView(
         key: const ValueKey<String>('home-live-feed'),
         physics: const BouncingScrollPhysics(
           parent: AlwaysScrollableScrollPhysics(),
         ),
-        padding: const EdgeInsets.fromLTRB(0, 12, 0, 116),
-        children: [
-          if (_error != null) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _buildErrorCard(theme, _error!),
-            ),
-            const SizedBox(height: 16),
-          ],
-          if (widget.prefs.transitCardEnabled &&
-              widget.prefs.transitConfigured &&
-              _commuteEval != null) ...[
-            _maybeHomeEntrance(
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: MenetrendHomeCard(
-                  evaluation: _commuteEval,
-                  isLoading: _commuteLoading,
-                  prefs: widget.prefs,
-                  onOpenSettings: _openProfileAndSettingsModal,
-                  onRetry: _refreshCommute,
-                ),
-              ),
-              0,
-              key: const ValueKey('home-transit'),
-            ),
-            const SizedBox(height: 16),
-          ],
-          _maybeHomeEntrance(
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _buildNextLessonHeroCard(theme, scheme, lessons),
-            ),
-            1,
-            key: const ValueKey('home-next'),
-          ),
-          const SizedBox(height: 24),
-          _maybeHomeEntrance(
-            _buildFilterChipBar(theme, scheme),
-            2,
-            key: const ValueKey('home-chips'),
-          ),
-          const SizedBox(height: 18),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
-              key: const ValueKey<String>('feed-reflow-list'),
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _AnimatedFeedCollapse(
-                  key: const ValueKey<String>('feed-empty-collapse'),
-                  visible: !hasAnyMatching,
-                  child: _buildEmptyStateCard(
-                    theme,
-                    scheme,
-                    icon: Icons.inbox_rounded,
-                    message: uwu(
-                      'Nincs megjeleníthető elem ebben a kategóriában.',
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.only(top: 12),
+            sliver: SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_error != null) ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: _buildErrorCard(theme, _error!),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  if (widget.prefs.transitCardEnabled &&
+                      widget.prefs.transitConfigured &&
+                      _commuteEval != null) ...[
+                    _maybeHomeEntrance(
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: MenetrendHomeCard(
+                          evaluation: _commuteEval,
+                          isLoading: _commuteLoading,
+                          prefs: widget.prefs,
+                          onOpenSettings: _openProfileAndSettingsModal,
+                          onRetry: _refreshCommute,
+                        ),
+                      ),
+                      0,
+                      key: const ValueKey('home-transit'),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  _maybeHomeEntrance(
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: ValueListenableBuilder<int>(
+                        valueListenable: _countdownTick,
+                        builder: (context, _, _) =>
+                            _buildNextLessonHeroCard(theme, scheme, lessons),
+                      ),
+                    ),
+                    1,
+                    key: const ValueKey('home-next'),
+                  ),
+                  const SizedBox(height: 24),
+                  _maybeHomeEntrance(
+                    _buildFilterChipBar(theme, scheme),
+                    2,
+                    key: const ValueKey('home-chips'),
+                  ),
+                  const SizedBox(height: 18),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: _AnimatedFeedCollapse(
+                      key: const ValueKey<String>('feed-empty-collapse'),
+                      visible: !hasAnyMatching,
+                      child: _buildEmptyStateCard(
+                        theme,
+                        scheme,
+                        icon: Icons.inbox_rounded,
+                        message: uwu(
+                          'Nincs megjeleníthető elem ebben a kategóriában.',
+                        ),
+                      ),
                     ),
                   ),
-                ),
-                for (int gIdx = 0; gIdx < allDayGroups.length; gIdx++)
-                  _buildDayGroupSection(
-                    theme,
-                    scheme,
-                    allDayGroups[gIdx].day,
-                    allDayGroups[gIdx].items,
-                    today,
-                    gIdx,
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
+          if (feedRows.isNotEmpty)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 116),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final row = feedRows[index];
+                    if (row is _HomeFeedHeaderRow) {
+                      final header = _buildFeedDayHeaderRow(
+                        theme,
+                        scheme,
+                        row.day,
+                        row.matchingCount,
+                        today,
+                        topSpacing: row.groupIndex > 0 ? 20 : 0,
+                      );
+                      return RepaintBoundary(
+                        child: _maybeHomeEntrance(
+                          header,
+                          row.groupIndex < 6 ? row.groupIndex + 2 : 8,
+                          key: ValueKey('day-${row.day.toIso8601String()}'),
+                        ),
+                      );
+                    }
+                    final itemRow = row as _HomeFeedItemRow;
+                    final tile = Padding(
+                      padding:
+                          EdgeInsets.only(top: itemRow.itemIndex > 0 ? 2 : 0),
+                      child:
+                          _buildActivityFeedTile(theme, scheme, itemRow.item),
+                    );
+                    final staggerIndex = itemRow.groupIndex + itemRow.itemIndex;
+                    return RepaintBoundary(
+                      child: _maybeHomeEntrance(
+                        tile,
+                        staggerIndex < 6 ? staggerIndex + 2 : 8,
+                        key: ValueKey('feed-item-${itemRow.item.uniqueKey}'),
+                      ),
+                    );
+                  },
+                  childCount: feedRows.length,
+                ),
+              ),
+            )
+          else
+            const SliverPadding(padding: EdgeInsets.only(bottom: 116)),
         ],
       );
     }
@@ -1142,17 +1223,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildDayGroupSection(
+  Widget _buildFeedDayHeaderRow(
     ThemeData theme,
     ColorScheme scheme,
     DateTime day,
-    List<HomeActivityItem> items,
-    DateTime today,
-    int groupIndex,
-  ) {
-    final matchingCount =
-        items.where((it) => it.matchesFilter(_feedFilter)).length;
-    final groupVisible = matchingCount > 0;
+    int matchingCount,
+    DateTime today, {
+    double topSpacing = 0,
+  }) {
     final isUpcomingDay = day.isAfter(today);
     final isTomorrow = day == today.add(const Duration(days: 1));
     final title = _formatDaySectionTitle(day, today);
@@ -1161,86 +1239,58 @@ class _HomeScreenState extends State<HomeScreen> {
     // for tomorrow ("Holnap • Nov. 13.") and today/past, show weekday alongside.
     final showSecondaryWeekday = !isUpcomingDay || isTomorrow;
 
-    final section = Padding(
-      padding: const EdgeInsets.only(bottom: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Padding(
+      padding: EdgeInsets.fromLTRB(4, topSpacing, 4, 10),
+      child: Row(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
-            child: Row(
-              children: [
-                if (isUpcomingDay) ...[
-                  const Icon(
-                    Icons.upcoming_rounded,
-                    size: 16,
-                    color: Color(0xFFFF7043),
-                  ),
-                  const SizedBox(width: 6),
-                ],
-                Text(
-                  uwu(title),
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
-                    color: isUpcomingDay
-                        ? const Color(0xFFFF7043)
-                        : scheme.onSurface,
-                    letterSpacing: 0.2,
-                  ),
-                ),
-                if (showSecondaryWeekday) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    weekday,
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: scheme.onSurface.withValues(alpha: 0.52),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-                const Spacer(),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: isUpcomingDay
-                        ? const Color(0xFFFF7043).withValues(alpha: 0.18)
-                        : scheme.surfaceContainerHigh.withValues(alpha: 0.65),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    '$matchingCount',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: isUpcomingDay
-                          ? const Color(0xFFFF7043)
-                          : scheme.onSurface.withValues(alpha: 0.72),
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ],
+          if (isUpcomingDay) ...[
+            const Icon(
+              Icons.upcoming_rounded,
+              size: 16,
+              color: Color(0xFFFF7043),
+            ),
+            const SizedBox(width: 6),
+          ],
+          Text(
+            uwu(title),
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              color:
+                  isUpcomingDay ? const Color(0xFFFF7043) : scheme.onSurface,
+              letterSpacing: 0.2,
             ),
           ),
-          for (int i = 0; i < items.length; i++)
-            _AnimatedFeedCollapse(
-              key: ValueKey<String>('item-collapse-${items[i].uniqueKey}'),
-              visible: items[i].matchesFilter(_feedFilter),
-              child: Padding(
-                padding: EdgeInsets.only(top: i > 0 ? 2 : 0),
-                child: _buildActivityFeedTile(theme, scheme, items[i]),
+          if (showSecondaryWeekday) ...[
+            const SizedBox(width: 8),
+            Text(
+              weekday,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: scheme.onSurface.withValues(alpha: 0.52),
+                fontWeight: FontWeight.w600,
               ),
             ),
+          ],
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+            decoration: BoxDecoration(
+              color: isUpcomingDay
+                  ? const Color(0xFFFF7043).withValues(alpha: 0.18)
+                  : scheme.surfaceContainerHigh.withValues(alpha: 0.65),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              '$matchingCount',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: isUpcomingDay
+                    ? const Color(0xFFFF7043)
+                    : scheme.onSurface.withValues(alpha: 0.72),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
         ],
-      ),
-    );
-    return _AnimatedFeedCollapse(
-      key: ValueKey<String>('day-collapse-${day.toIso8601String()}'),
-      visible: groupVisible,
-      child: _maybeHomeEntrance(
-        section,
-        groupIndex + 2,
-        key: ValueKey('day-${day.toIso8601String()}'),
       ),
     );
   }
@@ -1263,10 +1313,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final progressText = status.phase == NextLessonPhase.completedForToday
         ? 'Ma már nincs több órád!'
-        : 'Ma még ${status.remainingLessonsCount} / ${status.totalLessonsCount} óra van hátra';
+        : 'Ma még ${status.remainingLessonsCount}/${status.totalLessonsCount} óra';
 
     final heroTag =
-        currentOrNext != null ? 'lesson_num_${currentOrNext.uid}' : null;
+        currentOrNext != null ? 'home_lesson_num_${currentOrNext.uid}' : null;
 
     final rawCurrentSubj = currentOrNext != null
         ? (currentOrNext.subject?.name ?? currentOrNext.name)
@@ -1346,32 +1396,40 @@ class _HomeScreenState extends State<HomeScreen> {
                         ],
                       ),
                     ),
-                    const Spacer(),
-                    Flexible(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: isOngoing
-                              ? scheme.primary.withValues(alpha: 0.16)
-                              : scheme.surfaceContainerHigh,
-                          borderRadius: BorderRadius.circular(22),
-                        ),
-                        child: Text(
-                          uwu(
-                            isOngoing
-                                ? '${status.remainingMinutes} perc van hátra'
-                                : progressText,
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
                           ),
-                          style: theme.textTheme.labelSmall?.copyWith(
+                          decoration: BoxDecoration(
                             color: isOngoing
-                                ? scheme.primary
-                                : scheme.onSurface.withValues(alpha: 0.78),
-                            fontWeight: FontWeight.w800,
+                                ? scheme.primary.withValues(alpha: 0.16)
+                                : scheme.surfaceContainerHigh,
+                            borderRadius: BorderRadius.circular(22),
                           ),
-                          overflow: TextOverflow.ellipsis,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              uwu(
+                                isOngoing
+                                    ? '${status.remainingMinutes} perc van hátra'
+                                    : progressText,
+                              ),
+                              maxLines: 1,
+                              softWrap: false,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: isOngoing
+                                    ? scheme.primary
+                                    : scheme.onSurface.withValues(alpha: 0.78),
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -1634,6 +1692,63 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ),
                             ],
                           ),
+                          if ((currentOrNext.substituteTeacher != null &&
+                                  currentOrNext.substituteTeacher!
+                                      .trim()
+                                      .isNotEmpty) ||
+                              (currentOrNext.teacher != null &&
+                                  currentOrNext.teacher!
+                                      .trim()
+                                      .isNotEmpty)) ...[
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Icon(
+                                  currentOrNext.substituteTeacher != null &&
+                                          currentOrNext.substituteTeacher!
+                                              .trim()
+                                              .isNotEmpty
+                                      ? Icons.swap_horiz_rounded
+                                      : Icons.person_outline_rounded,
+                                  size: 14,
+                                  color: currentOrNext.substituteTeacher !=
+                                              null &&
+                                          currentOrNext.substituteTeacher!
+                                              .trim()
+                                              .isNotEmpty
+                                      ? const Color(0xFFFFB300)
+                                      : scheme.onSurface
+                                          .withValues(alpha: 0.65),
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    currentOrNext.substituteTeacher != null &&
+                                            currentOrNext.substituteTeacher!
+                                                .trim()
+                                                .isNotEmpty
+                                        ? 'Helyettes: ${widget.prefs.resolveTeacherName(currentOrNext.substituteTeacher)}'
+                                        : widget.prefs.resolveTeacherName(
+                                            currentOrNext.teacher,
+                                          ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: currentOrNext.substituteTeacher !=
+                                                  null &&
+                                              currentOrNext.substituteTeacher!
+                                                  .trim()
+                                                  .isNotEmpty
+                                          ? const Color(0xFFFFB300)
+                                          : scheme.onSurface
+                                              .withValues(alpha: 0.72),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -1657,37 +1772,17 @@ class _HomeScreenState extends State<HomeScreen> {
                         color: scheme.primary,
                       ),
                       const SizedBox(width: 8),
-                      Text(
-                        status.countdownLabel,
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          color: scheme.primary,
-                          fontWeight: FontWeight.w800,
+                      Expanded(
+                        child: Text(
+                          status.countdownLabel,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: scheme.primary,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
                       ),
-                      const Spacer(),
-                      if (currentOrNext.substituteTeacher != null &&
-                          currentOrNext.substituteTeacher!.trim().isNotEmpty)
-                        Flexible(
-                          child: Text(
-                            'Helyettes: ${widget.prefs.resolveTeacherName(currentOrNext.substituteTeacher)}',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: const Color(0xFFFFB300),
-                              fontWeight: FontWeight.w800,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        )
-                      else if (currentOrNext.teacher != null)
-                        Flexible(
-                          child: Text(
-                            widget.prefs
-                                .resolveTeacherName(currentOrNext.teacher),
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: scheme.onSurface.withValues(alpha: 0.65),
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
                     ],
                   ),
                 ),
@@ -1783,7 +1878,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildFilterChipBar(ThemeData theme, ColorScheme scheme) {
-    return EdgeFadeHorizontalScroll(
+    return RepaintBoundary(
+      child: EdgeFadeHorizontalScroll(
       controller: _chipBarController,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       spacing: 8,
@@ -1831,6 +1927,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       }).toList(),
+    ),
     );
   }
 
@@ -2257,4 +2354,32 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+}
+
+sealed class _HomeFeedRow {
+  const _HomeFeedRow();
+}
+
+class _HomeFeedHeaderRow extends _HomeFeedRow {
+  const _HomeFeedHeaderRow({
+    required this.day,
+    required this.matchingCount,
+    required this.groupIndex,
+  });
+
+  final DateTime day;
+  final int matchingCount;
+  final int groupIndex;
+}
+
+class _HomeFeedItemRow extends _HomeFeedRow {
+  const _HomeFeedItemRow({
+    required this.item,
+    required this.itemIndex,
+    required this.groupIndex,
+  });
+
+  final HomeActivityItem item;
+  final int itemIndex;
+  final int groupIndex;
 }

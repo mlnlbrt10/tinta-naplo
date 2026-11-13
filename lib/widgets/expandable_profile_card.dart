@@ -144,20 +144,18 @@ Future<void> showStreamlinedProfileSheet({
                   begin: const Offset(0, 0.28),
                   end: Offset.zero,
                 ).animate(curved),
-                child: FadeTransition(
-                  opacity: animation,
-                  child: GestureDetector(
-                    onTap: () {},
-                    child: _StreamlinedProfileModalSheet(
-                      student: student,
-                      session: session,
-                      initialPrefs: prefs,
-                      onPrefsChanged: onPrefsChanged,
-                      onOpenFullSettings: () {
-                        Navigator.of(sheetContext).pop();
-                        onOpenFullSettings();
-                      },
-                    ),
+                child: GestureDetector(
+                  onTap: () {},
+                  child: _StreamlinedProfileModalSheet(
+                    student: student,
+                    session: session,
+                    initialPrefs: prefs,
+                    onPrefsChanged: onPrefsChanged,
+                    contentOpacityAnimation: curved,
+                    onOpenFullSettings: () {
+                      Navigator.of(sheetContext).pop();
+                      onOpenFullSettings();
+                    },
                   ),
                 ),
               ),
@@ -175,6 +173,7 @@ class _StreamlinedProfileModalSheet extends StatefulWidget {
   final UserProfilePrefs initialPrefs;
   final ValueChanged<UserProfilePrefs> onPrefsChanged;
   final VoidCallback onOpenFullSettings;
+  final Animation<double>? contentOpacityAnimation;
 
   const _StreamlinedProfileModalSheet({
     required this.student,
@@ -182,6 +181,7 @@ class _StreamlinedProfileModalSheet extends StatefulWidget {
     required this.initialPrefs,
     required this.onPrefsChanged,
     required this.onOpenFullSettings,
+    this.contentOpacityAnimation,
   });
 
   @override
@@ -272,6 +272,7 @@ class _StreamlinedProfileModalSheetState
       child: LiquidGlassSurface(
         prefs: _prefs,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+        contentOpacityAnimation: widget.contentOpacityAnimation,
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(22, 14, 22, 28),
           child: Column(

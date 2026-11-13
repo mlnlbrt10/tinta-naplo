@@ -359,37 +359,43 @@ class GitHubUpdaterService {
         transitionDuration: const Duration(milliseconds: 280),
         reverseTransitionDuration: const Duration(milliseconds: 240),
         pageBuilder: (dialogContext, animation, secondaryAnimation) {
-          final curved = CurvedAnimation(
+          final fadeCurved = CurvedAnimation(
             parent: animation,
             curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          );
+          final scaleCurved = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutBack,
             reverseCurve: Curves.easeInOutCubic,
           );
+          final barrierBase = resolveSoftBlurBarrierColor(
+            dialogContext,
+            solidDarkAlpha: 0.56,
+            solidLightAlpha: 0.40,
+          );
 
-          return AnimatedBuilder(
-            animation: curved,
-            builder: (context, child) {
-              final t = curved.value.clamp(0.0, 1.0);
-              final scale = 0.92 + (0.08 * t);
-              final barrierBase = resolveSoftBlurBarrierColor(
-                context,
-                solidDarkAlpha: 0.56,
-                solidLightAlpha: 0.40,
-              );
-              return ColoredBox(
-                color: barrierBase.withValues(alpha: barrierBase.a * t),
-                child: Opacity(
-                  opacity: t,
-                  child: Transform.scale(
-                    scale: scale,
-                    child: child,
+          return Stack(
+            children: [
+              Positioned.fill(
+                child: AnimatedBuilder(
+                  animation: fadeCurved,
+                  builder: (context, _) => ColoredBox(
+                    color: barrierBase.withValues(
+                      alpha: barrierBase.a * fadeCurved.value.clamp(0.0, 1.0),
+                    ),
                   ),
                 ),
-              );
-            },
-            child: _FrostedUpdateDialogContent(
-              release: release,
-              currentVersion: currentVersion,
-            ),
+              ),
+              ScaleTransition(
+                scale: Tween<double>(begin: 0.90, end: 1.0).animate(scaleCurved),
+                child: _FrostedUpdateDialogContent(
+                  release: release,
+                  currentVersion: currentVersion,
+                  contentOpacityAnimation: fadeCurved,
+                ),
+              ),
+            ],
           );
         },
       ),
@@ -400,10 +406,12 @@ class GitHubUpdaterService {
 class _FrostedUpdateDialogContent extends StatefulWidget {
   final GitHubReleaseInfo release;
   final String currentVersion;
+  final Animation<double>? contentOpacityAnimation;
 
   const _FrostedUpdateDialogContent({
     required this.release,
     required this.currentVersion,
+    this.contentOpacityAnimation,
   });
 
   @override
@@ -580,6 +588,7 @@ class _FrostedUpdateDialogContentState
                 padding: const EdgeInsets.all(22),
                 borderRadius: OledTheme.largeRadius,
                 solidColor: cardBg,
+                contentOpacityAnimation: widget.contentOpacityAnimation,
                 border: isSoftBlur
                     ? null
                     : Border.all(
@@ -650,10 +659,17 @@ class _FrostedUpdateDialogContentState
                       constraints: const BoxConstraints(maxHeight: 220),
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: scheme.surfaceContainerHighest
-                            .withValues(alpha: 0.55),
+                        color: isSoftBlur
+                            ? Colors.black.withValues(alpha: isDark ? 0.18 : 0.05)
+                            : scheme.surfaceContainerHighest
+                                .withValues(alpha: 0.55),
                         borderRadius: OledTheme.cardRadius,
-                        border: Border.all(color: theme.dividerColor),
+                        border: Border.all(
+                          color: isSoftBlur
+                              ? Colors.white
+                                  .withValues(alpha: isDark ? 0.14 : 0.22)
+                              : theme.dividerColor,
+                        ),
                       ),
                       child: SingleChildScrollView(
                         child: Column(

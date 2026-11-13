@@ -31,11 +31,11 @@ class AppIconPresetInfo {
       id: 'icon_normal',
       label: 'Normál',
       subtitle: 'Alapértelmezett',
-      assetPath: 'assets/icons/icon_normal.png',
+      assetPath: 'assets/images/tinta_icon.png',
       activityAlias: '.MainActivityNormal',
       icon: Icons.school_rounded,
-      primaryColor: Color(0xFF4DA3FF),
-      backgroundColor: Color(0xFF1D3549),
+      primaryColor: Colors.white,
+      backgroundColor: Colors.black,
     ),
     AppIconPresetInfo(
       id: 'icon_oled',
@@ -286,36 +286,62 @@ class ChristmasAndBackgroundOverlay extends StatefulWidget {
 
 class _ChristmasAndBackgroundOverlayState
     extends State<ChristmasAndBackgroundOverlay>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final AnimationController _controller;
   late final List<_SnowParticle> _particles;
   final Random _rng = Random(42);
+  AppLifecycleState? _lifecycleState;
 
   @override
   void initState() {
     super.initState();
+    _lifecycleState = WidgetsBinding.instance.lifecycleState;
+    WidgetsBinding.instance.addObserver(this);
     _particles = List.generate(58, (_) => _SnowParticle.random(_rng));
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 12),
     );
-    if (widget.prefs.christmasModeEnabled) {
+  }
+
+  void _syncTicker() {
+    if (!mounted) return;
+    final tickerEnabled = TickerMode.valuesOf(context).enabled;
+    final routeIsCurrent = ModalRoute.of(context)?.isCurrent ?? true;
+    final appActive =
+        _lifecycleState == null || _lifecycleState == AppLifecycleState.resumed;
+    final shouldAnimate = widget.prefs.christmasModeEnabled &&
+        tickerEnabled &&
+        routeIsCurrent &&
+        appActive;
+    if (shouldAnimate && !_controller.isAnimating) {
       _controller.repeat();
+    } else if (!shouldAnimate && _controller.isAnimating) {
+      _controller.stop(canceled: false);
     }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncTicker();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lifecycleState = state;
+    _syncTicker();
   }
 
   @override
   void didUpdateWidget(covariant ChristmasAndBackgroundOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.prefs.christmasModeEnabled && !_controller.isAnimating) {
-      _controller.repeat();
-    } else if (!widget.prefs.christmasModeEnabled && _controller.isAnimating) {
-      _controller.stop();
-    }
+    _syncTicker();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     super.dispose();
   }
@@ -442,8 +468,9 @@ class _ChristmasAndBackgroundOverlayState
       fit: StackFit.expand,
       children: [
         content,
-        IgnorePointer(
-          child: AnimatedBuilder(
+        RepaintBoundary(
+          child: IgnorePointer(
+            child: AnimatedBuilder(
             animation: _controller,
             builder: (context, _) {
               for (final p in _particles) {
@@ -455,6 +482,7 @@ class _ChristmasAndBackgroundOverlayState
               );
             },
           ),
+        ),
         ),
       ],
     );
@@ -546,9 +574,11 @@ class ChristmasSnowCap extends StatelessWidget {
           left: 18,
           right: 18,
           height: 8,
-          child: IgnorePointer(
-            child: CustomPaint(
-              painter: _CardSnowDriftPainter(),
+          child: RepaintBoundary(
+            child: IgnorePointer(
+              child: CustomPaint(
+                painter: _CardSnowDriftPainter(),
+              ),
             ),
           ),
         ),

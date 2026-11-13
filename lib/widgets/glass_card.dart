@@ -12,7 +12,7 @@ bool resolveSoftBlurEnabled([UserProfilePrefs? prefs]) {
 
 double resolveSoftBlurBackdropSigma([UserProfilePrefs? prefs]) {
   final raw = prefs?.cardBlurSigma ?? UserProfilePrefs.activeSoftBlurSigma;
-  return (28.0 + (raw - 2.0).clamp(0.0, 6.0) * 2.0).clamp(28.0, 40.0);
+  return (12.0 + raw * 2.0).clamp(12.0, 20.0);
 }
 
 /// Returns a lighter scrim behind frosted glass modals and dialogs when Soft
@@ -47,6 +47,11 @@ class LiquidGlassSurface extends StatelessWidget {
   final List<BoxShadow>? boxShadow;
   final bool isDockStyle;
 
+  /// Optional animation that fades the interior content (and, in solid mode,
+  /// the surface) WITHOUT wrapping `BackdropFilter` in an ancestor `Opacity`
+  /// layer, ensuring frosted blur is active from frame 0 of route transitions.
+  final Animation<double>? contentOpacityAnimation;
+
   const LiquidGlassSurface({
     super.key,
     this.prefs,
@@ -58,6 +63,7 @@ class LiquidGlassSurface extends StatelessWidget {
     this.border,
     this.boxShadow,
     this.isDockStyle = false,
+    this.contentOpacityAnimation,
   });
 
   @override
@@ -68,70 +74,57 @@ class LiquidGlassSurface extends StatelessWidget {
     final resolvedSolidColor = solidColor ??
         theme.cardTheme.color ??
         (isDark ? const Color(0xFF161922) : Colors.white);
-    final contentChild = Material(
+    final rawContent = Material(
       type: MaterialType.transparency,
       child: child,
     );
+    final contentChild = contentOpacityAnimation != null
+        ? FadeTransition(
+            opacity: contentOpacityAnimation!,
+            child: rawContent,
+          )
+        : rawContent;
 
     if (!softBlurEnabled) {
-      return RepaintBoundary(
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: resolvedSolidColor,
-            borderRadius: borderRadius,
-            border: border ?? Border.all(color: theme.dividerColor, width: 1.0),
-            boxShadow: boxShadow,
-          ),
-          child: contentChild,
+      final solidBox = Container(
+        padding: padding,
+        decoration: BoxDecoration(
+          color: resolvedSolidColor,
+          borderRadius: borderRadius,
+          border: border ?? Border.all(color: theme.dividerColor, width: 1.0),
+          boxShadow: boxShadow,
         ),
+        child: rawContent,
+      );
+      return RepaintBoundary(
+        child: contentOpacityAnimation != null
+            ? FadeTransition(
+                opacity: contentOpacityAnimation!,
+                child: solidBox,
+              )
+            : solidBox,
       );
     }
 
     final sigma = resolveSoftBlurBackdropSigma(prefs);
-    final surfaceHint = theme.colorScheme.surface;
 
     late final Color topTint;
     late final Color bottomTint;
     if (glassTintColor != null) {
-      topTint = Color.alphaBlend(
-        Colors.white.withValues(alpha: isDark ? 0.14 : 0.30),
-        glassTintColor!,
-      );
-      bottomTint = glassTintColor!;
-    } else if (isDockStyle) {
-      topTint = isDark
-          ? Colors.white.withValues(alpha: 0.14)
-          : Colors.white.withValues(alpha: 0.68);
-      bottomTint = isDark
-          ? Colors.white.withValues(alpha: 0.06)
-          : Colors.white.withValues(alpha: 0.46);
-    } else if (isDark) {
-      // Luminous translucent frosted glass: crisp specular highlight blended
-      // delicately with theme surface instead of a heavy opaque dark wash.
-      topTint = Color.alphaBlend(
-        Colors.white.withValues(alpha: 0.16),
-        surfaceHint.withValues(alpha: 0.16),
-      );
-      bottomTint = Color.alphaBlend(
-        Colors.white.withValues(alpha: 0.07),
-        surfaceHint.withValues(alpha: 0.14),
+      topTint = glassTintColor!;
+      bottomTint = glassTintColor!.withValues(
+        alpha: (glassTintColor!.a * 0.55).clamp(0.0, 1.0),
       );
     } else {
-      topTint = Colors.white.withValues(alpha: 0.66);
-      bottomTint = Color.alphaBlend(
-        Colors.white.withValues(alpha: 0.34),
-        surfaceHint.withValues(alpha: 0.28),
-      );
+      // Crystal-clear optical glass: near-zero dark tint with zero white haze
+      // so the wallpaper or underlying UI shines cleanly through the blur.
+      topTint = Colors.black.withValues(alpha: isDark ? 0.06 : 0.02);
+      bottomTint = Colors.transparent;
     }
 
     final specularBorder = border ??
         Border.all(
-          color: Colors.white.withValues(
-            alpha: isDockStyle
-                ? (isDark ? 0.26 : 0.72)
-                : (isDark ? 0.28 : 0.78),
-          ),
+          color: Colors.white.withValues(alpha: isDark ? 0.14 : 0.24),
           width: 1.0,
         );
 
@@ -198,9 +191,10 @@ Future<T?> showSoftBlurDialog<T>({
   required Widget Function(BuildContext dialogContext) builder,
 }) {
   final isDark = Theme.of(context).brightness == Brightness.dark;
-  return showDialog<T>(
+  return showGeneralDialog<T>(
     context: context,
     barrierDismissible: barrierDismissible,
+    barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
     barrierColor: barrierColor ??
         resolveSoftBlurBarrierColor(
           context,
@@ -208,27 +202,49 @@ Future<T?> showSoftBlurDialog<T>({
           solidDarkAlpha: 0.52,
           solidLightAlpha: 0.34,
         ),
-    builder: (dialogContext) => Dialog(
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: maxWidth),
-        child: LiquidGlassSurface(
-          prefs: prefs,
-          borderRadius: borderRadius,
-          padding: contentPadding,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: isDark ? 0.32 : 0.14),
-              blurRadius: 24,
-              offset: const Offset(0, 10),
+    transitionDuration: const Duration(milliseconds: 260),
+    transitionBuilder: (dialogContext, animation, secondaryAnimation, child) =>
+        child,
+    pageBuilder: (dialogContext, animation, secondaryAnimation) {
+      final fadeCurved = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      );
+      final scaleCurved = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutBack,
+        reverseCurve: Curves.easeInOutCubic,
+      );
+      return ScaleTransition(
+        scale: Tween<double>(begin: 0.90, end: 1.0).animate(scaleCurved),
+        child: Dialog(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 24,
+          ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxWidth),
+            child: LiquidGlassSurface(
+              prefs: prefs,
+              borderRadius: borderRadius,
+              padding: contentPadding,
+              contentOpacityAnimation: fadeCurved,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.32 : 0.14),
+                  blurRadius: 24,
+                  offset: const Offset(0, 10),
+                ),
+              ],
+              child: builder(dialogContext),
             ),
-          ],
-          child: builder(dialogContext),
+          ),
         ),
-      ),
-    ),
+      );
+    },
   );
 }
 
@@ -279,31 +295,22 @@ class SoftGlassCard extends StatelessWidget {
     }
 
     final isDark = theme.brightness == Brightness.dark;
-    final userOpacity = (prefs.cardOpacity >= 0.85
-            ? 0.44
-            : (prefs.cardOpacity * 0.62))
-        .clamp(0.35, 0.55);
+    final clearTint = isDark
+        ? Colors.black.withValues(alpha: 0.18)
+        : surfaceColor.withValues(
+            alpha: (prefs.cardOpacity * 0.45).clamp(0.20, 0.36),
+          );
     final glassBorder = border ??
         Border.all(
-          color: Colors.white.withValues(alpha: isDark ? 0.12 : 0.36),
+          color: Colors.white.withValues(alpha: isDark ? 0.14 : 0.28),
           width: 1.0,
         );
-    final topSheen = Color.alphaBlend(
-      Colors.white.withValues(alpha: isDark ? 0.06 : 0.18),
-      surfaceColor,
-    ).withValues(alpha: userOpacity);
-    final bottomTint = surfaceColor.withValues(alpha: userOpacity);
 
     return RepaintBoundary(
       child: Container(
         padding: padding,
         decoration: BoxDecoration(
-          color: surfaceColor.withValues(alpha: userOpacity),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [topSheen, bottomTint],
-          ),
+          color: clearTint,
           borderRadius: borderRadius,
           border: glassBorder,
         ),
