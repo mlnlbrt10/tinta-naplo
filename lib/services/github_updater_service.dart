@@ -91,20 +91,20 @@ class GitHubUpdaterService {
   static const String repoUrl = 'https://github.com/mlnlbrt10/tinta-naplo';
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest';
-  static const String fallbackAppVersion = '1.0.0';
-  static const String fallbackBuildNumber = '11';
-  static const String defaultApkFileName = 'Tinta-Naplo-v1.0.0.apk';
+  static const String fallbackAppVersion = '1.1.0';
+  static const String fallbackBuildNumber = '2';
+  static const String defaultApkFileName = 'Tinta-Naplo-v1.1.0.apk';
 
   static bool _hasCheckedOnStartup = false;
 
-  /// Resolves the target APK file name for a given release tag (`Tinta-Naplo-v1.0.0.apk`).
+  /// Resolves the target APK file name for a given release tag (`Tinta-Naplo-v1.1.0.apk`).
   static String apkFileNameForTag(String tagName) {
     final clean = _stripPrefix(tagName);
     if (clean.isEmpty) return defaultApkFileName;
     return 'Tinta-Naplo-v$clean.apk';
   }
 
-  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.0.0`.
+  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.1.0`.
   static Future<String> fetchLatestReleaseTag({http.Client? httpClient}) async {
     final client = httpClient ?? http.Client();
     try {
@@ -579,10 +579,12 @@ class _FrostedUpdateDialogContentState
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final isSoftBlur = resolveSoftBlurEnabled();
-    final cardBg = isDark
-        ? const Color(0xFF141418).withValues(alpha: 0.96)
-        : Colors.white.withValues(alpha: 0.97);
+    final isLiquidGlass = resolveLiquidGlassEnabled();
+    final cardBg = isLiquidGlass
+        ? (isDark
+            ? const Color(0xFF141418).withValues(alpha: 0.96)
+            : Colors.white.withValues(alpha: 0.97))
+        : null;
 
     return SafeArea(
       child: Center(
@@ -597,12 +599,6 @@ class _FrostedUpdateDialogContentState
                 borderRadius: OledTheme.largeRadius,
                 solidColor: cardBg,
                 contentOpacityAnimation: widget.contentOpacityAnimation,
-                border: isSoftBlur
-                    ? null
-                    : Border.all(
-                        color: scheme.primary.withValues(alpha: 0.6),
-                        width: 1.5,
-                      ),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.42),
@@ -667,16 +663,15 @@ class _FrostedUpdateDialogContentState
                       constraints: const BoxConstraints(maxHeight: 220),
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: isSoftBlur
+                        color: isLiquidGlass
                             ? Colors.black.withValues(alpha: isDark ? 0.18 : 0.05)
-                            : scheme.surfaceContainerHighest
-                                .withValues(alpha: 0.55),
+                            : scheme.surfaceContainer,
                         borderRadius: OledTheme.cardRadius,
                         border: Border.all(
-                          color: isSoftBlur
+                          color: isLiquidGlass
                               ? Colors.white
                                   .withValues(alpha: isDark ? 0.14 : 0.22)
-                              : theme.dividerColor,
+                              : scheme.outlineVariant,
                         ),
                       ),
                       child: SingleChildScrollView(

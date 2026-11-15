@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../providers/app_providers.dart';
 import '../theme/oled_theme.dart';
 import '../services/menetrend_service.dart';
 import '../services/token_storage_service.dart';
@@ -31,14 +32,82 @@ class MenetrendHomeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final eval = evaluation;
-    if (!prefs.transitConfigured || eval == null) {
+    final scope = AppProvidersScope.maybeOf(context);
+    final activePrefs = scope?.settings.prefs ?? prefs;
+    final eval = scope?.commute.evaluation ?? evaluation;
+    if (!activePrefs.transitConfigured || eval == null) {
       return const SizedBox.shrink();
     }
     return RepaintBoundary(
-      child: MenetrendHeroCard(evaluation: eval, prefs: prefs),
+      child: MenetrendHeroCard(evaluation: eval, prefs: activePrefs),
     );
   }
+}
+
+Widget _buildMenetrendHeroShuttle(
+  BuildContext flightContext,
+  Animation<double> animation,
+  HeroFlightDirection flightDirection,
+  BuildContext fromHeroContext,
+  BuildContext toHeroContext,
+) {
+  final fromRender = fromHeroContext.findRenderObject() as RenderBox?;
+  final toRender = toHeroContext.findRenderObject() as RenderBox?;
+  final fromSize = (fromRender != null && fromRender.hasSize)
+      ? fromRender.size
+      : (flightDirection == HeroFlightDirection.push
+          ? const Size(210, 26)
+          : const Size(42, 42));
+  final toSize = (toRender != null && toRender.hasSize)
+      ? toRender.size
+      : (flightDirection == HeroFlightDirection.push
+          ? const Size(42, 42)
+          : const Size(210, 26));
+
+  final fromHero = fromHeroContext.widget as Hero;
+  final toHero = toHeroContext.widget as Hero;
+  final isPush = flightDirection == HeroFlightDirection.push;
+
+  final progress = CurvedAnimation(
+    parent: animation,
+    curve: Curves.easeInOutCubic,
+  );
+  final fromOpacity = isPush ? ReverseAnimation(progress) : progress;
+  final toOpacity = isPush ? progress : ReverseAnimation(progress);
+
+  // Scale both hero snapshots strictly inside bounded SizedBoxes via FittedBox
+  // so exit/pop transitions never compress inner Row children below min width.
+  return Material(
+    type: MaterialType.transparency,
+    child: Stack(
+      fit: StackFit.expand,
+      alignment: Alignment.centerLeft,
+      children: [
+        FadeTransition(
+          opacity: fromOpacity,
+          child: FittedBox(
+            fit: BoxFit.contain,
+            alignment: Alignment.centerLeft,
+            child: SizedBox.fromSize(
+              size: fromSize,
+              child: fromHero.child,
+            ),
+          ),
+        ),
+        FadeTransition(
+          opacity: toOpacity,
+          child: FittedBox(
+            fit: BoxFit.contain,
+            alignment: Alignment.centerLeft,
+            child: SizedBox.fromSize(
+              size: toSize,
+              child: toHero.child,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class MenetrendHeroCard extends StatelessWidget {
@@ -66,8 +135,14 @@ class MenetrendHeroCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final activePrefs = AppProvidersScope.maybeOf(context)?.settings.prefs ?? prefs;
     final trip = evaluation.recommendedTrip;
-    final primary = Theme.of(context).colorScheme.primary;
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final primary = theme.colorScheme.primary;
+    final onSurface = theme.colorScheme.onSurface;
+    final secondaryText =
+        isDark ? OledTheme.textSecondary : onSurface.withValues(alpha: 0.72);
     final isDelayed = trip.delayMinutes > 0 || trip.isCancelled;
     final delayColor = trip.isCancelled
         ? const Color(0xFFEF5350)
@@ -79,337 +154,408 @@ class MenetrendHeroCard extends StatelessWidget {
         ? 'REGGELI INGÁZÁS • ISKOLÁBA'
         : 'DÉLUTÁNI HAZAÚT • OTTHONBA';
 
-    final fromExact = evaluation.isMorningMode
-        ? prefs.homeAddress.isNotEmpty
-        : prefs.schoolAddress.isNotEmpty;
-    final countdownBadgeText = 'Indulásig: ${evaluation.minutesUntilDeparture} perc';
+    final countdownBadgeText =
+        'Indulásig: ${evaluation.minutesUntilDeparture} perc';
     final walkStartFormatted =
         DateFormat('HH:mm').format(evaluation.latestWalkStartTime);
+    final safeLine = trip.safeRouteShortName;
 
-    return TactileBounce(
-      onTap: () => showMenetrendDetailsModal(
-        context,
-        evaluation: evaluation,
-        prefs: prefs,
-      ),
-      child: Material(
-        type: MaterialType.transparency,
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                OledTheme.surfaceDark,
-                primary.withValues(alpha: 0.14),
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(
-              color: primary.withValues(alpha: 0.35),
-              width: 1.2,
-            ),
-          ),
+    final walkSubtitle = evaluation.effectiveWalkMinutes > 0
+        ? 'Séta ind.: $walkStartFormatted (${evaluation.effectiveWalkMinutes} p séta)'
+            '${trip.walkToDestinationMinutes > 0 ? " • Cél séta: ${trip.walkToDestinationMinutes} p" : ""}'
+            '${trip.platformCode != null ? " • ${trip.platformCode}" : ""}'
+        : (trip.walkToDestinationMinutes > 0
+            ? 'Cél séta: ${trip.walkToDestinationMinutes} perc${trip.platformCode != null ? " • ${trip.platformCode}" : ""}'
+            : '$countdownBadgeText${trip.platformCode != null ? " • ${trip.platformCode}" : ""}');
+
+    final cardContent = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                  children: [
-                    Hero(
-                      tag: 'menetrend_hero_card',
-                      child: Material(
-                        type: MaterialType.transparency,
+              Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Hero(
+                        tag: 'menetrend_hero_card',
+                        flightShuttleBuilder: _buildMenetrendHeroShuttle,
+                        child: Material(
+                          type: MaterialType.transparency,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: primary.withValues(alpha: 0.18),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _iconForMode(trip.mode),
+                                  size: 14,
+                                  color: primary,
+                                ),
+                                const SizedBox(width: 5),
+                                Flexible(
+                                  child: Text(
+                                    UwuHelper.apply(modeBadgeText),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.6,
+                                      color: primary,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    flex: 2,
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
                         child: Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 9,
                             vertical: 4,
                           ),
                           decoration: BoxDecoration(
-                            color: primary.withValues(alpha: 0.18),
+                            color: delayColor.withValues(alpha: 0.16),
                             borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: delayColor.withValues(alpha: 0.4),
+                            ),
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                _iconForMode(trip.mode),
-                                size: 14,
-                                color: primary,
-                              ),
-                              const SizedBox(width: 5),
-                              Text(
-                                UwuHelper.apply(modeBadgeText),
+                          child: Text(
+                            trip.isCancelled
+                                ? 'KIMARAD'
+                                : (isDelayed
+                                    ? '+${trip.delayMinutes} perc késés'
+                                    : countdownBadgeText),
+                            maxLines: 1,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: delayColor,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Tooltip(
+                    message: 'Megnyitás MenetrendGO-ban',
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(999),
+                      onTap: () => MenetrendService.openInMenetrendGo(
+                        trip: trip,
+                        evaluation: evaluation,
+                        prefs: activePrefs,
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.all(5),
+                        decoration: BoxDecoration(
+                          color: primary.withValues(alpha: 0.16),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: primary.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.open_in_new_rounded,
+                          size: 13.5,
+                          color: primary,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (trip.isFavorite) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 3.5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFD54F).withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xFFFFD54F).withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: Text(
+                    trip.favoriteBadgeText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFFFFD54F),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final maxBadgeW =
+                      (constraints.maxWidth * 0.30).clamp(64.0, 116.0);
+                  final maxTimesW =
+                      (constraints.maxWidth * 0.44).clamp(76.0, 168.0);
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (trip.legs.length <= 1) ...[
+                        ConstrainedBox(
+                          constraints: BoxConstraints(maxWidth: maxBadgeW),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: primary.withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                safeLine,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  fontSize: 10.5,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.6,
+                                  fontSize: 14.5,
+                                  fontWeight: FontWeight.w900,
                                   color: primary,
                                 ),
                               ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              HtmlSanitizer.clean(
+                                '${trip.departureStation} → ${trip.arrivalStation}',
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 14.5,
+                                height: 1.2,
+                                fontWeight: FontWeight.w800,
+                                color: onSurface,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              walkSubtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: secondaryText,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: maxTimesW),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                trip.departureTimeFormatted,
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w900,
+                                  color: onSurface,
+                                ),
+                              ),
+                              Text(
+                                'Érk: ${trip.destinationArrivalTimeFormatted}',
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: secondaryText,
+                                ),
+                              ),
+                              if (trip.delayMinutes > 0 && !trip.isCancelled)
+                                Text(
+                                  'Becsült: ${trip.effectiveDepartureTimeFormatted}',
+                                  style: const TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFFFFB300),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
                       ),
+                    ],
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+        if (trip.legs.length > 1) ...[
+          const SizedBox(height: 10),
+          EdgeFadeHorizontalScroll(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            children: [
+              for (var i = 0; i < trip.legs.length; i++) ...[
+                () {
+                  final leg = trip.legs[i];
+                  final cleanLegName = MenetrendService.sanitizeTransitLineName(
+                    rawShortName: leg.routeShortName,
+                    rawTripShortName: leg.tripShortName,
+                    mode: leg.mode,
+                  );
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
                     ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: delayColor.withValues(alpha: 0.16),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: delayColor.withValues(alpha: 0.4),
-                        ),
-                      ),
-                      child: Text(
-                        trip.isCancelled
-                            ? 'KIMARAD'
-                            : (isDelayed
-                                ? '+${trip.delayMinutes} perc'
-                                : countdownBadgeText),
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          color: delayColor,
-                        ),
+                    decoration: BoxDecoration(
+                      color: primary.withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: primary.withValues(alpha: 0.35),
                       ),
                     ),
-                    const SizedBox(width: 6),
-                    Tooltip(
-                      message: 'Megnyitás MenetrendGO-ban',
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(999),
-                        onTap: () => MenetrendService.openInMenetrendGo(
-                          trip: trip,
-                          evaluation: evaluation,
-                          prefs: prefs,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _iconForMode(leg.mode),
+                          size: 13,
+                          color: primary,
                         ),
-                        child: Container(
-                          padding: const EdgeInsets.all(5),
-                          decoration: BoxDecoration(
-                            color: primary.withValues(alpha: 0.16),
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: primary.withValues(alpha: 0.4),
-                            ),
-                          ),
-                          child: Icon(
-                            Icons.open_in_new_rounded,
-                            size: 13.5,
+                        const SizedBox(width: 5),
+                        Text(
+                          '${i + 1}. szakasz: $cleanLegName '
+                          '(${leg.mode == MenetrendTransportMode.rail ? "vonat" : "busz"})',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w800,
                             color: primary,
                           ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
-                ),
-                if (trip.isFavorite) ...[
-                  const SizedBox(height: 8),
+                  );
+                }(),
+                if (i < trip.legs.length - 1) ...[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 5),
+                    child: Icon(
+                      Icons.arrow_forward_rounded,
+                      size: 13,
+                      color: secondaryText,
+                    ),
+                  ),
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 3.5,
+                      horizontal: 8,
+                      vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFFD54F).withValues(alpha: 0.14),
-                      borderRadius: BorderRadius.circular(8),
+                      color: const Color(0xFFFFB300).withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(10),
                       border: Border.all(
-                        color: const Color(0xFFFFD54F).withValues(alpha: 0.4),
+                        color:
+                            const Color(0xFFFFB300).withValues(alpha: 0.38),
                       ),
                     ),
                     child: Text(
-                      trip.favoriteBadgeText,
+                      'Átszállás ${trip.legs[i + 1].departure.difference(trip.legs[i].arrival).inMinutes} p',
                       style: const TextStyle(
-                        fontSize: 11.5,
+                        fontSize: 11,
                         fontWeight: FontWeight.w800,
-                        color: Color(0xFFFFD54F),
+                        color: Color(0xFFFFB300),
                       ),
                     ),
                   ),
-                ],
-                const SizedBox(height: 10),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (trip.legs.length <= 1) ...[
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: primary.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          HtmlSanitizer.clean(trip.routeShortName),
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w900,
-                            color: primary,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                    ],
-                    Expanded(
-                      flex: 5,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            HtmlSanitizer.clean('${trip.departureStation} → ${trip.arrivalStation}'),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 14.5,
-                              height: 1.2,
-                              fontWeight: FontWeight.w800,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            evaluation.isMorningMode && !fromExact
-                                ? 'Séta indulás: $walkStartFormatted (${evaluation.effectiveWalkMinutes} p séta)${trip.platformCode != null ? " • ${trip.platformCode}" : ""}'
-                                : '$countdownBadgeText${trip.platformCode != null ? " • ${trip.platformCode}" : ""}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: OledTheme.textSecondary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 5),
+                    child: Icon(
+                      Icons.arrow_forward_rounded,
+                      size: 13,
+                      color: secondaryText,
                     ),
-                    const SizedBox(width: 10),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          trip.effectiveDepartureTimeFormatted,
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w900,
-                            color: Colors.white,
-                          ),
-                        ),
-                        Text(
-                          'Érk: ${trip.effectiveArrivalTimeFormatted}',
-                          style: const TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600,
-                            color: OledTheme.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                    ],
-                  ),
-                ),
-                if (trip.legs.length > 1) ...[
-                  const SizedBox(height: 10),
-                  EdgeFadeHorizontalScroll(
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    children: [
-                      for (var i = 0; i < trip.legs.length; i++) ...[
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 9,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: primary.withValues(alpha: 0.16),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: primary.withValues(alpha: 0.35),
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                _iconForMode(trip.legs[i].mode),
-                                size: 13,
-                                color: primary,
-                              ),
-                              const SizedBox(width: 5),
-                              Text(
-                                '${i + 1}. szakasz: ${HtmlSanitizer.clean(trip.legs[i].routeShortName)} '
-                                '(${trip.legs[i].mode == MenetrendTransportMode.rail ? "vonat" : "busz"})',
-                                style: TextStyle(
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.w800,
-                                  color: primary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (i < trip.legs.length - 1) ...[
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 5),
-                            child: Icon(
-                              Icons.arrow_forward_rounded,
-                              size: 13,
-                              color: OledTheme.textSecondary,
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFFB300)
-                                  .withValues(alpha: 0.16),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: const Color(0xFFFFB300)
-                                    .withValues(alpha: 0.38),
-                              ),
-                            ),
-                            child: Text(
-                              'Átszállás ${trip.legs[i + 1].departure.difference(trip.legs[i].arrival).inMinutes} p',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800,
-                                color: Color(0xFFFFB300),
-                              ),
-                            ),
-                          ),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 5),
-                            child: Icon(
-                              Icons.arrow_forward_rounded,
-                              size: 13,
-                              color: OledTheme.textSecondary,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ],
                   ),
                 ],
               ],
+            ],
+          ),
+        ],
+      ],
+    );
+
+    return TactileBounce(
+      onTap: () => showMenetrendDetailsModal(
+        context,
+        evaluation: evaluation,
+        prefs: activePrefs,
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        child: SoftGlassCard(
+          prefs: activePrefs,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          borderColor: primary.withValues(alpha: 0.35),
+          child: Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Colors.transparent,
+                  primary.withValues(alpha: isDark ? 0.10 : 0.06),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
             ),
+            child: cardContent,
           ),
         ),
-      );
+      ),
+    );
   }
 }
 
@@ -470,13 +616,60 @@ class _MenetrendDetailsModalSheetState
 
   @override
   Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-    final closeMode = widget.prefs.modalCloseMode;
-    final trip = _selectedTrip;
-    final walkLeave = trip.effectiveDeparture
+    final scope = AppProvidersScope.maybeOf(context);
+    final activePrefs = scope?.settings.prefs ?? widget.prefs;
+    final activeEval = scope?.commute.evaluation ?? widget.evaluation;
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final primary = theme.colorScheme.primary;
+    final onSurface = theme.colorScheme.onSurface;
+    final secondaryText =
+        isDark ? OledTheme.textSecondary : onSurface.withValues(alpha: 0.72);
+    final surfaceElevated =
+        isDark ? OledTheme.surfaceElevated : theme.colorScheme.surfaceContainerHigh;
+    final borderSubtle =
+        isDark ? OledTheme.borderSubtle : onSurface.withValues(alpha: 0.14);
+
+    final closeMode = activePrefs.modalCloseMode;
+    final trip = _selectedTrip.recalculateForPrefs(
+      activePrefs,
+      isMorning: activeEval.isMorningMode,
+    );
+    final safeLine = trip.safeRouteShortName;
+    final safeLongLine = MenetrendService.sanitizeRouteLongName(trip.routeLongName);
+    final headerSubtitle =
+        safeLongLine.isNotEmpty && safeLongLine != safeLine
+            ? safeLongLine
+            : 'MenetrendGO valós idejű útvonal';
+
+    // Use OFFICIAL scheduled departure/arrival so delayed transit catches-ups
+    // never leave the user late at the station, and show true destination arrival.
+    final walkLeave = trip.scheduledDeparture
         .subtract(Duration(minutes: trip.walkToStationMinutes));
-    final schoolArrive = trip.effectiveArrival
-        .add(Duration(minutes: trip.walkToDestinationMinutes));
+    final destinationArrive = trip.scheduledDestinationArrival;
+    final fallbackDestLabel = activeEval.isMorningMode
+        ? activePrefs.schoolAddress
+        : activePrefs.homeAddress;
+    final destLabel = (trip.destinationLabel != null &&
+            trip.destinationLabel!.trim().isNotEmpty &&
+            trip.destinationLabel!.trim() != trip.arrivalStation.trim())
+        ? trip.destinationLabel!.trim()
+        : (fallbackDestLabel.trim().isNotEmpty &&
+                fallbackDestLabel.trim() != trip.arrivalStation.trim()
+            ? fallbackDestLabel.trim()
+            : '');
+
+    final String statusBannerText;
+    if (trip.isCancelled) {
+      statusBannerText =
+          'Járat kimarad • Menetrend szerinti ind.: ${trip.departureTimeFormatted}';
+    } else if (trip.delayMinutes > 0) {
+      statusBannerText =
+          'Élő késés: +${trip.delayMinutes} perc • Becsült ind.: ${trip.effectiveDepartureTimeFormatted}';
+    } else {
+      statusBannerText =
+          'Menetrend szerint pontos (${trip.travelDurationMinutes} perc menetidő)';
+    }
 
     final fadeCurved = CurvedAnimation(
       parent: widget.animation,
@@ -515,16 +708,14 @@ class _MenetrendDetailsModalSheetState
                   child: Material(
                     type: MaterialType.transparency,
                     child: LiquidGlassSurface(
-                      prefs: widget.prefs,
-                      solidColor: const Color(0xF0121212),
+                      prefs: activePrefs,
+                      solidColor: resolveLiquidGlassEnabled(activePrefs)
+                          ? (isDark
+                              ? const Color(0xF0121212)
+                              : theme.colorScheme.surface.withValues(alpha: 0.96))
+                          : null,
                       borderRadius: BorderRadius.circular(24),
                       contentOpacityAnimation: fadeCurved,
-                      border: resolveSoftBlurEnabled(widget.prefs)
-                          ? null
-                          : Border.all(
-                              color: primary.withValues(alpha: 0.4),
-                              width: 1.2,
-                            ),
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(
                           maxWidth: 460,
@@ -543,6 +734,8 @@ class _MenetrendDetailsModalSheetState
                                   children: [
                                     Hero(
                                       tag: 'menetrend_hero_card',
+                                      flightShuttleBuilder:
+                                          _buildMenetrendHeroShuttle,
                                       child: Material(
                                         type: MaterialType.transparency,
                                         child: Container(
@@ -573,18 +766,18 @@ class _MenetrendDetailsModalSheetState
                                             CrossAxisAlignment.start,
                                         children: [
                                           Text(
-                                            HtmlSanitizer.clean('${trip.routeShortName} • ${trip.mode.displayName}'),
-                                            style: const TextStyle(
+                                            '$safeLine • ${trip.mode.displayName}',
+                                            style: TextStyle(
                                               fontSize: 17,
                                               fontWeight: FontWeight.w800,
-                                              color: Colors.white,
+                                              color: onSurface,
                                             ),
                                           ),
                                           Text(
-                                            HtmlSanitizer.clean(trip.routeLongName),
-                                            style: const TextStyle(
+                                            headerSubtitle,
+                                            style: TextStyle(
                                               fontSize: 12,
-                                              color: OledTheme.textSecondary,
+                                              color: secondaryText,
                                             ),
                                           ),
                                         ],
@@ -594,9 +787,9 @@ class _MenetrendDetailsModalSheetState
                                       IconButton(
                                         onPressed: () =>
                                             Navigator.of(context).pop(),
-                                        icon: const Icon(
+                                        icon: Icon(
                                           Icons.close_rounded,
-                                          color: OledTheme.textSecondary,
+                                          color: secondaryText,
                                         ),
                                       ),
                                   ],
@@ -604,33 +797,32 @@ class _MenetrendDetailsModalSheetState
                               ),
                               const SizedBox(height: 14),
                               // Alternative departures selector
-                              if (widget.evaluation.alternatives.length > 1) ...[
+                              if (activeEval.alternatives.length > 1) ...[
                                 EdgeFadeHorizontalScroll(
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 20,
                                   ),
                                   spacing: 8,
-                                  children: widget.evaluation.alternatives
-                                      .map((alt) {
+                                  children:
+                                      activeEval.alternatives.map((alt) {
+                                    final safeAlt = alt.safeRouteShortName;
                                     final isSel = alt.scheduledDeparture ==
                                             trip.scheduledDeparture &&
-                                        alt.routeShortName ==
-                                            trip.routeShortName;
+                                        safeAlt == safeLine;
                                     return ChoiceChip(
                                       label: Text(
-                                        '${HtmlSanitizer.clean(alt.routeShortName)} (${alt.departureTimeFormatted})',
+                                        '$safeAlt (${alt.departureTimeFormatted})',
                                         style: TextStyle(
                                           fontSize: 12,
                                           fontWeight: FontWeight.w700,
                                           color: isSel
-                                              ? Colors.black
-                                              : Colors.white,
+                                              ? theme.colorScheme.onPrimary
+                                              : onSurface,
                                         ),
                                       ),
                                       selected: isSel,
                                       selectedColor: primary,
-                                      backgroundColor:
-                                          OledTheme.surfaceElevated,
+                                      backgroundColor: surfaceElevated,
                                       onSelected: (_) {
                                         setState(() => _selectedTrip = alt);
                                       },
@@ -645,239 +837,261 @@ class _MenetrendDetailsModalSheetState
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                              // Delay & platform status banner
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: OledTheme.surfaceElevated,
-                                  borderRadius: BorderRadius.circular(14),
-                                  border:
-                                      Border.all(color: OledTheme.borderSubtle),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      trip.delayMinutes > 0
-                                          ? Icons.warning_amber_rounded
-                                          : Icons.verified_rounded,
-                                      size: 18,
-                                      color: trip.delayMinutes > 0
-                                          ? const Color(0xFFFFB300)
-                                          : const Color(0xFF66BB6A),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        trip.delayMinutes > 0
-                                            ? 'Élő késés: +${trip.delayMinutes} perc • Indulás: ${trip.effectiveDepartureTimeFormatted}'
-                                            : 'Menetrend szerint pontos (${trip.travelDurationMinutes} perc menetidő)',
-                                        style: const TextStyle(
-                                          fontSize: 12.5,
-                                          fontWeight: FontWeight.w700,
-                                          color: Colors.white,
-                                        ),
+                                    // Delay & platform status banner
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 10,
                                       ),
-                                    ),
-                                    if (trip.platformCode != null)
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 3,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: primary.withValues(alpha: 0.16),
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                        ),
-                                        child: Text(
-                                          trip.platformCode!,
-                                          style: TextStyle(
-                                            fontSize: 11.5,
-                                            fontWeight: FontWeight.w800,
-                                            color: primary,
+                                      decoration: BoxDecoration(
+                                        color: surfaceElevated,
+                                        borderRadius: BorderRadius.circular(14),
+                                        border: Border.all(color: borderSubtle),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Icon(
+                                            trip.isCancelled
+                                                ? Icons.cancel_rounded
+                                                : (trip.delayMinutes > 0
+                                                    ? Icons
+                                                        .warning_amber_rounded
+                                                    : Icons.verified_rounded),
+                                            size: 18,
+                                            color: trip.isCancelled
+                                                ? const Color(0xFFEF5350)
+                                                : (trip.delayMinutes > 0
+                                                    ? const Color(0xFFFFB300)
+                                                    : const Color(0xFF66BB6A)),
                                           ),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                              // Step-by-step Trip Breakdown
-                              if (!(widget.evaluation.isMorningMode
-                                  ? widget.prefs.homeAddress.isNotEmpty
-                                  : widget.prefs.schoolAddress.isNotEmpty))
-                                _buildTimelineStep(
-                                  icon: Icons.directions_walk_rounded,
-                                  time: DateFormat('HH:mm').format(walkLeave),
-                                  title: 'Gyaloglás az állomásra',
-                                  subtitle:
-                                      '${trip.walkToStationMinutes} perc séta (${MenetrendService.walkingSpeedLabel(widget.prefs.walkingSpeedKmh)})',
-                                  accentColor: OledTheme.textSecondary,
-                                ),
-                              if (trip.legs.length > 1)
-                                ..._buildLegSteps(trip, primary)
-                              else ...[
-                              _buildTimelineStep(
-                                icon: trip.mode == MenetrendTransportMode.rail
-                                    ? Icons.train_rounded
-                                    : Icons.directions_bus_rounded,
-                                time: trip.effectiveDepartureTimeFormatted,
-                                title: 'Felszállás: ${HtmlSanitizer.clean(trip.departureStation)}',
-                                subtitle:
-                                    '${HtmlSanitizer.clean(trip.routeShortName)}${trip.platformCode != null ? " • ${trip.platformCode}" : ""}',
-                                accentColor: primary,
-                              ),
-                              if (trip.intermediateStops.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(
-                                    left: 22,
-                                    top: 4,
-                                    bottom: 8,
-                                  ),
-                                  child: Container(
-                                    padding: const EdgeInsets.all(10),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white
-                                          .withValues(alpha: 0.03),
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(
-                                        color: OledTheme.borderSubtle,
-                                      ),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          'Köztes megállók (${trip.intermediateStops.length}):',
-                                          style: const TextStyle(
-                                            fontSize: 11.5,
-                                            fontWeight: FontWeight.w800,
-                                            color: OledTheme.textSecondary,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 6),
-                                        ...trip.intermediateStops.map(
-                                          (stop) => Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                              vertical: 2,
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Text(
+                                              statusBannerText,
+                                              style: TextStyle(
+                                                fontSize: 12.5,
+                                                fontWeight: FontWeight.w700,
+                                                color: onSurface,
+                                              ),
                                             ),
-                                            child: Row(
+                                          ),
+                                          if (trip.platformCode != null)
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 3,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: primary.withValues(
+                                                  alpha: 0.16,
+                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                              ),
+                                              child: Text(
+                                                trip.platformCode!,
+                                                style: TextStyle(
+                                                  fontSize: 11.5,
+                                                  fontWeight: FontWeight.w800,
+                                                  color: primary,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    // Step-by-step Trip Breakdown
+                                    if (trip.walkToStationMinutes > 0)
+                                      _buildTimelineStep(
+                                        context: context,
+                                        icon: Icons.directions_walk_rounded,
+                                        time:
+                                            DateFormat('HH:mm').format(walkLeave),
+                                        title: 'Gyaloglás az állomásra',
+                                        subtitle:
+                                            '${trip.walkToStationMinutes} perc séta (${MenetrendService.walkingSpeedLabel(activePrefs.walkingSpeedKmh)})',
+                                        accentColor: secondaryText,
+                                      ),
+                                    if (trip.legs.length > 1)
+                                      ..._buildLegSteps(context, trip, primary)
+                                    else ...[
+                                      _buildTimelineStep(
+                                        context: context,
+                                        icon: trip.mode ==
+                                                MenetrendTransportMode.rail
+                                            ? Icons.train_rounded
+                                            : Icons.directions_bus_rounded,
+                                        time: trip.departureTimeFormatted,
+                                        title:
+                                            'Felszállás: ${HtmlSanitizer.clean(trip.departureStation)}',
+                                        subtitle:
+                                            'Menetrend szerinti indulás: ${trip.departureTimeFormatted} • $safeLine${trip.platformCode != null ? " • ${trip.platformCode}" : ""}',
+                                        accentColor: primary,
+                                      ),
+                                      if (trip.intermediateStops.isNotEmpty)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            left: 22,
+                                            top: 4,
+                                            bottom: 8,
+                                          ),
+                                          child: Container(
+                                            padding: const EdgeInsets.all(10),
+                                            decoration: BoxDecoration(
+                                              color: onSurface.withValues(
+                                                alpha: isDark ? 0.03 : 0.04,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              border:
+                                                  Border.all(color: borderSubtle),
+                                            ),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
                                               children: [
-                                                const Icon(
-                                                  Icons.circle,
-                                                  size: 6,
-                                                  color:
-                                                      OledTheme.textSecondary,
-                                                ),
-                                                const SizedBox(width: 8),
-                                                Expanded(
-                                                  child: Text(
-                                                    HtmlSanitizer.clean(stop.name),
-                                                    style: const TextStyle(
-                                                      fontSize: 12,
-                                                      color: Colors.white,
-                                                    ),
+                                                Text(
+                                                  'Köztes megállók (${trip.intermediateStops.length}):',
+                                                  style: TextStyle(
+                                                    fontSize: 11.5,
+                                                    fontWeight: FontWeight.w800,
+                                                    color: secondaryText,
                                                   ),
                                                 ),
-                                                if (stop.platformCode != null)
-                                                  Text(
-                                                    '${stop.platformCode!} • ',
-                                                    style: const TextStyle(
-                                                      fontSize: 11,
-                                                      color: OledTheme
-                                                          .textSecondary,
+                                                const SizedBox(height: 6),
+                                                ...trip.intermediateStops.map(
+                                                  (stop) => Padding(
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                      vertical: 2,
+                                                    ),
+                                                    child: Row(
+                                                      children: [
+                                                        Icon(
+                                                          Icons.circle,
+                                                          size: 6,
+                                                          color: secondaryText,
+                                                        ),
+                                                        const SizedBox(width: 8),
+                                                        Expanded(
+                                                          child: Text(
+                                                            HtmlSanitizer.clean(
+                                                              stop.name,
+                                                            ),
+                                                            style: TextStyle(
+                                                              fontSize: 12,
+                                                              color: onSurface,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                        if (stop.platformCode !=
+                                                            null)
+                                                          Text(
+                                                            '${stop.platformCode!} • ',
+                                                            style: TextStyle(
+                                                              fontSize: 11,
+                                                              color:
+                                                                  secondaryText,
+                                                            ),
+                                                          ),
+                                                        if (stop.timeLabel !=
+                                                            null)
+                                                          Text(
+                                                            stop.timeLabel!,
+                                                            style: TextStyle(
+                                                              fontSize: 11.5,
+                                                              fontWeight:
+                                                                  FontWeight.w700,
+                                                              color:
+                                                                  secondaryText,
+                                                            ),
+                                                          ),
+                                                      ],
                                                     ),
                                                   ),
-                                                if (stop.timeLabel != null)
-                                                  Text(
-                                                    stop.timeLabel!,
-                                                    style: const TextStyle(
-                                                      fontSize: 11.5,
-                                                      fontWeight:
-                                                          FontWeight.w700,
-                                                      color: OledTheme
-                                                          .textSecondary,
-                                                    ),
-                                                  ),
+                                                ),
                                               ],
                                             ),
                                           ),
                                         ),
-                                      ],
+                                    ],
+                                    _buildTimelineStep(
+                                      context: context,
+                                      icon: Icons.location_on_rounded,
+                                      time: trip.arrivalTimeFormatted,
+                                      title:
+                                          'Leszállás: ${HtmlSanitizer.clean(trip.arrivalStation)}',
+                                      subtitle: trip.arrivalPlatformCode ??
+                                          (trip.mode ==
+                                                  MenetrendTransportMode.rail
+                                              ? 'Érkező vágány • jármű érkezése: ${trip.arrivalTimeFormatted}'
+                                              : 'Leszálló megálló • jármű érkezése: ${trip.arrivalTimeFormatted}'),
+                                      accentColor: const Color(0xFF66BB6A),
+                                      isLast: trip.walkToDestinationMinutes <= 0,
                                     ),
-                                  ),
-                                ),
-                              ],
-                              _buildTimelineStep(
-                                icon: Icons.location_on_rounded,
-                                time: trip.effectiveArrivalTimeFormatted,
-                                title: 'Érkezés: ${HtmlSanitizer.clean(trip.arrivalStation)}',
-                                subtitle: trip.arrivalPlatformCode ??
-                                    (trip.mode == MenetrendTransportMode.rail
-                                        ? 'Érkező vágány'
-                                        : 'Megálló'),
-                                accentColor: const Color(0xFF66BB6A),
-                              ),
-                              _buildTimelineStep(
-                                icon: widget.evaluation.isMorningMode
-                                    ? Icons.school_rounded
-                                    : Icons.home_rounded,
-                                time: DateFormat('HH:mm').format(schoolArrive),
-                                title: widget.evaluation.isMorningMode
-                                    ? 'Séta az iskoláig'
-                                    : 'Séta hazáig',
-                                subtitle:
-                                    '${trip.walkToDestinationMinutes} perc séta a célállomásig',
-                                accentColor: OledTheme.textSecondary,
-                                isLast: true,
-                              ),
-                              const SizedBox(height: 16),
-                              SizedBox(
-                                width: double.infinity,
-                                child: FilledButton.icon(
-                                  onPressed: () =>
-                                      MenetrendService.openInMenetrendGo(
-                                    trip: trip,
-                                    evaluation: widget.evaluation,
-                                    prefs: widget.prefs,
-                                  ),
-                                  icon: const Icon(
-                                    Icons.open_in_new_rounded,
-                                    size: 18,
-                                  ),
-                                  label: const Text(
-                                    'Részletek a MenetrendGO-ban',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w800,
+                                    if (trip.walkToDestinationMinutes > 0)
+                                      _buildTimelineStep(
+                                        context: context,
+                                        icon: activeEval.isMorningMode
+                                            ? Icons.school_rounded
+                                            : Icons.home_rounded,
+                                        time: DateFormat('HH:mm')
+                                            .format(destinationArrive),
+                                        title: activeEval.isMorningMode
+                                            ? 'Séta az iskoláig'
+                                            : 'Séta hazáig',
+                                        subtitle:
+                                            '${trip.walkToDestinationMinutes} perc séta${destLabel.isNotEmpty ? " • $destLabel" : " a célállomásig"}',
+                                        accentColor: secondaryText,
+                                        isLast: true,
+                                      ),
+                                    const SizedBox(height: 16),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: FilledButton.icon(
+                                        onPressed: () =>
+                                            MenetrendService.openInMenetrendGo(
+                                          trip: trip,
+                                          evaluation: activeEval,
+                                          prefs: activePrefs,
+                                        ),
+                                        icon: const Icon(
+                                          Icons.open_in_new_rounded,
+                                          size: 18,
+                                        ),
+                                        label: const Text(
+                                          'Részletek a MenetrendGO-ban',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                        style: FilledButton.styleFrom(
+                                          backgroundColor: primary,
+                                          foregroundColor:
+                                              theme.colorScheme.onPrimary,
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 13,
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(14),
+                                          ),
+                                        ),
+                                      ),
                                     ),
-                                  ),
-                                  style: FilledButton.styleFrom(
-                                    backgroundColor: primary,
-                                    foregroundColor: Colors.black,
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 13,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              if (closeMode.showBottomButton) ...[
-                                const SizedBox(height: 8),
-                                SizedBox(
-                                  width: double.infinity,
-                                  child: TextButton(
-                                    onPressed: () =>
-                                        Navigator.of(context).pop(),
-                                    child: const Text('Bezárás'),
-                                  ),
-                                ),
-                              ],
+                                    if (closeMode.showBottomButton) ...[
+                                      const SizedBox(height: 8),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        child: TextButton(
+                                          onPressed: () =>
+                                              Navigator.of(context).pop(),
+                                          child: const Text('Bezárás'),
+                                        ),
+                                      ),
+                                    ],
                                   ],
                                 ),
                               ),
@@ -898,19 +1112,30 @@ class _MenetrendDetailsModalSheetState
 
   /// Explicit sequential segments for transfer trips:
   /// [Leg 1] -> [Átszállás wait] -> [Leg 2] ...
-  List<Widget> _buildLegSteps(MenetrendTripOption trip, Color primary) {
+  List<Widget> _buildLegSteps(
+    BuildContext context,
+    MenetrendTripOption trip,
+    Color primary,
+  ) {
     final fmt = DateFormat('HH:mm');
     final out = <Widget>[];
     for (var i = 0; i < trip.legs.length; i++) {
       final leg = trip.legs[i];
       final rail = leg.mode == MenetrendTransportMode.rail;
+      final cleanLegName = MenetrendService.sanitizeTransitLineName(
+        rawShortName: leg.routeShortName,
+        rawTripShortName: leg.tripShortName,
+        mode: leg.mode,
+      );
       out.add(
         _buildTimelineStep(
+          context: context,
           icon: rail ? Icons.train_rounded : Icons.directions_bus_rounded,
           time: fmt.format(leg.departure),
-          title: '${i + 1}. szakasz: ${HtmlSanitizer.clean(leg.routeShortName)} • ${HtmlSanitizer.clean(leg.fromName)}',
+          title:
+              '${i + 1}. szakasz: $cleanLegName • ${HtmlSanitizer.clean(leg.fromName)}',
           subtitle:
-              '→ ${HtmlSanitizer.clean(leg.toName)} (${fmt.format(leg.arrival)})'
+              'Menetrend szerinti ind.: ${fmt.format(leg.departure)} → ${HtmlSanitizer.clean(leg.toName)} (${fmt.format(leg.arrival)})'
               '${rail && leg.platformCode != null ? ' • ${leg.platformCode}' : ''}',
           accentColor: primary,
         ),
@@ -919,6 +1144,7 @@ class _MenetrendDetailsModalSheetState
         final wait = trip.legs[i + 1].departure.difference(leg.arrival).inMinutes;
         out.add(
           _buildTimelineStep(
+            context: context,
             icon: Icons.transfer_within_a_station_rounded,
             time: fmt.format(leg.arrival),
             title: 'Átszállás: ${HtmlSanitizer.clean(leg.toName)}',
@@ -932,6 +1158,7 @@ class _MenetrendDetailsModalSheetState
   }
 
   Widget _buildTimelineStep({
+    required BuildContext context,
     required IconData icon,
     required String time,
     required String title,
@@ -939,6 +1166,14 @@ class _MenetrendDetailsModalSheetState
     required Color accentColor,
     bool isLast = false,
   }) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final onSurface = theme.colorScheme.onSurface;
+    final secondaryText =
+        isDark ? OledTheme.textSecondary : onSurface.withValues(alpha: 0.72);
+    final borderSubtle =
+        isDark ? OledTheme.borderSubtle : onSurface.withValues(alpha: 0.16);
+
     return Padding(
       padding: EdgeInsets.only(bottom: isLast ? 0 : 8),
       child: Row(
@@ -959,7 +1194,7 @@ class _MenetrendDetailsModalSheetState
                 Container(
                   width: 2,
                   height: 22,
-                  color: OledTheme.borderSubtle,
+                  color: borderSubtle,
                 ),
             ],
           ),
@@ -970,10 +1205,10 @@ class _MenetrendDetailsModalSheetState
               padding: const EdgeInsets.only(top: 4),
               child: Text(
                 time,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w800,
-                  color: Colors.white,
+                  color: onSurface,
                 ),
               ),
             ),
@@ -986,17 +1221,17 @@ class _MenetrendDetailsModalSheetState
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13.5,
                       fontWeight: FontWeight.w700,
-                      color: Colors.white,
+                      color: onSurface,
                     ),
                   ),
                   Text(
                     subtitle,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11.5,
-                      color: OledTheme.textSecondary,
+                      color: secondaryText,
                     ),
                   ),
                 ],

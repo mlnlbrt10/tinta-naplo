@@ -227,31 +227,31 @@ void main() {
       GitHubUpdaterService.latestReleaseApiUrl,
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest',
     );
-    expect(GitHubUpdaterService.fallbackAppVersion, '1.0.0');
-    expect(GitHubUpdaterService.fallbackBuildNumber, '11');
-    expect(GitHubUpdaterService.defaultApkFileName, 'Tinta-Naplo-v1.0.0.apk');
+    expect(GitHubUpdaterService.fallbackAppVersion, '1.1.0');
+    expect(GitHubUpdaterService.fallbackBuildNumber, '2');
+    expect(GitHubUpdaterService.defaultApkFileName, 'Tinta-Naplo-v1.1.0.apk');
     expect(
-      GitHubUpdaterService.apkFileNameForTag('v1.0.0'),
-      'Tinta-Naplo-v1.0.0.apk',
+      GitHubUpdaterService.apkFileNameForTag('v1.1.0'),
+      'Tinta-Naplo-v1.1.0.apk',
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.0.0', 'v1.0.1'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.1.0', 'v1.1.1'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.0.0', 'v1.0.0'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.1.0', 'v1.1.0'),
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.0.0-alpha', 'v1.0.0'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.1.0-alpha', 'v1.1.0'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.0.0-alpha', 'v1.0.0-alpha'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.1.0-alpha', 'v1.1.0-alpha'),
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.0.0', 'v0.9.9'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.1.0', 'v1.0.9'),
       isFalse,
     );
     // Legacy pre-rebrand v1.2.x / v1.1.x tags must not prompt updates on v1.0.0.

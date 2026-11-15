@@ -6,15 +6,20 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.ComponentName
+import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.CalendarContract
 import android.provider.Settings
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import java.io.File
 import java.net.URLConnection
+import java.util.TimeZone
+import java.util.concurrent.Executors
 import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
@@ -30,6 +35,8 @@ open class MainActivity : FlutterActivity() {
         private const val LEGACY_CHANNEL_NAME = "flutter_dynamic_icon"
         private const val TRANSIT_CHANNEL_NAME = "hu.rekreta.rekreta_app/transit"
         private const val UPDATER_CHANNEL_NAME = "hu.rekreta.rekreta_app/updater"
+        private const val CALENDAR_CHANNEL_NAME = "tinta_naplo/calendar_sync"
+        private const val CALENDAR_PERMISSION_REQUEST_CODE = 4208
 
         const val TRANSIT_NOTIFICATION_CHANNEL_ID = "rekreta_menetrendgo_alerts"
         const val TRANSIT_NOTIFICATION_CHANNEL_NAME = "MenetrendGO Indulási & Késési riasztások"
@@ -233,6 +240,11 @@ open class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, TRANSIT_CHANNEL_NAME)
             .setMethodCallHandler { call, result ->
                 handleTransitMethodCall(call, result)
+            }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CALENDAR_CHANNEL_NAME)
+            .setMethodCallHandler { call, result ->
+                handleCalendarMethodCall(call, result)
             }
     }
 
@@ -532,5 +544,335 @@ open class MainActivity : FlutterActivity() {
             }
         }
         return ".MainActivityNormal"
+    }
+
+    private val calendarExecutor = Executors.newSingleThreadExecutor()
+    private var pendingCalendarPermissionResult: MethodChannel.Result? = null
+
+    override fun onDestroy() {
+        calendarExecutor.shutdownNow()
+        super.onDestroy()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == CALENDAR_PERMISSION_REQUEST_CODE) {
+            val pending = pendingCalendarPermissionResult
+            pendingCalendarPermissionResult = null
+            pending?.success(hasCalendarPermissions())
+        }
+    }
+
+    private fun hasCalendarPermissions(): Boolean {
+        val readGranted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_CALENDAR
+        ) == PackageManager.PERMISSION_GRANTED
+        val writeGranted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.WRITE_CALENDAR
+        ) == PackageManager.PERMISSION_GRANTED
+        return readGranted && writeGranted
+    }
+
+    private fun handleCalendarMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "hasCalendarPermissions" -> {
+                result.success(hasCalendarPermissions())
+            }
+            "requestCalendarPermissions" -> {
+                if (hasCalendarPermissions()) {
+                    result.success(true)
+                    return
+                }
+                pendingCalendarPermissionResult?.success(false)
+                pendingCalendarPermissionResult = result
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(
+                        Manifest.permission.READ_CALENDAR,
+                        Manifest.permission.WRITE_CALENDAR
+                    ),
+                    CALENDAR_PERMISSION_REQUEST_CODE
+                )
+            }
+            "getAvailableCalendars" -> {
+                if (!hasCalendarPermissions()) {
+                    result.success(emptyList<Map<String, Any?>>())
+                    return
+                }
+                calendarExecutor.execute {
+                    try {
+                        val calendars = queryWritableCalendars()
+                        runOnUiThread { result.success(calendars) }
+                    } catch (e: Exception) {
+                        runOnUiThread {
+                            result.error("CALENDAR_QUERY_FAILED", e.message, null)
+                        }
+                    }
+                }
+            }
+            "upsertEvent" -> {
+                if (!hasCalendarPermissions()) {
+                    result.error(
+                        "PERMISSION_DENIED",
+                        "Nincs naptár hozzáférési engedély.",
+                        null
+                    )
+                    return
+                }
+                val calendarId = call.argument<Any>("calendarId")?.toString()?.toLongOrNull()
+                if (calendarId == null) {
+                    result.error("INVALID_ARGS", "Hiányzó calendarId.", null)
+                    return
+                }
+                val existingEventId = call.argument<Any>("eventId")?.toString()?.toLongOrNull()
+                val title = call.argument<String>("title")?.trim() ?: ""
+                val description = call.argument<String>("description")?.trim() ?: ""
+                val startMillis = (call.argument<Number>("startMillis"))?.toLong()
+                val endMillis = (call.argument<Number>("endMillis"))?.toLong()
+                val reminderMinutes = (call.argument<Number>("reminderMinutes"))?.toInt() ?: 60
+                val allDay = call.argument<Boolean>("allDay") ?: false
+                if (title.isEmpty() || startMillis == null || endMillis == null) {
+                    result.error("INVALID_ARGS", "Hiányzó esemény adatok.", null)
+                    return
+                }
+                calendarExecutor.execute {
+                    try {
+                        val savedEventId = upsertCalendarEvent(
+                            calendarId = calendarId,
+                            existingEventId = existingEventId,
+                            title = title,
+                            description = description,
+                            startMillis = startMillis,
+                            endMillis = endMillis,
+                            reminderMinutes = reminderMinutes,
+                            allDay = allDay
+                        )
+                        runOnUiThread { result.success(savedEventId) }
+                    } catch (e: Exception) {
+                        runOnUiThread {
+                            result.error("CALENDAR_UPSERT_FAILED", e.message, null)
+                        }
+                    }
+                }
+            }
+            "deleteEvent" -> {
+                if (!hasCalendarPermissions()) {
+                    result.error(
+                        "PERMISSION_DENIED",
+                        "Nincs naptár hozzáférési engedély.",
+                        null
+                    )
+                    return
+                }
+                val eventId = call.argument<Any>("eventId")?.toString()?.toLongOrNull()
+                if (eventId == null) {
+                    result.success(false)
+                    return
+                }
+                calendarExecutor.execute {
+                    try {
+                        val removed = deleteCalendarEvent(eventId)
+                        runOnUiThread { result.success(removed) }
+                    } catch (e: Exception) {
+                        runOnUiThread {
+                            result.error("CALENDAR_DELETE_FAILED", e.message, null)
+                        }
+                    }
+                }
+            }
+            "deleteEvents" -> {
+                if (!hasCalendarPermissions()) {
+                    result.error(
+                        "PERMISSION_DENIED",
+                        "Nincs naptár hozzáférési engedély.",
+                        null
+                    )
+                    return
+                }
+                val rawIds = call.argument<List<Any?>>("eventIds") ?: emptyList()
+                val ids = rawIds.mapNotNull { it?.toString()?.toLongOrNull() }
+                calendarExecutor.execute {
+                    try {
+                        var deletedCount = 0
+                        for (id in ids) {
+                            if (deleteCalendarEvent(id)) {
+                                deletedCount++
+                            }
+                        }
+                        runOnUiThread { result.success(deletedCount) }
+                    } catch (e: Exception) {
+                        runOnUiThread {
+                            result.error("CALENDAR_DELETE_FAILED", e.message, null)
+                        }
+                    }
+                }
+            }
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun queryWritableCalendars(): List<Map<String, Any?>> {
+        val hasPrimaryCol = Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1
+        val projectionList = mutableListOf(
+            CalendarContract.Calendars._ID,
+            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+            CalendarContract.Calendars.ACCOUNT_NAME,
+            CalendarContract.Calendars.ACCOUNT_TYPE,
+            CalendarContract.Calendars.OWNER_ACCOUNT,
+            CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
+            CalendarContract.Calendars.CALENDAR_COLOR,
+            CalendarContract.Calendars.VISIBLE
+        )
+        if (hasPrimaryCol) {
+            projectionList.add(CalendarContract.Calendars.IS_PRIMARY)
+        }
+        val selection =
+            "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ?"
+        val selectionArgs = arrayOf(
+            CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR.toString()
+        )
+        val items = mutableListOf<Map<String, Any?>>()
+        contentResolver.query(
+            CalendarContract.Calendars.CONTENT_URI,
+            projectionList.toTypedArray(),
+            selection,
+            selectionArgs,
+            null
+        )?.use { cursor ->
+            val idIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars._ID)
+            val nameIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME)
+            val accNameIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.ACCOUNT_NAME)
+            val accTypeIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.ACCOUNT_TYPE)
+            val ownerIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.OWNER_ACCOUNT)
+            val colorIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.CALENDAR_COLOR)
+            val visibleIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.VISIBLE)
+            val primaryIdx = if (hasPrimaryCol) {
+                cursor.getColumnIndex(CalendarContract.Calendars.IS_PRIMARY)
+            } else {
+                -1
+            }
+
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(idIdx)
+                val displayName = cursor.getString(nameIdx) ?: "Naptár ($id)"
+                val accountName = cursor.getString(accNameIdx) ?: ""
+                val accountType = cursor.getString(accTypeIdx) ?: ""
+                val ownerAccount = cursor.getString(ownerIdx) ?: ""
+                val color = cursor.getInt(colorIdx)
+                val visible = cursor.getInt(visibleIdx) == 1
+                val isGoogle = accountType == "com.google"
+                val isPrimaryFlag = if (primaryIdx >= 0) cursor.getInt(primaryIdx) == 1 else false
+                val isPrimary = isPrimaryFlag || (accountName.isNotEmpty() && ownerAccount == accountName)
+                items.add(
+                    mapOf(
+                        "id" to id.toString(),
+                        "displayName" to displayName,
+                        "accountName" to accountName,
+                        "accountType" to accountType,
+                        "ownerAccount" to ownerAccount,
+                        "isGoogle" to isGoogle,
+                        "isPrimary" to isPrimary,
+                        "color" to color,
+                        "visible" to visible
+                    )
+                )
+            }
+        }
+        items.sortWith(
+            compareByDescending<Map<String, Any?>> { it["isGoogle"] == true }
+                .thenByDescending { it["isPrimary"] == true }
+                .thenByDescending { it["visible"] == true }
+                .thenBy { (it["displayName"] as? String ?: "").lowercase() }
+        )
+        return items
+    }
+
+    private fun upsertCalendarEvent(
+        calendarId: Long,
+        existingEventId: Long?,
+        title: String,
+        description: String,
+        startMillis: Long,
+        endMillis: Long,
+        reminderMinutes: Int,
+        allDay: Boolean
+    ): String {
+        val safeEndMillis = if (endMillis > startMillis) endMillis else startMillis + 60_000L
+        val values = ContentValues().apply {
+            put(CalendarContract.Events.CALENDAR_ID, calendarId)
+            put(CalendarContract.Events.TITLE, title)
+            put(CalendarContract.Events.DESCRIPTION, description)
+            put(CalendarContract.Events.DTSTART, startMillis)
+            put(CalendarContract.Events.DTEND, safeEndMillis)
+            put(CalendarContract.Events.ALL_DAY, if (allDay) 1 else 0)
+            put(
+                CalendarContract.Events.EVENT_TIMEZONE,
+                if (allDay) "UTC" else TimeZone.getDefault().id
+            )
+            put(CalendarContract.Events.HAS_ALARM, if (reminderMinutes > 0) 1 else 0)
+            put(CalendarContract.Events.AVAILABILITY, CalendarContract.Events.AVAILABILITY_BUSY)
+        }
+
+        if (existingEventId != null) {
+            val updateUri = ContentUris.withAppendedId(
+                CalendarContract.Events.CONTENT_URI,
+                existingEventId
+            )
+            val updated = contentResolver.update(
+                updateUri,
+                values,
+                "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.DELETED} != 1",
+                arrayOf(calendarId.toString())
+            )
+            if (updated > 0) {
+                syncEventReminder(existingEventId, reminderMinutes)
+                return existingEventId.toString()
+            }
+        }
+
+        val insertedUri = contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
+            ?: throw IllegalStateException("Nem sikerült létrehozni a naptár eseményt.")
+        val newId = ContentUris.parseId(insertedUri)
+        if (newId < 0) {
+            throw IllegalStateException("Érvénytelen naptár esemény azonosító.")
+        }
+        syncEventReminder(newId, reminderMinutes)
+        return newId.toString()
+    }
+
+    private fun syncEventReminder(eventId: Long, reminderMinutes: Int) {
+        contentResolver.delete(
+            CalendarContract.Reminders.CONTENT_URI,
+            "${CalendarContract.Reminders.EVENT_ID} = ?",
+            arrayOf(eventId.toString())
+        )
+        if (reminderMinutes > 0) {
+            val reminderValues = ContentValues().apply {
+                put(CalendarContract.Reminders.EVENT_ID, eventId)
+                put(CalendarContract.Reminders.MINUTES, reminderMinutes)
+                put(CalendarContract.Reminders.METHOD, CalendarContract.Reminders.METHOD_ALERT)
+            }
+            contentResolver.insert(CalendarContract.Reminders.CONTENT_URI, reminderValues)
+        }
+    }
+
+    private fun deleteCalendarEvent(eventId: Long): Boolean {
+        contentResolver.delete(
+            CalendarContract.Reminders.CONTENT_URI,
+            "${CalendarContract.Reminders.EVENT_ID} = ?",
+            arrayOf(eventId.toString())
+        )
+        val deleteUri = ContentUris.withAppendedId(
+            CalendarContract.Events.CONTENT_URI,
+            eventId
+        )
+        val rows = contentResolver.delete(deleteUri, null, null)
+        return rows > 0
     }
 }

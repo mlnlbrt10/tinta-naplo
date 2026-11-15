@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:kreta_api/kreta_api.dart';
 
+import '../providers/app_providers.dart';
 import '../services/token_storage_service.dart';
 import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
@@ -160,6 +161,7 @@ Future<void> showStreamlinedProfileSheet({
                       onPrefsChanged: onPrefsChanged,
                       contentOpacityAnimation: curved,
                       onOpenFullSettings: () {
+                        FocusManager.instance.primaryFocus?.unfocus();
                         Navigator.of(sheetContext).pop();
                         onOpenFullSettings();
                       },
@@ -218,6 +220,12 @@ class _StreamlinedProfileModalSheetState
 
   void _applyPrefs(UserProfilePrefs next) {
     UserProfilePrefs.syncActiveGlobals(next);
+    final scope = AppProvidersScope.maybeOf(context);
+    if (scope != null) {
+      scope.settings.updatePrefs(next);
+    } else {
+      TokenStorageService.saveProfilePrefsToSharedPrefs(next);
+    }
     setState(() => _prefs = next);
     widget.onPrefsChanged(next);
   }
@@ -252,8 +260,8 @@ class _StreamlinedProfileModalSheetState
     }
   }
 
-  File? _resolveValidPhotoFile() {
-    final path = _prefs.customPhotoPath;
+  File? _resolveValidPhotoFile(UserProfilePrefs prefs) {
+    final path = prefs.customPhotoPath;
     if (path == null || path.trim().isEmpty) return null;
     final file = File(path);
     return file.existsSync() ? file : null;
@@ -261,24 +269,26 @@ class _StreamlinedProfileModalSheetState
 
   @override
   Widget build(BuildContext context) {
+    final activePrefs =
+        AppProvidersScope.maybeOf(context)?.settings.prefs ?? _prefs;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
-    final avatarAccent = _prefs.christmasModeEnabled
+    final avatarAccent = activePrefs.christmasModeEnabled
         ? const Color(0xFFD32F2F)
         : scheme.primary;
-    final photoFile = _resolveValidPhotoFile();
+    final photoFile = _resolveValidPhotoFile(activePrefs);
 
     final displayNick = GreetingUtils.resolveDisplayName(
-      customNickname: _prefs.nickname,
+      customNickname: activePrefs.nickname,
       fullStudentName: widget.student?.name,
     );
 
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
       child: LiquidGlassSurface(
-        prefs: _prefs,
+        prefs: activePrefs,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
         contentOpacityAnimation: widget.contentOpacityAnimation,
         child: SingleChildScrollView(
@@ -387,7 +397,7 @@ class _StreamlinedProfileModalSheetState
                   if (photoFile != null)
                     OutlinedButton.icon(
                       onPressed: () => _applyPrefs(
-                        _prefs.copyWith(clearCustomPhoto: true),
+                        activePrefs.copyWith(clearCustomPhoto: true),
                       ),
                       icon: const Icon(
                         Icons.delete_outline_rounded,

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:kreta_api/kreta_api.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/kreta_auth_config.dart';
 import '../utils/uwu_helper.dart';
@@ -117,14 +118,17 @@ class GradeRoundingConfig {
 /// Survives logout/relogin and supports full JSON export/import.
 class UserProfilePrefs {
   static ModalCloseButtonMode activeModalCloseMode = ModalCloseButtonMode.both;
-  static bool activeSoftBlurEnabled = false;
+  static bool activeLiquidGlassEnabled = false;
+  static bool get activeSoftBlurEnabled => activeLiquidGlassEnabled;
   static double activeSoftBlurSigma = 4.0;
 
   static void syncActiveGlobals(UserProfilePrefs prefs) {
     activeModalCloseMode = prefs.modalCloseMode;
-    activeSoftBlurEnabled = prefs.cardBlurEnabled;
+    activeLiquidGlassEnabled = prefs.liquidGlassEnabled;
     activeSoftBlurSigma = prefs.cardBlurSigma;
   }
+
+  static bool _parseBool(dynamic value) => value == true || value == 'true';
 
   final String? nickname;
   final int avatarIconIndex;
@@ -159,7 +163,8 @@ class UserProfilePrefs {
   final int walkSchoolToBusMinutes;
   final int walkSchoolToTrainMinutes;
   final bool calcAllow200Weight;
-  final bool cardBlurEnabled;
+  final bool liquidGlassEnabled;
+  bool get cardBlurEnabled => liquidGlassEnabled;
   final double cardOpacity;
   final double cardBlurSigma;
   final String favoriteRoute1stPeriod;
@@ -215,7 +220,8 @@ class UserProfilePrefs {
     this.walkSchoolToBusMinutes = 5,
     this.walkSchoolToTrainMinutes = 15,
     this.calcAllow200Weight = false,
-    this.cardBlurEnabled = false,
+    bool? liquidGlassEnabled,
+    @Deprecated('Use liquidGlassEnabled instead') bool? cardBlurEnabled,
     this.cardOpacity = 0.9,
     this.cardBlurSigma = 4.0,
     this.favoriteRoute1stPeriod = '',
@@ -225,7 +231,7 @@ class UserProfilePrefs {
     this.subjectCustomNames = const {},
     this.teacherCustomNames = const {},
     this.extras = const {},
-  });
+  }) : liquidGlassEnabled = liquidGlassEnabled ?? cardBlurEnabled ?? false;
 
   // ---- v1.0.0 typed accessors over [extras] --------------------------------
   /// "Elmaradó órák elrejtése" (falls back to the legacy single filter).
@@ -242,6 +248,43 @@ class UserProfilePrefs {
   /// `technikum` or `szakkepzo`.
   String get scholarshipSchoolType =>
       extras['scholarshipSchoolType'] == 'szakkepzo' ? 'szakkepzo' : 'technikum';
+
+  /// Configured scholarship target tier index (0-based into ScholarshipTier.tiers), if any.
+  int? get scholarshipTargetTierIdx {
+    final raw = extras['scholarshipTargetTierIdx'];
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    return null;
+  }
+
+  /// Configured explicit scholarship target average, if saved.
+  double? get scholarshipTargetAverage {
+    final raw = extras['scholarshipTargetAverage'];
+    if (raw is num) return raw.toDouble();
+    return null;
+  }
+
+  /// Optional custom ARGB color override for timetable period numbers/badges
+  /// (`1.`, `2.`, ...). `null` restores the theme's default period styling.
+  int? get timetablePeriodColorValue {
+    final raw = extras['timetablePeriodColorValue'];
+    return raw is num ? raw.toInt() : null;
+  }
+
+  Color? get timetablePeriodColor {
+    final v = timetablePeriodColorValue;
+    return v == null ? null : Color(v);
+  }
+
+  UserProfilePrefs withTimetablePeriodColor(int? argb) {
+    final nextExtras = Map<String, dynamic>.from(extras);
+    if (argb == null) {
+      nextExtras.remove('timetablePeriodColorValue');
+    } else {
+      nextExtras['timetablePeriodColorValue'] = argb;
+    }
+    return copyWith(extras: nextExtras);
+  }
 
   String get homeAddress => (extras['homeAddress'] as String?)?.trim() ?? '';
   double? get homeAddressLat => (extras['homeAddressLat'] as num?)?.toDouble();
@@ -420,7 +463,8 @@ class UserProfilePrefs {
     int? walkSchoolToBusMinutes,
     int? walkSchoolToTrainMinutes,
     bool? calcAllow200Weight,
-    bool? cardBlurEnabled,
+    bool? liquidGlassEnabled,
+    @Deprecated('Use liquidGlassEnabled instead') bool? cardBlurEnabled,
     double? cardOpacity,
     double? cardBlurSigma,
     String? favoriteRoute1stPeriod,
@@ -470,7 +514,8 @@ class UserProfilePrefs {
       walkSchoolToBusMinutes: walkSchoolToBusMinutes ?? this.walkSchoolToBusMinutes,
       walkSchoolToTrainMinutes: walkSchoolToTrainMinutes ?? this.walkSchoolToTrainMinutes,
       calcAllow200Weight: calcAllow200Weight ?? this.calcAllow200Weight,
-      cardBlurEnabled: cardBlurEnabled ?? this.cardBlurEnabled,
+      liquidGlassEnabled:
+          liquidGlassEnabled ?? cardBlurEnabled ?? this.liquidGlassEnabled,
       cardOpacity: cardOpacity ?? this.cardOpacity,
       cardBlurSigma: cardBlurSigma ?? this.cardBlurSigma,
       favoriteRoute1stPeriod:
@@ -523,7 +568,7 @@ class UserProfilePrefs {
       'walkSchoolToBusMinutes': walkSchoolToBusMinutes,
       'walkSchoolToTrainMinutes': walkSchoolToTrainMinutes,
       'calcAllow200Weight': calcAllow200Weight,
-      'cardBlurEnabled': cardBlurEnabled,
+      'liquidGlassEnabled': liquidGlassEnabled,
       'cardOpacity': cardOpacity,
       'cardBlurSigma': cardBlurSigma,
       'favoriteRoute1stPeriod': favoriteRoute1stPeriod,
@@ -660,7 +705,11 @@ class UserProfilePrefs {
       walkSchoolToBusMinutes: (json['walkSchoolToBusMinutes'] as num?)?.toInt().clamp(0, 60) ?? 5,
       walkSchoolToTrainMinutes: (json['walkSchoolToTrainMinutes'] as num?)?.toInt().clamp(0, 60) ?? 15,
       calcAllow200Weight: json['calcAllow200Weight'] == true,
-      cardBlurEnabled: json['cardBlurEnabled'] == true,
+      liquidGlassEnabled: _parseBool(
+        json['liquidGlassEnabled'] ??
+            json['cardBlurEnabled'] ??
+            json['softBlur'],
+      ),
       cardOpacity: ((json['cardOpacity'] as num?)?.toDouble() ?? 0.9).clamp(0.6, 1.0),
       cardBlurSigma: ((json['cardBlurSigma'] as num?)?.toDouble() ?? 4.0).clamp(2.0, 8.0),
       favoriteRoute1stPeriod:
@@ -797,6 +846,7 @@ class TokenStorageService {
   static const _keyWalkSchoolToBusMinutes = 'kreta_walk_school_bus';
   static const _keyWalkSchoolToTrainMinutes = 'kreta_walk_school_train';
   static const _keyCalcAllow200Weight = 'kreta_calc_allow_200';
+  static const _keyLiquidGlassEnabled = 'kreta_liquid_glass_enabled';
   static const _keyCardBlurEnabled = 'kreta_card_blur_enabled';
   static const _keyCardOpacity = 'kreta_card_opacity';
   static const _keyCardBlurSigma = 'kreta_card_blur_sigma';
@@ -809,6 +859,7 @@ class TokenStorageService {
   static const _keyExtras = 'kreta_extras_json';
   static const _keyReadMessageIds = 'kreta_read_message_ids';
   static const _keyDashboardCachePrefix = 'kreta_dashboard_cache_v1_';
+  static const String sharedPrefsProfileKey = 'tinta_profile_prefs_v1';
 
   final FlutterSecureStorage _storage;
 
@@ -927,8 +978,70 @@ class TokenStorageService {
     ]);
   }
 
+  static Future<SharedPreferences?> _safeSharedPrefs() async {
+    try {
+      return await SharedPreferences.getInstance()
+          .then<SharedPreferences?>((sp) => sp)
+          .timeout(
+            const Duration(milliseconds: 800),
+            onTimeout: () => null,
+          );
+    } catch (_) {
+      // Ignore in headless unit tests where platform channels are unmocked.
+      return null;
+    }
+  }
+
+  /// Persists [prefs] immediately into [SharedPreferences] so UI rebuilds and
+  /// restarts see updates synchronously without awaiting slow secure-storage I/O.
+  static Future<void> saveProfilePrefsToSharedPrefs(
+    UserProfilePrefs prefs,
+  ) async {
+    try {
+      final sp = await _safeSharedPrefs();
+      if (sp == null) return;
+      await sp.setString(sharedPrefsProfileKey, jsonEncode(prefs.toJson()));
+    } catch (_) {
+      // Ignore in headless unit tests where platform channels are unmocked.
+    }
+  }
+
+  /// Loads persisted [UserProfilePrefs] from [SharedPreferences] if present.
+  static Future<UserProfilePrefs?> loadProfilePrefsFromSharedPrefs() async {
+    try {
+      final sp = await _safeSharedPrefs();
+      if (sp == null) return null;
+      final raw = sp.getString(sharedPrefsProfileKey);
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        final loaded = UserProfilePrefs.fromJson(decoded);
+        UserProfilePrefs.syncActiveGlobals(loaded);
+        return loaded;
+      }
+      if (decoded is Map) {
+        final loaded = UserProfilePrefs.fromJson(
+          Map<String, dynamic>.from(decoded),
+        );
+        UserProfilePrefs.syncActiveGlobals(loaded);
+        return loaded;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<UserProfilePrefs> loadProfilePrefs() async {
-    final values = await _storage.readAll();
+    final fromShared = await loadProfilePrefsFromSharedPrefs();
+    if (fromShared != null) {
+      return fromShared;
+    }
+
+    Map<String, String> values = const <String, String>{};
+    try {
+      values = await _storage.readAll();
+    } catch (_) {
+      values = const <String, String>{};
+    }
     final rawNick = values[_keyCustomNickname]?.trim();
     final iconIdx = int.tryParse(values[_keyAvatarIconIndex] ?? '') ?? 0;
     final colorIdx = int.tryParse(values[_keyAvatarColorIndex] ?? '') ?? 0;
@@ -1107,7 +1220,9 @@ class TokenStorageService {
       walkSchoolToBusMinutes: (int.tryParse(values[_keyWalkSchoolToBusMinutes] ?? '') ?? 5).clamp(0, 60),
       walkSchoolToTrainMinutes: (int.tryParse(values[_keyWalkSchoolToTrainMinutes] ?? '') ?? 15).clamp(0, 60),
       calcAllow200Weight: values[_keyCalcAllow200Weight] == 'true',
-      cardBlurEnabled: values[_keyCardBlurEnabled] == 'true',
+      liquidGlassEnabled:
+          (values[_keyLiquidGlassEnabled] ?? values[_keyCardBlurEnabled]) ==
+              'true',
       cardOpacity:
           (double.tryParse(values[_keyCardOpacity] ?? '') ?? 0.9).clamp(0.6, 1.0),
       cardBlurSigma:
@@ -1121,6 +1236,9 @@ class TokenStorageService {
       extras: _decodeExtras(values[_keyExtras]),
     );
     UserProfilePrefs.syncActiveGlobals(loaded);
+    if (values.isNotEmpty) {
+      await saveProfilePrefsToSharedPrefs(loaded);
+    }
     return loaded;
   }
 
@@ -1137,6 +1255,8 @@ class TokenStorageService {
     UwuHelper.isEnabled = prefs.uwuModeEnabled;
     UwuHelper.isTsundereEnabled = prefs.tsundereModeEnabled;
     UserProfilePrefs.syncActiveGlobals(prefs);
+    await saveProfilePrefsToSharedPrefs(prefs);
+
     final trimmedNick = prefs.nickname?.trim() ?? '';
     final trimmedPhoto = prefs.customPhotoPath?.trim() ?? '';
     final serializedColors = jsonEncode(
@@ -1150,7 +1270,8 @@ class TokenStorageService {
     final serializedSubjNames = jsonEncode(prefs.subjectCustomNames);
     final serializedTeacherNames = jsonEncode(prefs.teacherCustomNames);
 
-    await Future.wait([
+    try {
+      await Future.wait([
       _storage.write(key: _keyExtras, value: jsonEncode(prefs.extras)),
       if (trimmedNick.isEmpty)
         _storage.delete(key: _keyCustomNickname)
@@ -1261,8 +1382,8 @@ class TokenStorageService {
         value: prefs.transitCardEnabled.toString(),
       ),
       _storage.write(
-        key: _keyCardBlurEnabled,
-        value: prefs.cardBlurEnabled.toString(),
+        key: _keyLiquidGlassEnabled,
+        value: prefs.liquidGlassEnabled.toString(),
       ),
       _storage.write(
         key: _keyCardOpacity,
@@ -1297,6 +1418,9 @@ class TokenStorageService {
         value: serializedTeacherNames,
       ),
     ]);
+    } catch (_) {
+      // SharedPreferences mirror above has already succeeded.
+    }
   }
 
   /// Builds a stable per-account key used to scope locally cached read message IDs.

@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
+import '../providers/app_providers.dart';
+import '../services/calendar_sync_service.dart';
 import '../services/github_updater_service.dart';
 import '../services/kreta_client.dart';
 import '../services/menetrend_service.dart';
@@ -14,7 +16,6 @@ import '../utils/greeting_utils.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
-import '../widgets/edge_fade_horizontal_scroll.dart';
 import '../widgets/expandable_profile_card.dart';
 import '../widgets/frosted_inspection_modal.dart';
 import '../widgets/glass_card.dart';
@@ -113,6 +114,8 @@ class NextLessonStatus {
         .toList();
     final remainingCount = remainingLessons.length;
 
+    final countdown = PeriodCountdownInfo.evaluate(activeLessons, localNow);
+
     if (totalCount == 0 || remainingCount == 0) {
       return NextLessonStatus(
         phase: NextLessonPhase.completedForToday,
@@ -121,6 +124,7 @@ class NextLessonStatus {
         countdownLabel: 'Mára vége az óráknak!',
         remainingLessonsCount: 0,
         totalLessonsCount: totalCount,
+        remainingFraction: 0.0,
       );
     }
 
@@ -137,9 +141,9 @@ class NextLessonStatus {
         final minsLeft = endLocal.difference(localNow).inMinutes.clamp(1, 999);
         final totalSecs = endLocal.difference(startLocal).inSeconds;
         final remSecs = endLocal.difference(localNow).inSeconds;
-        final remFraction = totalSecs > 0
-            ? (remSecs / totalSecs).clamp(0.0, 1.0)
-            : 0.0;
+        final remFraction = countdown?.phase == PeriodCountdownPhase.ongoing
+            ? countdown!.remainingFraction
+            : (totalSecs > 0 ? (remSecs / totalSecs).clamp(0.0, 1.0) : 0.0);
         final nextUp = (i + 1 < activeLessons.length)
             ? activeLessons[i + 1]
             : null;
@@ -177,6 +181,7 @@ class NextLessonStatus {
         countdownLabel: countdownStr,
         remainingLessonsCount: remainingCount,
         totalLessonsCount: totalCount,
+        remainingFraction: countdown?.remainingFraction ?? 1.0,
       );
     }
 
@@ -197,6 +202,7 @@ class NextLessonStatus {
       countdownLabel: 'Még $minsUntilNext perc',
       remainingLessonsCount: remainingCount,
       totalLessonsCount: totalCount,
+      remainingFraction: countdown?.remainingFraction ?? 0.0,
     );
   }
 }
@@ -322,12 +328,14 @@ class _LiveFirstLessonCountdownText extends StatefulWidget {
   final TextStyle? style;
   final String Function(String) textTransform;
   final VoidCallback? onReachedStart;
+  final DateTime Function()? clock;
 
   const _LiveFirstLessonCountdownText({
     required this.targetStartLocal,
     this.style,
     required this.textTransform,
     this.onReachedStart,
+    this.clock,
   });
 
   @override
@@ -370,7 +378,8 @@ class _LiveFirstLessonCountdownTextState
   }
 
   void _refreshRemaining({required bool notifyParent}) {
-    final diff = widget.targetStartLocal.difference(DateTime.now());
+    final now = widget.clock?.call() ?? DateTime.now();
+    final diff = widget.targetStartLocal.difference(now);
     final clamped = diff.isNegative ? Duration.zero : diff;
     if (notifyParent && mounted) {
       setState(() => _remaining = clamped);
@@ -458,6 +467,7 @@ class HomeScreen extends StatefulWidget {
   final UserProfilePrefs prefs;
   final ValueChanged<UserProfilePrefs> onPrefsChanged;
   final VoidCallback onLogout;
+  final DateTime Function()? clock;
 
   const HomeScreen({
     super.key,
@@ -467,6 +477,7 @@ class HomeScreen extends StatefulWidget {
     required this.prefs,
     required this.onPrefsChanged,
     required this.onLogout,
+    this.clock,
   });
 
   @override
@@ -477,10 +488,6 @@ class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
   late final PageController _tabPageController =
       PageController(initialPage: _selectedIndex);
-  final ScrollController _chipBarController = ScrollController(
-    initialScrollOffset: 0.0,
-    keepScrollOffset: false,
-  );
   final int _tabSwitchEpoch = 0;
   bool _homeInitialEntrancePlayed = false;
   bool _homeEntranceActive = false;
@@ -508,8 +515,10 @@ class _HomeScreenState extends State<HomeScreen> {
         GitHubUpdaterService.checkForUpdates(context, manual: false);
       }
     });
-    _countdownTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (mounted && _selectedIndex == 0) {
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted &&
+          _selectedIndex == 0 &&
+          (_data?.todaysLessons.isNotEmpty ?? false)) {
         _countdownTick.value++;
       }
     });
@@ -522,37 +531,74 @@ class _HomeScreenState extends State<HomeScreen> {
         enabled: _homeEntranceActive,
       );
 
+  UserProfilePrefs get _activePrefs {
+    final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
+    return scope?.settings.prefs ?? widget.prefs;
+  }
+
   @override
   void didUpdateWidget(covariant HomeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.prefs != widget.prefs &&
-        _data != null &&
-        (oldWidget.prefs.transitCardEnabled != widget.prefs.transitCardEnabled ||
-            oldWidget.prefs.transitHomeStation !=
-                widget.prefs.transitHomeStation ||
-            oldWidget.prefs.transitSchoolStation !=
-                widget.prefs.transitSchoolStation ||
-            oldWidget.prefs.transitAllowTrain !=
-                widget.prefs.transitAllowTrain ||
-            oldWidget.prefs.transitAllowCoach !=
-                widget.prefs.transitAllowCoach ||
-            oldWidget.prefs.transitAllowLocalBus !=
-                widget.prefs.transitAllowLocalBus ||
-            oldWidget.prefs.walkingDurationMinutes !=
-                widget.prefs.walkingDurationMinutes ||
-            oldWidget.prefs.walkHomeToBusMinutes !=
-                widget.prefs.walkHomeToBusMinutes ||
-            oldWidget.prefs.walkHomeToTrainMinutes !=
-                widget.prefs.walkHomeToTrainMinutes ||
-            oldWidget.prefs.walkSchoolToBusMinutes !=
-                widget.prefs.walkSchoolToBusMinutes ||
-            oldWidget.prefs.walkSchoolToTrainMinutes !=
-                widget.prefs.walkSchoolToTrainMinutes ||
-            oldWidget.prefs.homeAddress != widget.prefs.homeAddress ||
-            oldWidget.prefs.schoolAddress != widget.prefs.schoolAddress ||
-            oldWidget.prefs.extras != widget.prefs.extras ||
-            oldWidget.prefs.walkingSpeedKmh != widget.prefs.walkingSpeedKmh)) {
-      _refreshCommute();
+    final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
+    if (scope != null) {
+      // CommuteProvider listens to SettingsProvider directly and handles both
+      // instant local recalculation (e.g. walking speed) and non-spammy sync.
+      return;
+    }
+
+    final oldP = oldWidget.prefs;
+    final newP = widget.prefs;
+    if (oldP == newP) return;
+
+    final transitEnabledOrConfiguredChanged =
+        oldP.transitCardEnabled != newP.transitCardEnabled ||
+            oldP.transitHomeStation != newP.transitHomeStation ||
+            oldP.transitSchoolStation != newP.transitSchoolStation ||
+            oldP.transitAllowTrain != newP.transitAllowTrain ||
+            oldP.transitAllowCoach != newP.transitAllowCoach ||
+            oldP.transitAllowLocalBus != newP.transitAllowLocalBus ||
+            oldP.homeAddress != newP.homeAddress ||
+            oldP.schoolAddress != newP.schoolAddress ||
+            oldP.extras != newP.extras;
+
+    final localCommuteOnlyChanged =
+        oldP.walkingSpeedKmh != newP.walkingSpeedKmh ||
+            oldP.walkingDurationMinutes != newP.walkingDurationMinutes ||
+            oldP.walkHomeToBusMinutes != newP.walkHomeToBusMinutes ||
+            oldP.walkHomeToTrainMinutes != newP.walkHomeToTrainMinutes ||
+            oldP.walkSchoolToBusMinutes != newP.walkSchoolToBusMinutes ||
+            oldP.walkSchoolToTrainMinutes != newP.walkSchoolToTrainMinutes ||
+            oldP.transitAlertBufferMinutes != newP.transitAlertBufferMinutes ||
+            oldP.transitNotificationsEnabled !=
+                newP.transitNotificationsEnabled ||
+            oldP.favoriteRoute1stPeriod != newP.favoriteRoute1stPeriod ||
+            oldP.favoriteRoute2ndPeriod != newP.favoriteRoute2ndPeriod;
+
+    if (!newP.transitCardEnabled || !newP.transitConfigured) {
+      if (_commuteEval != null || _commuteLoading) {
+        setState(() {
+          _commuteEval = null;
+          _commuteLoading = false;
+        });
+      }
+      MenetrendService.cancelAlarms();
+      return;
+    }
+
+    if ((localCommuteOnlyChanged || transitEnabledOrConfiguredChanged) &&
+        _commuteEval != null) {
+      final recalculated = _commuteEval!.recalculateForPrefs(newP);
+      setState(() => _commuteEval = recalculated);
+      MenetrendService.syncNotificationsForEvaluation(
+        evaluation: recalculated,
+        prefs: newP,
+        allowDelayNotification: false,
+      );
+    }
+
+    if (transitEnabledOrConfiguredChanged ||
+        (localCommuteOnlyChanged && _commuteEval == null && _data != null)) {
+      _refreshCommute(allowDelayNotifications: false);
     }
   }
 
@@ -561,7 +607,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _countdownTimer?.cancel();
     _countdownTick.dispose();
     _tabPageController.dispose();
-    _chipBarController.dispose();
     super.dispose();
   }
 
@@ -569,7 +614,17 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _commuteLoading = false;
   final MenetrendService _menetrendService = MenetrendService();
 
-  Future<void> _refreshCommute() async {
+  Future<void> _refreshCommute({bool allowDelayNotifications = true}) async {
+    final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
+    final lessons = _data?.todaysLessons ?? const <Lesson>[];
+    if (scope != null) {
+      await scope.commute.syncLive(
+        todaysLessons: lessons,
+        allowDelayNotifications: allowDelayNotifications,
+      );
+      return;
+    }
+
     final prefs = widget.prefs;
     if (!prefs.transitCardEnabled || !prefs.transitConfigured) {
       if (_commuteEval != null || _commuteLoading) {
@@ -583,7 +638,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     setState(() => _commuteLoading = true);
     final eval = await _menetrendService.fetchLiveCommuteEvaluation(
-      todaysLessons: _data?.todaysLessons ?? const <Lesson>[],
+      todaysLessons: lessons,
       prefs: prefs,
     );
     if (!mounted) return;
@@ -595,6 +650,7 @@ class _HomeScreenState extends State<HomeScreen> {
       MenetrendService.syncNotificationsForEvaluation(
         evaluation: eval,
         prefs: prefs,
+        allowDelayNotification: allowDelayNotifications,
       );
     }
   }
@@ -649,6 +705,12 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
       _refreshCommute();
+      unawaited(
+        CalendarSyncService.instance.syncFromDashboardIfEnabled(
+          result,
+          prefs: _activePrefs,
+        ),
+      );
     } on TokenExpiredException {
       if (!mounted) return;
       widget.onLogout();
@@ -803,11 +865,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openProfileAndSettingsModal() {
+    final currentPrefs = _activePrefs;
     showStreamlinedProfileSheet(
       context: context,
       student: _data?.student,
       session: _session,
-      prefs: widget.prefs,
+      prefs: currentPrefs,
       onPrefsChanged: widget.onPrefsChanged,
       onOpenFullSettings: () {
         Navigator.of(context).push(
@@ -816,7 +879,8 @@ class _HomeScreenState extends State<HomeScreen> {
               session: _session,
               student: _data?.student,
               kretaClient: widget.kretaClient,
-              prefs: widget.prefs,
+              dashboardData: _data,
+              prefs: _activePrefs,
               onPrefsChanged: widget.onPrefsChanged,
               onLogout: widget.onLogout,
             ),
@@ -828,6 +892,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scope = AppProvidersScope.maybeOf(context);
+    final activePrefs = scope?.settings.prefs ?? widget.prefs;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final student = _data?.student;
@@ -835,17 +901,19 @@ class _HomeScreenState extends State<HomeScreen> {
         _isImmersiveWeeklyMode && _selectedIndex == _timetableTabIndex;
 
     final resolvedName = GreetingUtils.resolveDisplayName(
-      customNickname: widget.prefs.nickname,
+      customNickname: activePrefs.nickname,
       fullStudentName: student?.name,
     );
     final greetingText = GreetingUtils.buildGreeting(
       name: resolvedName,
-      uwuMode: widget.prefs.uwuModeEnabled,
-      tsundereMode: widget.prefs.tsundereModeEnabled,
+      uwuMode: activePrefs.uwuModeEnabled,
+      tsundereMode: activePrefs.tsundereModeEnabled,
     );
 
-    final hasAmbientBackdrop = widget.prefs.cardBlurEnabled ||
-        widget.prefs.backgroundPreset != 'pure_oled';
+    final hasAmbientBackdrop = ChristmasAndBackgroundOverlay.hasAmbientBackdrop(
+      context,
+      activePrefs,
+    );
 
     return PopScope(
       canPop: _selectedIndex == 0,
@@ -855,7 +923,7 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       },
       child: ChristmasAndBackgroundOverlay(
-        prefs: widget.prefs,
+        prefs: activePrefs,
         child: Scaffold(
           backgroundColor: hasAmbientBackdrop ? Colors.transparent : null,
           extendBody: !hideChromeForLandscapeTimetable,
@@ -939,6 +1007,7 @@ class _HomeScreenState extends State<HomeScreen> {
         },
         isActiveTab: _selectedIndex == _timetableTabIndex,
         entranceEpoch: _tabSwitchEpoch,
+        clock: widget.clock,
       ),
       MoreScreen(
         key: const PageStorageKey<String>('tab-more'),
@@ -969,16 +1038,21 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Floating bottom dock with frosted liquid glass (`BackdropFilter` blur +
-  /// translucent tint + 1px specular border) when Settings Soft Blur is ON or
-  /// elevated solid surface when OFF, paired with underdamped liquid spring
-  /// bubble physics across the 4 primary tabs.
+  /// translucent tint + 1px specular border) when Settings Liquid Glass is ON
+  /// or clean opaque Material 3 container (`secondaryContainer` pill) when OFF,
+  /// paired with dual-mode 2D liquid spring / M3 cubic sliding physics.
   Widget _buildMinimalistFloatingDock(ThemeData theme, ColorScheme scheme) {
     final isDark = theme.brightness == Brightness.dark ||
-        widget.prefs.themeStyle != AppThemeStyle.light;
-    final activeIconColor = isDark ? Colors.white : const Color(0xFF0F172A);
-    final inactiveIconColor = isDark
-        ? Colors.white.withValues(alpha: 0.72)
-        : const Color(0xFF0F172A).withValues(alpha: 0.65);
+        _activePrefs.themeStyle != AppThemeStyle.light;
+    final liquidGlass = _activePrefs.liquidGlassEnabled;
+    final activeIconColor = liquidGlass
+        ? (isDark ? Colors.white : const Color(0xFF0F172A))
+        : scheme.onSecondaryContainer;
+    final inactiveIconColor = liquidGlass
+        ? (isDark
+            ? Colors.white.withValues(alpha: 0.72)
+            : const Color(0xFF0F172A).withValues(alpha: 0.65))
+        : scheme.onSurfaceVariant;
 
     const tabs = <({
       IconData icon,
@@ -1013,7 +1087,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
         child: LiquidGlassSurface(
-          prefs: widget.prefs,
+          prefs: _activePrefs,
           isDockStyle: true,
           borderRadius: BorderRadius.circular(32),
           boxShadow: [
@@ -1029,15 +1103,25 @@ class _HomeScreenState extends State<HomeScreen> {
             height: 62,
             pillWidth: 56.0,
             pillHeight: 42.0,
-            pillBuilder: (context, _) => Container(
-              decoration: BoxDecoration(
-                color: scheme.primary.withValues(alpha: isDark ? 0.28 : 0.20),
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(
-                  color: scheme.primary.withValues(alpha: isDark ? 0.58 : 0.45),
-                ),
-              ),
-            ),
+            liquidGlassEnabled: liquidGlass,
+            pressScale: liquidGlass ? 1.12 : 1.0,
+            clipBehavior: liquidGlass ? Clip.none : Clip.hardEdge,
+            clipBorderRadius: liquidGlass ? null : BorderRadius.circular(28),
+            onSelected: _selectBottomTab,
+            pillBuilder: (context, _) => liquidGlass
+                ? const LiquidGlassPillSurface(
+                    pressProgress: 0.0,
+                    borderRadius: BorderRadius.all(Radius.circular(22)),
+                  )
+                : const Material3TonalPillSurface(
+                    borderRadius: BorderRadius.all(Radius.circular(22)),
+                  ),
+            interactivePillBuilder: liquidGlass
+                ? (context, _, pressProgress) => LiquidGlassPillSurface(
+                      pressProgress: pressProgress,
+                      borderRadius: const BorderRadius.all(Radius.circular(22)),
+                    )
+                : null,
             itemBuilder: (context, idx, activeProgress) {
               final item = tabs[idx];
               final isSelected = _selectedIndex == idx;
@@ -1052,23 +1136,21 @@ class _HomeScreenState extends State<HomeScreen> {
                 button: true,
                 child: Tooltip(
                   message: item.tooltip,
-                  child: TactileBounce(
-                    onTap: () => _selectBottomTab(idx),
-                    child: SizedBox(
-                      height: 62,
-                      child: Center(
-                        child: IconTheme(
-                          data: IconThemeData(color: iconColor, size: 25),
-                          child: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 180),
-                            child: Icon(
-                              isSelected ? item.selectedIcon : item.icon,
-                              key: ValueKey<String>(
-                                'dock-$idx-$isSelected-$isDark',
-                              ),
-                              size: 25,
-                              color: iconColor,
+                  triggerMode: TooltipTriggerMode.manual,
+                  child: SizedBox(
+                    height: 62,
+                    child: Center(
+                      child: IconTheme(
+                        data: IconThemeData(color: iconColor, size: 25),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 180),
+                          child: Icon(
+                            isSelected ? item.selectedIcon : item.icon,
+                            key: ValueKey<String>(
+                              'dock-$idx-$isSelected-$isDark',
                             ),
+                            size: 25,
+                            color: iconColor,
                           ),
                         ),
                       ),
@@ -1149,34 +1231,42 @@ class _HomeScreenState extends State<HomeScreen> {
       final today = DateUtils.dateOnly(DateTime.now());
       final allDayGroups = _groupFeedItemsByDay(allFeedItems, today);
       final feedRows = <_HomeFeedRow>[];
-      int activeGroupIndex = 0;
-      for (final group in allDayGroups) {
-        final matchingItems =
-            group.items.where((it) => it.matchesFilter(_feedFilter)).toList();
-        if (matchingItems.isEmpty) continue;
+      int visibleGroupOrdinal = 0;
+      for (int gIdx = 0; gIdx < allDayGroups.length; gIdx++) {
+        final group = allDayGroups[gIdx];
+        final matchingCount =
+            group.items.where((it) => it.matchesFilter(_feedFilter)).length;
+        final headerVisible = matchingCount > 0;
+        final isFirstVisibleGroup = headerVisible && visibleGroupOrdinal == 0;
         feedRows.add(
           _HomeFeedHeaderRow(
             day: group.day,
-            matchingCount: matchingItems.length,
-            groupIndex: activeGroupIndex,
+            matchingCount: matchingCount,
+            groupIndex: gIdx,
+            isVisible: headerVisible,
+            topSpacing: (headerVisible && !isFirstVisibleGroup) ? 20.0 : 0.0,
           ),
         );
-        for (int i = 0; i < matchingItems.length; i++) {
+        int visibleItemIdx = 0;
+        for (int i = 0; i < group.items.length; i++) {
+          final item = group.items[i];
+          final itemVisible = item.matchesFilter(_feedFilter);
           feedRows.add(
             _HomeFeedItemRow(
-              item: matchingItems[i],
-              itemIndex: i,
-              groupIndex: activeGroupIndex,
+              item: item,
+              itemIndex: itemVisible ? visibleItemIdx++ : 0,
+              groupIndex: gIdx,
+              isVisible: itemVisible,
             ),
           );
         }
-        activeGroupIndex++;
+        if (headerVisible) {
+          visibleGroupOrdinal++;
+        }
       }
       const int animatedPreviewLimit = 18;
-      final hasAnyMatching = feedRows.isNotEmpty;
-      final previewRows = hasAnyMatching
-          ? feedRows.take(animatedPreviewLimit).toList()
-          : const <_HomeFeedRow>[];
+      final hasAnyMatching = visibleGroupOrdinal > 0;
+      final previewRows = feedRows.take(animatedPreviewLimit).toList();
       final tailRows = feedRows.length > animatedPreviewLimit
           ? feedRows.sublist(animatedPreviewLimit)
           : const <_HomeFeedRow>[];
@@ -1200,25 +1290,75 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 16),
                   ],
-                  if (widget.prefs.transitCardEnabled &&
-                      widget.prefs.transitConfigured &&
-                      _commuteEval != null) ...[
-                    _maybeHomeEntrance(
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: MenetrendHomeCard(
-                          evaluation: _commuteEval,
-                          isLoading: _commuteLoading,
-                          prefs: widget.prefs,
-                          onOpenSettings: _openProfileAndSettingsModal,
-                          onRetry: _refreshCommute,
-                        ),
-                      ),
-                      0,
-                      key: const ValueKey('home-transit'),
-                    ),
-                    const SizedBox(height: 16),
-                  ],
+                  Builder(
+                    builder: (context) {
+                      final scope = AppProvidersScope.maybeOf(context);
+                      final activePrefs = scope?.settings.prefs ?? widget.prefs;
+                      if (scope != null) {
+                        return ListenableBuilder(
+                          listenable: Listenable.merge([scope.settings, scope.commute]),
+                          builder: (context, _) {
+                            final p = scope.settings.prefs;
+                            final eval = scope.commute.evaluation ?? _commuteEval;
+                            if (!p.transitCardEnabled ||
+                                !p.transitConfigured ||
+                                eval == null) {
+                              return const SizedBox.shrink();
+                            }
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                _maybeHomeEntrance(
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                    ),
+                                    child: MenetrendHomeCard(
+                                      evaluation: eval,
+                                      isLoading: scope.commute.isLoading,
+                                      prefs: p,
+                                      onOpenSettings: _openProfileAndSettingsModal,
+                                      onRetry: () => _refreshCommute(),
+                                    ),
+                                  ),
+                                  0,
+                                  key: const ValueKey('home-transit'),
+                                ),
+                                const SizedBox(height: 16),
+                              ],
+                            );
+                          },
+                        );
+                      }
+                      if (!activePrefs.transitCardEnabled ||
+                          !activePrefs.transitConfigured ||
+                          _commuteEval == null) {
+                        return const SizedBox.shrink();
+                      }
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _maybeHomeEntrance(
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              child: MenetrendHomeCard(
+                                evaluation: _commuteEval,
+                                isLoading: _commuteLoading,
+                                prefs: activePrefs,
+                                onOpenSettings: _openProfileAndSettingsModal,
+                                onRetry: () => _refreshCommute(),
+                              ),
+                            ),
+                            0,
+                            key: const ValueKey('home-transit'),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+                      );
+                    },
+                  ),
                   _maybeHomeEntrance(
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1250,54 +1390,24 @@ class _HomeScreenState extends State<HomeScreen> {
               tailRows.isEmpty ? 116 : 0,
             ),
             sliver: SliverToBoxAdapter(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 240),
-                switchInCurve: Curves.easeOutCubic,
-                switchOutCurve: Curves.easeInCubic,
-                layoutBuilder: (currentChild, previousChildren) => Stack(
-                  alignment: Alignment.topCenter,
-                  children: <Widget>[
-                    for (final prev in previousChildren)
-                      HeroMode(
-                        enabled: false,
-                        child: IgnorePointer(child: prev),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _CollapsibleFeedItem(
+                    key: const ValueKey<String>('home-feed-empty'),
+                    visible: !hasAnyMatching,
+                    child: _buildEmptyStateCard(
+                      theme,
+                      scheme,
+                      icon: Icons.inbox_rounded,
+                      message: uwu(
+                        'Nincs megjeleníthető elem ebben a kategóriában.',
                       ),
-                    if (currentChild != null) currentChild,
-                  ],
-                ),
-                transitionBuilder: (child, animation) => FadeTransition(
-                  opacity: animation,
-                  child: SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(0, 0.03),
-                      end: Offset.zero,
-                    ).animate(animation),
-                    child: ScaleTransition(
-                      scale:
-                          Tween<double>(begin: 0.98, end: 1.0).animate(animation),
-                      child: child,
                     ),
                   ),
-                ),
-                child: KeyedSubtree(
-                  key: ValueKey<ActivityFeedFilter>(_feedFilter),
-                  child: !hasAnyMatching
-                      ? _buildEmptyStateCard(
-                          theme,
-                          scheme,
-                          icon: Icons.inbox_rounded,
-                          message: uwu(
-                            'Nincs megjeleníthető elem ebben a kategóriában.',
-                          ),
-                        )
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            for (final row in previewRows)
-                              _buildFeedRowWidget(theme, scheme, row, today),
-                          ],
-                        ),
-                ),
+                  for (final row in previewRows)
+                    _buildFeedRowWidget(theme, scheme, row, today),
+                ],
               ),
             ),
           ),
@@ -1354,13 +1464,17 @@ class _HomeScreenState extends State<HomeScreen> {
         row.day,
         row.matchingCount,
         today,
-        topSpacing: row.groupIndex > 0 ? 20 : 0,
+        topSpacing: row.topSpacing,
       );
       return RepaintBoundary(
-        child: _maybeHomeEntrance(
-          header,
-          row.groupIndex < 6 ? row.groupIndex + 2 : 8,
-          key: ValueKey('day-${row.day.toIso8601String()}'),
+        key: ValueKey('day-boundary-${row.day.toIso8601String()}'),
+        child: _CollapsibleFeedItem(
+          visible: row.isVisible,
+          child: _maybeHomeEntrance(
+            header,
+            row.groupIndex < 6 ? row.groupIndex + 2 : 8,
+            key: ValueKey('day-${row.day.toIso8601String()}'),
+          ),
         ),
       );
     }
@@ -1371,10 +1485,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     final staggerIndex = itemRow.groupIndex + itemRow.itemIndex;
     return RepaintBoundary(
-      child: _maybeHomeEntrance(
-        tile,
-        staggerIndex < 6 ? staggerIndex + 2 : 8,
-        key: ValueKey('feed-item-${itemRow.item.uniqueKey}'),
+      key: ValueKey('feed-boundary-${itemRow.item.uniqueKey}'),
+      child: _CollapsibleFeedItem(
+        visible: itemRow.isVisible,
+        child: _maybeHomeEntrance(
+          tile,
+          staggerIndex < 6 ? staggerIndex + 2 : 8,
+          key: ValueKey('feed-item-${itemRow.item.uniqueKey}'),
+        ),
       ),
     );
   }
@@ -1460,7 +1578,7 @@ class _HomeScreenState extends State<HomeScreen> {
   ) {
     final status = NextLessonStatus.evaluate(
       lessons,
-      DateTime.now(),
+      widget.clock?.call() ?? DateTime.now(),
       prefs: widget.prefs,
     );
     final currentOrNext = status.targetLesson;
@@ -1473,6 +1591,36 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final heroTag =
         currentOrNext != null ? 'home_lesson_num_${currentOrNext.uid}' : null;
+
+    Widget buildHeroPeriodBadge() {
+      final lesson = currentOrNext!;
+      final baseAccent = widget.prefs.timetablePeriodColor ?? scheme.primary;
+      final readableAccent = widget.prefs.timetablePeriodColor != null
+          ? OledTheme.readableInlineColor(
+              widget.prefs.timetablePeriodColor!,
+              theme.brightness,
+            )
+          : scheme.primary;
+      return Hero(
+        tag: heroTag!,
+        child: Material(
+          type: MaterialType.transparency,
+          child: PeriodCountdownBadge(
+            label: lesson.lessonNumber != null ? '${lesson.lessonNumber}.' : '•',
+            backgroundColor: baseAccent.withValues(alpha: 0.2),
+            textStyle: theme.textTheme.titleMedium!.copyWith(
+              color: readableAccent,
+              fontWeight: FontWeight.w900,
+            ),
+            ringColor: readableAccent,
+            remainingFraction: status.remainingFraction,
+            outerSize: 58,
+            innerSize: 42,
+            strokeWidth: 4.5,
+          ),
+        ),
+      );
+    }
 
     final rawCurrentSubj = currentOrNext != null
         ? (currentOrNext.subject?.name ?? currentOrNext.name)
@@ -1633,53 +1781,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Hero(
-                      tag: heroTag!,
-                      child: Material(
-                        type: MaterialType.transparency,
-                        child: SizedBox(
-                          width: 58,
-                          height: 58,
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              SizedBox(
-                                width: 58,
-                                height: 58,
-                                child: CircularProgressIndicator(
-                                  value: status.remainingFraction,
-                                  strokeWidth: 4.5,
-                                  strokeCap: StrokeCap.round,
-                                  backgroundColor:
-                                      scheme.primary.withValues(alpha: 0.18),
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    scheme.primary,
-                                  ),
-                                ),
-                              ),
-                              Container(
-                                width: 42,
-                                height: 42,
-                                alignment: Alignment.center,
-                                decoration: BoxDecoration(
-                                  color: scheme.primary.withValues(alpha: 0.2),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Text(
-                                  currentOrNext.lessonNumber != null
-                                      ? '${currentOrNext.lessonNumber}.'
-                                      : '•',
-                                  style: theme.textTheme.titleMedium?.copyWith(
-                                    color: scheme.primary,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
+                    buildHeroPeriodBadge(),
                     const SizedBox(width: 14),
                     Expanded(
                       child: Column(
@@ -1766,30 +1868,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Hero(
-                      tag: heroTag!,
-                      child: Material(
-                        type: MaterialType.transparency,
-                        child: Container(
-                          width: 52,
-                          height: 52,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: scheme.primary,
-                            borderRadius: OledTheme.badgeRadius,
-                          ),
-                          child: Text(
-                            currentOrNext.lessonNumber != null
-                                ? '${currentOrNext.lessonNumber}.'
-                                : '•',
-                            style: theme.textTheme.titleLarge?.copyWith(
-                              color: scheme.onPrimary,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
+                    buildHeroPeriodBadge(),
                     const SizedBox(width: 14),
                     Expanded(
                       child: Column(
@@ -1936,6 +2015,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ? _LiveFirstLessonCountdownText(
                                 targetStartLocal: currentOrNext.start.toLocal(),
                                 textTransform: uwu,
+                                clock: widget.clock,
                                 style: theme.textTheme.labelMedium?.copyWith(
                                   color: scheme.primary,
                                   fontWeight: FontWeight.w800,
@@ -2005,15 +2085,26 @@ class _HomeScreenState extends State<HomeScreen> {
           height: 30,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: scheme.surfaceContainerHigh,
+            color: widget.prefs.timetablePeriodColor ??
+                scheme.surfaceContainerHigh,
             borderRadius: BorderRadius.circular(9),
-            border: Border.all(color: theme.dividerColor),
+            border: Border.all(
+              color: widget.prefs.timetablePeriodColor != null
+                  ? OledTheme.contrastTextFor(
+                      widget.prefs.timetablePeriodColor!,
+                    ).withValues(alpha: 0.22)
+                  : theme.dividerColor,
+            ),
           ),
           child: Text(
             upcoming.lessonNumber != null ? '${upcoming.lessonNumber}.' : '•',
             style: theme.textTheme.labelMedium?.copyWith(
               fontWeight: FontWeight.w900,
-              color: scheme.onSurface,
+              color: widget.prefs.timetablePeriodColor != null
+                  ? OledTheme.contrastTextFor(
+                      widget.prefs.timetablePeriodColor!,
+                    )
+                  : scheme.onSurface,
             ),
           ),
         ),
@@ -2049,79 +2140,26 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildFilterChipBar(ThemeData theme, ColorScheme scheme) {
-    return RepaintBoundary(
-      child: EdgeFadeHorizontalScroll(
-        controller: _chipBarController,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        spacing: 8,
-        children: ActivityFeedFilter.values.map((filter) {
-          final selected = _feedFilter == filter;
-          return TactileBounce(
-            onTap: () {
-              if (_feedFilter != filter) {
-                setState(() => _feedFilter = filter);
-              }
-            },
-            child: AnimatedScale(
-              scale: selected ? 1.02 : 0.98,
-              duration: const Duration(milliseconds: 240),
-              curve: Curves.easeOutCubic,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 240),
-                curve: Curves.easeOutCubic,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 9,
-                ),
-                decoration: BoxDecoration(
-                  color: selected ? scheme.primary : theme.cardTheme.color,
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(
-                    color: selected ? scheme.primary : theme.dividerColor,
-                  ),
-                ),
-                child: TweenAnimationBuilder<double>(
-                  tween: Tween<double>(end: selected ? 1.0 : 0.0),
-                  duration: const Duration(milliseconds: 240),
-                  curve: Curves.easeOutCubic,
-                  builder: (context, t, _) {
-                    final iconColor = Color.lerp(
-                      scheme.onSurface.withValues(alpha: 0.72),
-                      scheme.onPrimary,
-                      t,
-                    );
-                    final textColor = Color.lerp(
-                      scheme.onSurface.withValues(alpha: 0.85),
-                      scheme.onPrimary,
-                      t,
-                    );
-                    return Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          filter.icon,
-                          size: 16,
-                          color: iconColor,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          uwu(filter.label),
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight:
-                                selected ? FontWeight.w800 : FontWeight.w600,
-                            color: textColor,
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ),
-            ),
-          );
-        }).toList(),
-      ),
+    final selectedIndex = ActivityFeedFilter.values.indexOf(_feedFilter);
+    return LiquidBubbleTabBar(
+      height: 40,
+      fontSize: 12.5,
+      itemPadding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+      liquidGlassEnabled: _activePrefs.liquidGlassEnabled,
+      selectedIndex: selectedIndex < 0 ? 0 : selectedIndex,
+      items: [
+        for (final filter in ActivityFeedFilter.values)
+          LiquidBubbleTabItem(
+            label: uwu(filter.label),
+            icon: filter.icon,
+          ),
+      ],
+      onSelected: (idx) {
+        final filter = ActivityFeedFilter.values[idx];
+        if (_feedFilter != filter) {
+          setState(() => _feedFilter = filter);
+        }
+      },
     );
   }
 
@@ -2550,6 +2588,46 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+class _CollapsibleFeedItem extends StatelessWidget {
+  final bool visible;
+  final Widget child;
+
+  const _CollapsibleFeedItem({
+    super.key,
+    required this.visible,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(end: visible ? 1.0 : 0.0),
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      builder: (context, t, builtChild) {
+        final clamped = t.clamp(0.0, 1.0);
+        return IgnorePointer(
+          ignoring: !visible,
+          child: ClipRect(
+            child: Align(
+              alignment: Alignment.topCenter,
+              heightFactor: clamped,
+              child: Opacity(
+                opacity: clamped,
+                child: Transform.translate(
+                  offset: Offset(0, (1.0 - clamped) * -8.0),
+                  child: builtChild,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+      child: child,
+    );
+  }
+}
+
 sealed class _HomeFeedRow {
   const _HomeFeedRow();
 }
@@ -2559,11 +2637,15 @@ class _HomeFeedHeaderRow extends _HomeFeedRow {
     required this.day,
     required this.matchingCount,
     required this.groupIndex,
+    required this.isVisible,
+    required this.topSpacing,
   });
 
   final DateTime day;
   final int matchingCount;
   final int groupIndex;
+  final bool isVisible;
+  final double topSpacing;
 }
 
 class _HomeFeedItemRow extends _HomeFeedRow {
@@ -2571,9 +2653,11 @@ class _HomeFeedItemRow extends _HomeFeedRow {
     required this.item,
     required this.itemIndex,
     required this.groupIndex,
+    required this.isVisible,
   });
 
   final HomeActivityItem item;
   final int itemIndex;
   final int groupIndex;
+  final bool isVisible;
 }

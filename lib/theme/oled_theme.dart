@@ -47,6 +47,30 @@ class OledTheme {
     Color(0xFF5C6BC0), // Indigo
   ];
 
+  /// Returns high-contrast foreground color (`Colors.white` or dark charcoal)
+  /// for text rendered on top of [background].
+  static Color contrastTextFor(Color background) =>
+      ThemeData.estimateBrightnessForColor(background) == Brightness.dark
+          ? Colors.white
+          : const Color(0xFF101318);
+
+  /// Ensures inline text colored with [color] stays legible against a surface
+  /// with [surfaceBrightness] (e.g. darkening bright pastel on light surfaces
+  /// or lightening near-black on dark surfaces).
+  static Color readableInlineColor(
+    Color color,
+    Brightness surfaceBrightness,
+  ) {
+    final lum = color.computeLuminance();
+    if (surfaceBrightness == Brightness.light && lum > 0.55) {
+      return Color.lerp(color, const Color(0xFF101318), 0.48)!;
+    }
+    if (surfaceBrightness == Brightness.dark && lum < 0.14) {
+      return Color.lerp(color, Colors.white, 0.55)!;
+    }
+    return color;
+  }
+
   /// Palette of selectable colors for customizing individual grade badges (1..5).
   static const List<Color> gradeColorPalette = [
     Color(0xFF2E7D32), // Classic Green (5)

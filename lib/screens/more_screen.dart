@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
@@ -8,6 +9,8 @@ import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../providers/app_providers.dart';
+import '../services/calendar_sync_service.dart';
 import '../services/kreta_client.dart';
 import '../services/menetrend_service.dart';
 import '../services/token_storage_service.dart';
@@ -152,18 +155,38 @@ List<Omission> _filterOmissions(
 Widget _buildOmissionFilterChips({
   required _AttendanceFilter selected,
   required ValueChanged<_AttendanceFilter> onSelected,
+  bool? liquidGlassEnabled,
   EdgeInsetsGeometry padding = const EdgeInsets.symmetric(horizontal: 16),
 }) {
-  return EdgeFadeHorizontalScroll(
+  IconData iconFor(_AttendanceFilter f) {
+    switch (f) {
+      case _AttendanceFilter.all:
+        return Icons.view_stream_rounded;
+      case _AttendanceFilter.certified:
+        return Icons.verified_rounded;
+      case _AttendanceFilter.uncertified:
+        return Icons.report_problem_rounded;
+      case _AttendanceFilter.tardiness:
+        return Icons.schedule_rounded;
+    }
+  }
+
+  final selectedIdx = _AttendanceFilter.values.indexOf(selected);
+  return LiquidBubbleTabBar(
     padding: padding,
-    spacing: 8,
-    children: _AttendanceFilter.values.map((f) {
-      return ChoiceChip(
-        label: Text(f.label),
-        selected: selected == f,
-        onSelected: (_) => onSelected(f),
-      );
-    }).toList(),
+    height: 40,
+    fontSize: 12.5,
+    itemPadding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+    liquidGlassEnabled: liquidGlassEnabled,
+    selectedIndex: selectedIdx < 0 ? 0 : selectedIdx,
+    items: [
+      for (final f in _AttendanceFilter.values)
+        LiquidBubbleTabItem(
+          label: f.label,
+          icon: iconFor(f),
+        ),
+    ],
+    onSelected: (idx) => onSelected(_AttendanceFilter.values[idx]),
   );
 }
 
@@ -264,11 +287,13 @@ class _DailyOmissionCard extends StatelessWidget {
   final DailyOmissionGroup group;
   final UserProfilePrefs prefs;
   final DateFormat dateFormat;
+  final String heroPrefix;
 
   const _DailyOmissionCard({
     required this.group,
     required this.prefs,
     required this.dateFormat,
+    this.heroPrefix = 'omission',
   });
 
   @override
@@ -379,7 +404,7 @@ class _DailyOmissionCard extends StatelessWidget {
         : '$statusLabel • $teacherName';
 
     final heroTag =
-        'omission_${omission.uid}_${omission.date.millisecondsSinceEpoch}';
+        '${heroPrefix}_${omission.uid}_${omission.date.millisecondsSinceEpoch}';
 
     return TactileBounce(
       pressedScale: 0.97,
@@ -463,6 +488,7 @@ class AppSettingsScreen extends StatefulWidget {
   final StoredSession session;
   final Student? student;
   final KretaClient kretaClient;
+  final DashboardData? dashboardData;
   final UserProfilePrefs prefs;
   final ValueChanged<UserProfilePrefs> onPrefsChanged;
   final VoidCallback onLogout;
@@ -472,6 +498,7 @@ class AppSettingsScreen extends StatefulWidget {
     required this.session,
     required this.student,
     required this.kretaClient,
+    this.dashboardData,
     required this.prefs,
     required this.onPrefsChanged,
     required this.onLogout,
@@ -500,13 +527,19 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
 
   void _handlePrefsChanged(UserProfilePrefs next) {
     setState(() => _prefs = next);
+    final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
+    if (scope == null) {
+      TokenStorageService.saveProfilePrefsToSharedPrefs(next);
+    }
     widget.onPrefsChanged(next);
   }
 
   @override
   Widget build(BuildContext context) {
+    final activePrefs =
+        AppProvidersScope.maybeOf(context)?.settings.prefs ?? _prefs;
     return AdaptiveBackgroundScaffold(
-      prefs: _prefs,
+      prefs: activePrefs,
       appBar: buildAdaptiveTransparentAppBar(
         context,
         title: uwu('Alkalmazás beállítások'),
@@ -515,7 +548,8 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
         session: widget.session,
         student: widget.student,
         kretaClient: widget.kretaClient,
-        prefs: _prefs,
+        dashboardData: widget.dashboardData,
+        prefs: activePrefs,
         onPrefsChanged: _handlePrefsChanged,
         onLogout: widget.onLogout,
         settingsOnly: true,
@@ -578,16 +612,24 @@ class MoreScreen extends StatefulWidget {
 }
 
 class _MoreScreenState extends State<MoreScreen>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, SingleTickerProviderStateMixin {
   @override
   bool get wantKeepAlive => true;
 
   late UserProfilePrefs _currentPrefs;
   int _selectedGradeToCustomize = 5;
   _AttendanceFilter _attendanceFilter = _AttendanceFilter.all;
+  late final AnimationController _attendanceFilterFadeCtrl =
+      AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 220),
+        value: 1.0,
+      );
+  late final Animation<double> _attendanceFilterFadeAnim =
+      _attendanceFilterFadeCtrl.drive(CurveTween(curve: Curves.easeOutCubic));
   bool _showSentMessages = false;
   bool _isLoadingModules = false;
-  String _appVersion = '1.0.0';
+  String _appVersion = '1.1.0';
   bool _initialEntrancePlayed = false;
   bool _entranceActive = false;
 
@@ -607,6 +649,7 @@ class _MoreScreenState extends State<MoreScreen>
   late final TextEditingController _fav1stController;
   late final TextEditingController _fav2ndController;
   final ValueNotifier<int> _stateVersion = ValueNotifier<int>(0);
+  CalendarSyncSettings? _calendarSyncSettings;
 
   final DateFormat _dateFormat = DateFormat('yyyy. MM. dd.');
   final DateFormat _dateTimeFormat = DateFormat('yyyy. MM. dd. HH:mm');
@@ -622,11 +665,13 @@ class _MoreScreenState extends State<MoreScreen>
     super.initState();
     _currentPrefs = widget.prefs;
     PackageInfo.fromPlatform().then((info) {
-      if (mounted) setState(() => _appVersion = info.version);
+      final ver = info.version.trim();
+      if (mounted && ver.isNotEmpty) setState(() => _appVersion = ver);
     }).catchError((_) {});
     _omissions = List<Omission>.from(widget.initialOmissions);
     _messages = List<KretaMessage>.from(widget.initialMessages);
     _loadPersistedReadIds();
+    _loadCalendarSyncSettings();
     _homeStationController =
         TextEditingController(text: _currentPrefs.transitHomeStation);
     _homeTrainStationController =
@@ -705,7 +750,11 @@ class _MoreScreenState extends State<MoreScreen>
     super.didUpdateWidget(oldWidget);
     if (widget.prefs != oldWidget.prefs) {
       _currentPrefs = widget.prefs;
-      _stateVersion.value++;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _stateVersion.value++;
+        }
+      });
     }
     if (widget.initialOmissions.isNotEmpty && _omissions.isEmpty) {
       _omissions = List<Omission>.from(widget.initialOmissions);
@@ -727,6 +776,7 @@ class _MoreScreenState extends State<MoreScreen>
 
   @override
   void dispose() {
+    _attendanceFilterFadeCtrl.dispose();
     _homeStationController.dispose();
     _homeTrainStationController.dispose();
     _schoolStationController.dispose();
@@ -739,10 +789,94 @@ class _MoreScreenState extends State<MoreScreen>
     super.dispose();
   }
 
+  Future<void> _loadCalendarSyncSettings() async {
+    final loaded = await CalendarSyncService.instance.loadSettings();
+    if (!mounted) return;
+    setState(() => _calendarSyncSettings = loaded);
+  }
+
   void _updatePrefs(UserProfilePrefs nextPrefs) {
     UserProfilePrefs.syncActiveGlobals(nextPrefs);
     setState(() => _currentPrefs = nextPrefs);
+    _stateVersion.value++;
+    final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
+    if (scope == null) {
+      TokenStorageService.saveProfilePrefsToSharedPrefs(nextPrefs);
+    }
     widget.onPrefsChanged(nextPrefs);
+  }
+
+  /// Recalculates coordinate-derived walk times immediately when walking speed changes.
+  UserProfilePrefs _withUpdatedWalkingSpeed(
+    UserProfilePrefs current,
+    double nextKmh,
+  ) {
+    var next = current.copyWith(walkingSpeedKmh: nextKmh);
+    final homeLat = current.homeAddressLat;
+    final homeLon = current.homeAddressLon;
+    if (homeLat != null && homeLon != null) {
+      final busLat = (current.extras['homeBusLat'] as num?)?.toDouble();
+      final busLon = (current.extras['homeBusLon'] as num?)?.toDouble();
+      if (busLat != null && busLon != null) {
+        final mins = MenetrendService.estimateWalkingMinutesBetween(
+          lat1: homeLat,
+          lon1: homeLon,
+          lat2: busLat,
+          lon2: busLon,
+          walkingSpeedKmh: nextKmh,
+        );
+        next = next.copyWith(
+          walkHomeToBusMinutes: mins,
+          walkingDurationMinutes: mins,
+        );
+      }
+      final trainLat = (current.extras['homeTrainLat'] as num?)?.toDouble();
+      final trainLon = (current.extras['homeTrainLon'] as num?)?.toDouble();
+      if (trainLat != null && trainLon != null) {
+        next = next.copyWith(
+          walkHomeToTrainMinutes: MenetrendService.estimateWalkingMinutesBetween(
+            lat1: homeLat,
+            lon1: homeLon,
+            lat2: trainLat,
+            lon2: trainLon,
+            walkingSpeedKmh: nextKmh,
+          ),
+        );
+      }
+    }
+
+    final schoolLat = current.schoolAddressLat;
+    final schoolLon = current.schoolAddressLon;
+    if (schoolLat != null && schoolLon != null) {
+      final busLat = (current.extras['schoolBusLat'] as num?)?.toDouble();
+      final busLon = (current.extras['schoolBusLon'] as num?)?.toDouble();
+      if (busLat != null && busLon != null) {
+        next = next.copyWith(
+          walkSchoolToBusMinutes: MenetrendService.estimateWalkingMinutesBetween(
+            lat1: schoolLat,
+            lon1: schoolLon,
+            lat2: busLat,
+            lon2: busLon,
+            walkingSpeedKmh: nextKmh,
+          ),
+        );
+      }
+      final trainLat = (current.extras['schoolTrainLat'] as num?)?.toDouble();
+      final trainLon = (current.extras['schoolTrainLon'] as num?)?.toDouble();
+      if (trainLat != null && trainLon != null) {
+        next = next.copyWith(
+          walkSchoolToTrainMinutes:
+              MenetrendService.estimateWalkingMinutesBetween(
+            lat1: schoolLat,
+            lon1: schoolLon,
+            lat2: trainLat,
+            lon2: trainLon,
+            walkingSpeedKmh: nextKmh,
+          ),
+        );
+      }
+    }
+    return next;
   }
 
   Future<void> _refreshModules() async {
@@ -913,6 +1047,29 @@ class _MoreScreenState extends State<MoreScreen>
 
     if (result != null) {
       _setGradeColor(grade, result);
+    }
+  }
+
+  void _setTimetablePeriodColor(int? colorValue) {
+    _updatePrefs(_currentPrefs.withTimetablePeriodColor(colorValue));
+  }
+
+  Future<void> _promptCustomHexRgbForTimetablePeriod() async {
+    final scheme = Theme.of(context).colorScheme;
+    final initialColor = _currentPrefs.timetablePeriodColor ?? scheme.primary;
+
+    final result = await showSoftBlurDialog<int>(
+      context: context,
+      prefs: _currentPrefs,
+      builder: (dialogContext) =>
+          _TimetablePeriodColorDialog(initialColor: initialColor),
+    );
+
+    if (!mounted || result == null) return;
+    if (result == -1) {
+      _setTimetablePeriodColor(null);
+    } else {
+      _setTimetablePeriodColor(result);
     }
   }
 
@@ -1717,9 +1874,11 @@ class _MoreScreenState extends State<MoreScreen>
       },
     ).whenComplete(() {
       sheetClosed = true;
-      msgNotifier.dispose();
-      loadingNotifier.dispose();
-      downloadingIdNotifier.dispose();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        msgNotifier.dispose();
+        loadingNotifier.dispose();
+        downloadingIdNotifier.dispose();
+      });
     });
   }
 
@@ -2004,7 +2163,10 @@ class _MoreScreenState extends State<MoreScreen>
           prefs: _currentPrefs,
           stateListenable: _stateVersion,
           prefsGetter: () => _currentPrefs,
-          childrenBuilder: () => [
+          childrenBuilder: (subCtx) {
+            final theme = Theme.of(subCtx);
+            final scheme = theme.colorScheme;
+            return [
             _buildRow(
               scheme,
               'Tanuló neve',
@@ -2050,7 +2212,8 @@ class _MoreScreenState extends State<MoreScreen>
                 style: const TextStyle(fontWeight: FontWeight.w800),
               ),
             ),
-          ],
+          ];
+          },
         ),
         const SizedBox(height: 12),
 
@@ -2062,25 +2225,28 @@ class _MoreScreenState extends State<MoreScreen>
           prefs: _currentPrefs,
           stateListenable: _stateVersion,
           prefsGetter: () => _currentPrefs,
-          childrenBuilder: () => [
+          childrenBuilder: (subCtx) {
+            final theme = Theme.of(subCtx);
+            final scheme = theme.colorScheme;
+            return [
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
               title: const Text(
-                'Kártyák soft blur & áttetszőség',
+                'Liquid Glass',
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
               ),
               subtitle: Text(
-                'Lágy, matt üveghatású kártyák a főoldalon',
+                'Átlátszó üveghatású felületek és rugalmas, folyadékfizikás csúszkák',
                 style: TextStyle(
                   fontSize: 12,
                   color: scheme.onSurface.withValues(alpha: 0.68),
                 ),
               ),
-              value: _currentPrefs.cardBlurEnabled,
+              value: _currentPrefs.liquidGlassEnabled,
               onChanged: (v) =>
-                  _updatePrefs(_currentPrefs.copyWith(cardBlurEnabled: v)),
+                  _updatePrefs(_currentPrefs.copyWith(liquidGlassEnabled: v)),
             ),
-            if (_currentPrefs.cardBlurEnabled) ...[
+            if (_currentPrefs.liquidGlassEnabled) ...[
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -2301,16 +2467,125 @@ class _MoreScreenState extends State<MoreScreen>
                     ),
                   ),
                   selected: selected,
-                  onSelected: (_) {
-                    HapticFeedback.selectionClick();
-                    _updatePrefs(
-                      _currentPrefs.copyWith(modalCloseMode: mode),
+                    onSelected: (_) {
+                      HapticFeedback.selectionClick();
+                      _updatePrefs(
+                        _currentPrefs.copyWith(modalCloseMode: mode),
+                      );
+                    },
+                  );
+                }).toList(),
+            ),
+            const Divider(height: 22),
+            Row(
+              children: [
+                Builder(
+                  builder: (_) {
+                    final customPeriod = _currentPrefs.timetablePeriodColor;
+                    final previewBg =
+                        customPeriod ?? scheme.surfaceContainerHigh;
+                    final previewFg = customPeriod != null
+                        ? OledTheme.contrastTextFor(customPeriod)
+                        : scheme.onSurface;
+                    return Container(
+                      width: 28,
+                      height: 28,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: previewBg,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: customPeriod != null
+                              ? previewFg.withValues(alpha: 0.22)
+                              : theme.dividerColor,
+                        ),
+                      ),
+                      child: Text(
+                        '1.',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w900,
+                          color: previewFg,
+                        ),
+                      ),
                     );
                   },
-                );
-              }).toList(),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Órarend óraszámok színe',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => _setTimetablePeriodColor(null),
+                  child: const Text('Alapértelmezett'),
+                ),
+              ],
             ),
-          ],
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                ...() {
+                  final seen = <int>{};
+                  final palette = <Color>[];
+                  for (final c in [
+                    ...OledTheme.avatarColors,
+                    ...OledTheme.gradeColorPalette,
+                  ]) {
+                    if (seen.add(c.toARGB32())) {
+                      palette.add(c);
+                    }
+                  }
+                  return palette.map((paletteColor) {
+                    final val = paletteColor.toARGB32();
+                    final currentVal = _currentPrefs.timetablePeriodColorValue;
+                    final isCurrent = val == currentVal;
+                    final checkColor = OledTheme.contrastTextFor(paletteColor);
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(22),
+                      onTap: () => _setTimetablePeriodColor(val),
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: paletteColor,
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(
+                            color: isCurrent
+                                ? scheme.onSurface
+                                : Colors.transparent,
+                            width: 2.2,
+                          ),
+                        ),
+                        child: isCurrent
+                            ? Icon(
+                                Icons.check_rounded,
+                                color: checkColor,
+                                size: 18,
+                              )
+                            : null,
+                      ),
+                    );
+                  });
+                }(),
+                ActionChip(
+                  avatar: const Icon(Icons.tune_rounded, size: 16),
+                  label: const Text('Egyedi HEX / RGB'),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(22),
+                  ),
+                  onPressed: _promptCustomHexRgbForTimetablePeriod,
+                ),
+              ],
+            ),
+          ];
+          },
         ),
         const SizedBox(height: 12),
 
@@ -2322,7 +2597,10 @@ class _MoreScreenState extends State<MoreScreen>
           prefs: _currentPrefs,
           stateListenable: _stateVersion,
           prefsGetter: () => _currentPrefs,
-          childrenBuilder: () => [
+          childrenBuilder: (subCtx) {
+            final theme = Theme.of(subCtx);
+            final scheme = theme.colorScheme;
+            return [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -2428,11 +2706,15 @@ class _MoreScreenState extends State<MoreScreen>
                 ),
               ],
             ),
-          ],
+          ];
+          },
         ),
         const SizedBox(height: 12),
 
         _buildMenetrendSettingsAccordion(theme, scheme),
+        const SizedBox(height: 12),
+
+        _buildCalendarSyncSettingsAccordion(theme, scheme),
         const SizedBox(height: 12),
 
         _SettingsAccordionCard(
@@ -2443,7 +2725,10 @@ class _MoreScreenState extends State<MoreScreen>
           prefs: _currentPrefs,
           stateListenable: _stateVersion,
           prefsGetter: () => _currentPrefs,
-          childrenBuilder: () => [
+          childrenBuilder: (subCtx) {
+            final theme = Theme.of(subCtx);
+            final scheme = theme.colorScheme;
+            return [
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
               title: const Text(
@@ -2617,7 +2902,8 @@ class _MoreScreenState extends State<MoreScreen>
                 ),
               ),
             ),
-          ],
+          ];
+          },
         ),
         const SizedBox(height: 12),
 
@@ -2629,7 +2915,10 @@ class _MoreScreenState extends State<MoreScreen>
           prefs: _currentPrefs,
           stateListenable: _stateVersion,
           prefsGetter: () => _currentPrefs,
-          childrenBuilder: () => [
+          childrenBuilder: (subCtx) {
+            final theme = Theme.of(subCtx);
+            final scheme = theme.colorScheme;
+            return [
             Text(
               'Minden testreszabás (színek, becenév, tantárgy- és tanár-átnevezések, kerekítési határok, MenetrendGO beállítások) automatikusan megmarad kijelentkezés után is, vagy JSON fájlba exportálható:',
               style: theme.textTheme.bodySmall?.copyWith(
@@ -2656,7 +2945,8 @@ class _MoreScreenState extends State<MoreScreen>
                 ),
               ],
             ),
-          ],
+          ];
+          },
         ),
         const SizedBox(height: 12),
 
@@ -2668,7 +2958,10 @@ class _MoreScreenState extends State<MoreScreen>
           prefs: _currentPrefs,
           stateListenable: _stateVersion,
           prefsGetter: () => _currentPrefs,
-          childrenBuilder: () => [
+          childrenBuilder: (subCtx) {
+            final theme = Theme.of(subCtx);
+            final scheme = theme.colorScheme;
+            return [
             _buildRow(
               scheme,
               uwu('Alkalmazás'),
@@ -2726,7 +3019,43 @@ class _MoreScreenState extends State<MoreScreen>
                 ),
               ),
             ),
-          ],
+          ];
+          },
+        ),
+      ],
+    );
+  }
+
+  /// Google Calendar Sync (CalendarContract) Settings Accordion.
+  Widget _buildCalendarSyncSettingsAccordion(
+    ThemeData theme,
+    ColorScheme scheme,
+  ) {
+    final calSettings = _calendarSyncSettings;
+    final subtitle = calSettings != null && calSettings.enabled
+        ? (calSettings.targetCalendarName?.isNotEmpty == true
+            ? '${calSettings.contentMode.label} • ${calSettings.targetCalendarName}'
+            : calSettings.contentMode.label)
+        : 'Kikapcsolva';
+
+    return _SettingsAccordionCard(
+      icon: Icons.event_available_rounded,
+      title: 'Google Naptár szinkronizálás',
+      subtitle: subtitle,
+      christmasCap: _currentPrefs.christmasModeEnabled,
+      prefs: _currentPrefs,
+      stateListenable: _stateVersion,
+      prefsGetter: () => _currentPrefs,
+      childrenBuilder: (subCtx) => [
+        _CalendarSyncSettingsSection(
+          session: widget.session,
+          kretaClient: widget.kretaClient,
+          dashboardData: widget.dashboardData,
+          profilePrefs: _currentPrefs,
+          onSettingsChanged: (updated) {
+            if (!mounted) return;
+            setState(() => _calendarSyncSettings = updated);
+          },
         ),
       ],
     );
@@ -2737,8 +3066,6 @@ class _MoreScreenState extends State<MoreScreen>
     ThemeData theme,
     ColorScheme scheme,
   ) {
-    final speedKmh = _currentPrefs.walkingSpeedKmh;
-
     return _SettingsAccordionCard(
       icon: Icons.directions_railway_filled_rounded,
       title: 'MenetrendGO',
@@ -2749,7 +3076,10 @@ class _MoreScreenState extends State<MoreScreen>
       prefs: _currentPrefs,
       stateListenable: _stateVersion,
       prefsGetter: () => _currentPrefs,
-      childrenBuilder: () => [
+      childrenBuilder: (subCtx) {
+        final theme = Theme.of(subCtx);
+        final scheme = theme.colorScheme;
+        return [
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
           secondary: const Icon(Icons.directions_railway_filled_rounded),
@@ -3104,10 +3434,12 @@ class _MoreScreenState extends State<MoreScreen>
               ChoiceChip(
                 showCheckmark: false,
                 label: Text(MenetrendService.walkingSpeedLabel(kmh)),
-                selected:
-                    MenetrendService.normalizeWalkingSpeed(speedKmh) == kmh,
+                selected: MenetrendService.normalizeWalkingSpeed(
+                      _currentPrefs.walkingSpeedKmh,
+                    ) ==
+                    kmh,
                 onSelected: (_) => _updatePrefs(
-                  _currentPrefs.copyWith(walkingSpeedKmh: kmh),
+                  _withUpdatedWalkingSpeed(_currentPrefs, kmh),
                 ),
               ),
           ],
@@ -3255,7 +3587,8 @@ class _MoreScreenState extends State<MoreScreen>
             ),
           ],
         ),
-      ],
+      ];
+      },
     );
   }
 
@@ -3396,43 +3729,50 @@ class _MoreScreenState extends State<MoreScreen>
       SliverToBoxAdapter(
         child: _buildOmissionFilterChips(
           selected: _attendanceFilter,
-          onSelected: (f) => setState(() => _attendanceFilter = f),
+          onSelected: (f) {
+            if (f == _attendanceFilter) return;
+            setState(() => _attendanceFilter = f);
+            _attendanceFilterFadeCtrl.forward(from: 0.0);
+          },
+          liquidGlassEnabled:
+              (AppProvidersScope.maybeOf(context)?.settings.prefs ??
+                      _currentPrefs)
+                  .liquidGlassEnabled,
         ),
       ),
       const SliverToBoxAdapter(child: SizedBox(height: 12)),
-      if (dailyGroups.isEmpty)
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 112),
-          sliver: SliverToBoxAdapter(
-            child: _buildEmptyOmissionCard(
-              prefs: _currentPrefs,
-              message:
-                  'Nincs rögzített mulasztás vagy késés ebben a kategóriában.',
-            ),
-          ),
-        )
-      else
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 112),
-          sliver: SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, i) => RepaintBoundary(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: _DailyOmissionCard(
-                    group: dailyGroups[i],
+      SliverFadeTransition(
+        opacity: _attendanceFilterFadeAnim,
+        sliver: dailyGroups.isEmpty
+            ? SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 112),
+                sliver: SliverToBoxAdapter(
+                  child: _buildEmptyOmissionCard(
                     prefs: _currentPrefs,
-                    dateFormat: _dateFormat,
-                  ).staggeredEntrance(
-                    i < 6 ? i + 1 : 6,
-                    enabled: _entranceActive,
+                    message:
+                        'Nincs rögzített mulasztás vagy késés ebben a kategóriában.',
+                  ),
+                ),
+              )
+            : SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 112),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, i) => RepaintBoundary(
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _DailyOmissionCard(
+                          group: dailyGroups[i],
+                          prefs: _currentPrefs,
+                          dateFormat: _dateFormat,
+                        ),
+                      ),
+                    ),
+                    childCount: dailyGroups.length,
                   ),
                 ),
               ),
-              childCount: dailyGroups.length,
-            ),
-          ),
-        ),
+      ),
     ];
   }
 
@@ -3942,52 +4282,142 @@ class _AllOmissionsScreenState extends State<AllOmissionsScreen> {
         context,
         title: uwu('Összes hiányzás és késés'),
       ),
-      body: CustomScrollView(
-        physics: const BouncingScrollPhysics(
-          parent: AlwaysScrollableScrollPhysics(),
-        ),
-        slivers: [
-          SliverPadding(
-            padding: EdgeInsets.only(top: adaptiveAppBarTopPadding(context)),
-            sliver: SliverToBoxAdapter(
-              child: _buildOmissionFilterChips(
-                selected: _filter,
-                onSelected: (f) => setState(() => _filter = f),
-              ),
-            ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 12)),
-          if (dailyGroups.isEmpty)
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 36),
-              sliver: SliverToBoxAdapter(
-                child: _buildEmptyOmissionCard(
-                  prefs: widget.prefs,
-                  message:
-                      'Nincs rögzített mulasztás vagy késés ebben a szűrőben.',
-                ),
-              ),
-            )
-          else
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 36),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, i) => RepaintBoundary(
-                    child: Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: _DailyOmissionCard(
-                        group: dailyGroups[i],
-                        prefs: widget.prefs,
-                        dateFormat: _dateFormat,
-                      ).staggeredEntrance(i < 6 ? i : 6),
+      body: Builder(
+        builder: (bodyContext) {
+          final theme = Theme.of(bodyContext);
+          final scheme = theme.colorScheme;
+          final isDark = theme.brightness == Brightness.dark;
+          final effectivePrefs =
+              AppProvidersScope.maybeOf(bodyContext)?.settings.prefs ??
+                  widget.prefs;
+          final liquidGlass = resolveLiquidGlassEnabled(effectivePrefs);
+          final blurSigma = resolveSoftBlurBackdropSigma(effectivePrefs);
+          final topPad = adaptiveAppBarTopPadding(bodyContext, extra: 4);
+          final borderColor = scheme.outlineVariant.withValues(
+            alpha: isDark ? 0.28 : 0.42,
+          );
+
+          final Widget headerBackdrop;
+          if (liquidGlass) {
+            final tintColor = (isDark
+                    ? scheme.surfaceContainerHigh
+                    : theme.scaffoldBackgroundColor)
+                .withValues(alpha: isDark ? 0.62 : 0.72);
+            headerBackdrop = Positioned.fill(
+              child: ClipRect(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(
+                    sigmaX: blurSigma,
+                    sigmaY: blurSigma,
+                  ),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: tintColor,
+                      border: Border(
+                        bottom: BorderSide(color: borderColor, width: 0.7),
+                      ),
                     ),
                   ),
-                  childCount: dailyGroups.length,
                 ),
               ),
-            ),
-        ],
+            );
+          } else {
+            headerBackdrop = Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: theme.scaffoldBackgroundColor,
+                  border: Border(
+                    bottom: BorderSide(color: borderColor, width: 0.7),
+                  ),
+                ),
+              ),
+            );
+          }
+
+          return Column(
+            children: [
+              // Fixed header spans under the transparent AppBar down past the
+              // filter bar; ClipRect below isolates scrolled items from bleeding.
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  headerBackdrop,
+                  Padding(
+                    padding: EdgeInsets.only(top: topPad, bottom: 12),
+                    child: _buildOmissionFilterChips(
+                      selected: _filter,
+                      onSelected: (f) {
+                        if (f == _filter) return;
+                        setState(() => _filter = f);
+                      },
+                      liquidGlassEnabled: liquidGlass,
+                    ),
+                  ),
+                ],
+              ),
+              Expanded(
+                child: MediaQuery.removePadding(
+                  context: bodyContext,
+                  removeTop: true,
+                  child: ClipRect(
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      layoutBuilder: (currentChild, previousChildren) => Stack(
+                        alignment: Alignment.topCenter,
+                        children: [
+                          ...previousChildren,
+                          if (currentChild != null) currentChild,
+                        ],
+                      ),
+                      child: dailyGroups.isEmpty
+                          ? ListView(
+                              key: ValueKey<String>(
+                                'all-omissions-empty-${_filter.name}',
+                              ),
+                              physics: const BouncingScrollPhysics(
+                                parent: AlwaysScrollableScrollPhysics(),
+                              ),
+                              padding:
+                                  const EdgeInsets.fromLTRB(16, 12, 16, 36),
+                              children: [
+                                _buildEmptyOmissionCard(
+                                  prefs: widget.prefs,
+                                  message:
+                                      'Nincs rögzített mulasztás vagy késés ebben a szűrőben.',
+                                ),
+                              ],
+                            )
+                          : ListView.builder(
+                              key: ValueKey<String>(
+                                'all-omissions-list-${_filter.name}',
+                              ),
+                              physics: const BouncingScrollPhysics(
+                                parent: AlwaysScrollableScrollPhysics(),
+                              ),
+                              padding:
+                                  const EdgeInsets.fromLTRB(16, 12, 16, 36),
+                              itemCount: dailyGroups.length,
+                              itemBuilder: (context, i) => RepaintBoundary(
+                                child: Padding(
+                                  padding: const EdgeInsets.only(bottom: 10),
+                                  child: _DailyOmissionCard(
+                                    group: dailyGroups[i],
+                                    prefs: widget.prefs,
+                                    dateFormat: _dateFormat,
+                                    heroPrefix: 'all_${_filter.name}',
+                                  ),
+                                ),
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -4001,7 +4431,7 @@ class _SettingsAccordionCard extends StatefulWidget {
   final IconData icon;
   final String title;
   final String subtitle;
-  final List<Widget> Function()? childrenBuilder;
+  final List<Widget> Function(BuildContext subCtx)? childrenBuilder;
   final ValueListenable<int>? stateListenable;
   final UserProfilePrefs Function()? prefsGetter;
   final bool christmasCap;
@@ -4117,11 +4547,13 @@ class _FullBleedChild extends StatelessWidget {
 
 /// Dedicated settings sub-screen pushed by [_SettingsAccordionCard].
 class _SettingsSubScreen extends StatelessWidget {
+  static final ValueNotifier<int> _fallbackListenable = ValueNotifier<int>(0);
+
   final String title;
   final UserProfilePrefs? prefs;
   final UserProfilePrefs Function()? prefsGetter;
   final ValueListenable<int>? stateListenable;
-  final List<Widget> Function()? childrenBuilder;
+  final List<Widget> Function(BuildContext subCtx)? childrenBuilder;
 
   const _SettingsSubScreen({
     required this.title,
@@ -4133,51 +4565,63 @@ class _SettingsSubScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final listenable = stateListenable ?? ValueNotifier<int>(0);
-    return ValueListenableBuilder<int>(
-      valueListenable: listenable,
-      builder: (context, _, _) {
-        final currentPrefs = prefsGetter?.call() ?? prefs;
-        final currentChildren = childrenBuilder != null
-            ? childrenBuilder!()
-            : const <Widget>[];
+    final scope = AppProvidersScope.maybeOf(context);
+    final mergedListenable = scope != null
+        ? Listenable.merge([
+            stateListenable ?? _fallbackListenable,
+            scope.settings,
+          ])
+        : (stateListenable ?? _fallbackListenable);
+    return AnimatedBuilder(
+      animation: mergedListenable,
+      builder: (context, _) {
+        final currentPrefs =
+            scope?.settings.prefs ?? prefsGetter?.call() ?? prefs;
         return AdaptiveBackgroundScaffold(
           prefs: currentPrefs,
           appBar: buildAdaptiveTransparentAppBar(
             context,
             title: uwu(title),
           ),
-          body: ListView(
-            physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics(),
-            ),
-            padding: EdgeInsets.fromLTRB(
-              16,
-              adaptiveAppBarTopPadding(context),
-              16,
-              40,
-            ),
-            children: [
-              SoftGlassCard(
-                prefs: currentPrefs ?? const UserProfilePrefs(),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                borderRadius: OledTheme.largeRadius,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    for (final child in currentChildren)
-                      if (child is _FullBleedChild ||
-                          child is EdgeFadeHorizontalScroll)
-                        child
-                      else
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: child,
-                        ),
-                  ],
+          body: Builder(
+            builder: (subContext) {
+              final currentChildren = childrenBuilder != null
+                  ? childrenBuilder!(subContext)
+                  : const <Widget>[];
+              return ListView(
+                physics: const BouncingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics(),
                 ),
-              ),
-            ],
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  adaptiveAppBarTopPadding(subContext),
+                  16,
+                  40,
+                ),
+                children: [
+                  SoftGlassCard(
+                    prefs: currentPrefs ?? const UserProfilePrefs(),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    borderRadius: OledTheme.largeRadius,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (final child in currentChildren)
+                          if (child is _FullBleedChild ||
+                              child is EdgeFadeHorizontalScroll)
+                            child
+                          else
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 16),
+                              child: child,
+                            ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         );
       },
@@ -4657,6 +5101,799 @@ class _TransitStopSearchFieldState extends State<_TransitStopSearchField> {
             child: Text(_error!, style: const TextStyle(fontSize: 12)),
           ),
       ],
+    );
+  }
+}
+
+class _CalendarSyncSettingsSection extends StatefulWidget {
+  final StoredSession session;
+  final KretaClient? kretaClient;
+  final DashboardData? dashboardData;
+  final UserProfilePrefs profilePrefs;
+  final ValueChanged<CalendarSyncSettings> onSettingsChanged;
+
+  const _CalendarSyncSettingsSection({
+    required this.session,
+    required this.kretaClient,
+    required this.dashboardData,
+    required this.profilePrefs,
+    required this.onSettingsChanged,
+  });
+
+  @override
+  State<_CalendarSyncSettingsSection> createState() =>
+      _CalendarSyncSettingsSectionState();
+}
+
+class _CalendarSyncSettingsSectionState
+    extends State<_CalendarSyncSettingsSection> {
+  final CalendarSyncService _service = CalendarSyncService.instance;
+  final DateFormat _timeFormat = DateFormat('yyyy. MM. dd. HH:mm');
+
+  CalendarSyncSettings _settings = const CalendarSyncSettings(
+    enabled: false,
+    targetCalendarId: null,
+    targetCalendarName: null,
+    targetCalendarAccount: null,
+    contentMode: CalendarSyncContentMode.both,
+    trackedEventCount: 0,
+    lastSyncAt: null,
+  );
+  List<DeviceCalendarInfo> _calendars = const [];
+  bool _loading = true;
+  bool _busy = false;
+  bool _hasPermission = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInitialState();
+  }
+
+  Future<void> _loadInitialState() async {
+    final loaded = await _service.loadSettings();
+    final hasPerm = await _service.hasCalendarPermissions();
+    var cals = const <DeviceCalendarInfo>[];
+    if (hasPerm) {
+      cals = await _service.getAvailableCalendars();
+      if (loaded.enabled) {
+        await _service.ensureTargetCalendarSelected(cals);
+      }
+    }
+    final refreshed = await _service.loadSettings();
+    if (!mounted) return;
+    setState(() {
+      _settings = refreshed;
+      _hasPermission = hasPerm;
+      _calendars = cals;
+      _loading = false;
+    });
+    widget.onSettingsChanged(refreshed);
+  }
+
+  Future<DashboardData?> _resolveDashboard() async {
+    if (widget.dashboardData != null) return widget.dashboardData;
+    final client = widget.kretaClient;
+    if (client == null) return null;
+    try {
+      return await client.loadCachedDashboard(widget.session);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _showSnack(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: isError ? Theme.of(context).colorScheme.error : null,
+        ),
+      );
+  }
+
+  Future<void> _reloadSettings() async {
+    final refreshed = await _service.loadSettings();
+    if (!mounted) return;
+    setState(() => _settings = refreshed);
+    widget.onSettingsChanged(refreshed);
+  }
+
+  Future<void> _toggleEnabled(bool value) async {
+    if (_busy) return;
+    HapticFeedback.selectionClick();
+    setState(() => _busy = true);
+    try {
+      if (!value) {
+        await _service.setEnabled(false);
+        await _reloadSettings();
+        _showSnack('Google Naptár szinkronizálás kikapcsolva.');
+        return;
+      }
+
+      var granted = await _service.hasCalendarPermissions();
+      if (!granted) {
+        granted = await _service.requestCalendarPermissions();
+      }
+      if (!granted) {
+        await _service.setEnabled(false);
+        if (!mounted) return;
+        setState(() => _hasPermission = false);
+        await _reloadSettings();
+        _showSnack(
+          'A naptár szinkronizáláshoz engedélyezd a naptár hozzáférést.',
+          isError: true,
+        );
+        return;
+      }
+
+      final cals = await _service.getAvailableCalendars();
+      await _service.ensureTargetCalendarSelected(cals);
+      await _service.setEnabled(true);
+      if (mounted) {
+        setState(() {
+          _hasPermission = true;
+          _calendars = cals;
+        });
+      }
+
+      if (cals.isEmpty) {
+        await _reloadSettings();
+        _showSnack(
+          'Nem található írható Google Naptár ezen az eszközön.',
+          isError: true,
+        );
+        return;
+      }
+
+      final dash = await _resolveDashboard();
+      if (dash != null) {
+        final result = await _service.syncNow(
+          dashboard: dash,
+          profilePrefs: widget.profilePrefs,
+        );
+        await _reloadSettings();
+        if (result.errorMessage != null) {
+          _showSnack(result.errorMessage!, isError: true);
+        } else {
+          _showSnack(
+            'Bekapcsolva • ${result.syncedCount} közelgő esemény szinkronizálva.',
+          );
+        }
+      } else {
+        await _reloadSettings();
+        _showSnack(
+          'Google Naptár szinkronizálás bekapcsolva. A következő adatfrissítéskor indul a szinkronizálás.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _selectContentMode(CalendarSyncContentMode mode) async {
+    if (_busy || _settings.contentMode == mode) return;
+    HapticFeedback.selectionClick();
+    setState(() => _busy = true);
+    try {
+      await _service.setContentMode(mode);
+      final dash = await _resolveDashboard();
+      if (dash != null && _settings.enabled) {
+        final result = await _service.syncNow(
+          dashboard: dash,
+          profilePrefs: widget.profilePrefs,
+        );
+        await _reloadSettings();
+        if (result.errorMessage == null) {
+          _showSnack(
+            '${mode.label} • ${result.syncedCount} közelgő esemény aktív (eltávolítva: ${result.deletedCount}).',
+          );
+        } else {
+          _showSnack(result.errorMessage!, isError: true);
+        }
+      } else {
+        await _service.cleanupOutOfScopeEvents();
+        await _reloadSettings();
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _pickTargetCalendar() async {
+    if (_busy) return;
+    HapticFeedback.selectionClick();
+    var cals = _calendars;
+    if (cals.isEmpty && await _service.hasCalendarPermissions()) {
+      cals = await _service.getAvailableCalendars();
+      if (mounted) setState(() => _calendars = cals);
+    }
+    if (!mounted) return;
+    if (cals.isEmpty) {
+      _showSnack(
+        'Nincs elérhető írható Google Naptár az eszközön.',
+        isError: true,
+      );
+      return;
+    }
+
+    final chosen = await showSoftBlurDialog<DeviceCalendarInfo>(
+      context: context,
+      builder: (dialogCtx) {
+        final scheme = Theme.of(dialogCtx).colorScheme;
+        return AlertDialog(
+          title: const Text('Cél Google Naptár kiválasztása'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: cals.map((cal) {
+                  final selected = cal.id == _settings.targetCalendarId;
+                  return ListTile(
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    leading: CircleAvatar(
+                      radius: 14,
+                      backgroundColor: Color(cal.color),
+                      child: Icon(
+                        cal.isGoogle
+                            ? Icons.event_available_rounded
+                            : Icons.calendar_today_rounded,
+                        size: 14,
+                        color: Colors.white,
+                      ),
+                    ),
+                    title: Text(
+                      cal.displayName,
+                      style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    subtitle: Text(
+                      [
+                        if (cal.accountName.isNotEmpty) cal.accountName,
+                        if (cal.isGoogle) 'Google' else 'Helyi',
+                        if (cal.isPrimary) 'Elsődleges',
+                      ].join(' • '),
+                      style: const TextStyle(fontSize: 11.5),
+                    ),
+                    trailing: selected
+                        ? Icon(Icons.check_circle_rounded, color: scheme.primary)
+                        : null,
+                    onTap: () => Navigator.of(dialogCtx).pop(cal),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(),
+              child: const Text('Mégse'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (chosen == null || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      await _service.setTargetCalendar(chosen);
+      final dash = await _resolveDashboard();
+      if (dash != null && _settings.enabled) {
+        final result = await _service.syncNow(
+          dashboard: dash,
+          profilePrefs: widget.profilePrefs,
+        );
+        await _reloadSettings();
+        if (result.errorMessage == null) {
+          _showSnack(
+            'Naptár váltva: ${chosen.displayName} (${result.syncedCount} közelgő esemény).',
+          );
+        } else {
+          _showSnack(result.errorMessage!, isError: true);
+        }
+      } else {
+        await _reloadSettings();
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _syncNowManual() async {
+    if (_busy) return;
+    HapticFeedback.lightImpact();
+    setState(() => _busy = true);
+    try {
+      final dash = await _resolveDashboard();
+      if (dash == null) {
+        _showSnack(
+          'Még nincs betöltött Kréta adat a szinkronizáláshoz.',
+          isError: true,
+        );
+        return;
+      }
+      if (!_hasPermission) {
+        final granted = await _service.requestCalendarPermissions();
+        if (!granted) {
+          _showSnack(
+            'Nincs naptár hozzáférési engedély.',
+            isError: true,
+          );
+          return;
+        }
+        if (mounted) setState(() => _hasPermission = true);
+      }
+      final result = await _service.syncNow(
+        dashboard: dash,
+        profilePrefs: widget.profilePrefs,
+      );
+      await _reloadSettings();
+      if (result.errorMessage != null) {
+        _showSnack(result.errorMessage!, isError: true);
+      } else {
+        _showSnack(
+          '${result.syncedCount} közelgő esemény szinkronizálva '
+          '(új: ${result.createdCount}, frissítve: ${result.updatedCount}, '
+          'törölve: ${result.deletedCount}).',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _clearAllManual() async {
+    if (_busy) return;
+    HapticFeedback.mediumImpact();
+    setState(() => _busy = true);
+    try {
+      final removed = await _service.clearAllSyncedEvents();
+      await _reloadSettings();
+      _showSnack(
+        removed > 0
+            ? '$removed szinkronizált esemény eltávolítva a naptárból.'
+            : 'Nincs eltávolítható Tinta Napló naptáresemény.',
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final calendarTitle = _settings.targetCalendarName?.isNotEmpty == true
+        ? _settings.targetCalendarName!
+        : (_calendars.isNotEmpty
+            ? _calendars.first.displayName
+            : 'Nincs kiválasztott naptár');
+    final calendarSubtitle =
+        _settings.targetCalendarAccount?.isNotEmpty == true
+            ? _settings.targetCalendarAccount!
+            : (_calendars.isNotEmpty
+                ? _calendars.first.accountName
+                : 'Koppints a naptárak betöltéséhez');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          secondary: Icon(
+            Icons.event_available_rounded,
+            color: _settings.enabled ? scheme.primary : null,
+          ),
+          title: const Text(
+            'Automatikus naptár szinkronizálás',
+            style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+          ),
+          subtitle: const Text(
+            'Kizárólag jövőbeli dolgozatok és házi feladatok szinkronizálása az eszköz Google Naptárába.',
+            style: TextStyle(fontSize: 11.5),
+          ),
+          value: _settings.enabled,
+          onChanged: _busy ? null : _toggleEnabled,
+        ),
+        if (_settings.enabled) ...[
+          const Divider(height: 20),
+          Text(
+            'Cél Google Naptár',
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: scheme.primary,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: _busy ? null : _pickTargetCalendar,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: scheme.outlineVariant.withValues(alpha: 0.4),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.calendar_month_rounded, color: scheme.primary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          calendarTitle,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        if (calendarSubtitle.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            calendarSubtitle,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurface.withValues(alpha: 0.68),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Text(
+                    _calendars.length > 1 ? 'Váltás' : 'Választás',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: scheme.onSurface.withValues(alpha: 0.6),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Szinkronizálandó tartalom',
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: scheme.primary,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Column(
+            children: CalendarSyncContentMode.values.map((mode) {
+              final selected = _settings.contentMode == mode;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: _busy ? null : () => _selectContentMode(mode),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? scheme.primary.withValues(alpha: 0.16)
+                          : scheme.surfaceContainerHigh,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: selected
+                            ? scheme.primary
+                            : scheme.outlineVariant.withValues(alpha: 0.35),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          selected
+                              ? Icons.radio_button_checked_rounded
+                              : Icons.radio_button_off_rounded,
+                          size: 18,
+                          color: selected
+                              ? scheme.primary
+                              : scheme.onSurface.withValues(alpha: 0.55),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            mode.label,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight:
+                                  selected ? FontWeight.w800 : FontWeight.w600,
+                              color: selected
+                                  ? scheme.primary
+                                  : scheme.onSurface,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: _busy ? null : _syncNowManual,
+            icon: _busy
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.sync_rounded, size: 18),
+            label: const Text('Szinkronizálás most'),
+          ),
+        ],
+        if (_settings.enabled || _settings.trackedEventCount > 0) ...[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _clearAllManual,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: scheme.error,
+              side: BorderSide(color: scheme.error.withValues(alpha: 0.5)),
+            ),
+            icon: const Icon(Icons.delete_sweep_rounded, size: 18),
+            label: const Text('Szinkronizált események törlése'),
+          ),
+        ],
+        const SizedBox(height: 10),
+        Text(
+          [
+            'Követett események: ${_settings.trackedEventCount} db',
+            if (_settings.lastSyncAt != null)
+              'Utolsó szinkron: ${_timeFormat.format(_settings.lastSyncAt!.toLocal())}',
+            'Csak jövőbeli tételek kerülnek át (múltbeli visszatöltés nélkül).',
+          ].join(' • '),
+          style: theme.textTheme.bodySmall?.copyWith(
+            fontSize: 11,
+            color: scheme.onSurface.withValues(alpha: 0.62),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Custom HEX / RGB picker dialog for the default timetable period badge color.
+///
+/// Owns its [TextEditingController] lifecycle inside [State.dispose] so route
+/// fade-out animations never touch a disposed controller.
+class _TimetablePeriodColorDialog extends StatefulWidget {
+  const _TimetablePeriodColorDialog({required this.initialColor});
+
+  final Color initialColor;
+
+  @override
+  State<_TimetablePeriodColorDialog> createState() =>
+      _TimetablePeriodColorDialogState();
+}
+
+class _TimetablePeriodColorDialogState
+    extends State<_TimetablePeriodColorDialog> {
+  late final TextEditingController _hexController;
+  late int _red;
+  late int _green;
+  late int _blue;
+
+  @override
+  void initState() {
+    super.initState();
+    _red = (widget.initialColor.r * 255.0).round().clamp(0, 255);
+    _green = (widget.initialColor.g * 255.0).round().clamp(0, 255);
+    _blue = (widget.initialColor.b * 255.0).round().clamp(0, 255);
+    _hexController = TextEditingController(text: _toHex(_red, _green, _blue));
+  }
+
+  @override
+  void dispose() {
+    _hexController.dispose();
+    super.dispose();
+  }
+
+  static String _toHex(int r, int g, int b) =>
+      '#${r.toRadixString(16).padLeft(2, '0')}${g.toRadixString(16).padLeft(2, '0')}${b.toRadixString(16).padLeft(2, '0')}'
+          .toUpperCase();
+
+  void _updateChannel({int? r, int? g, int? b}) {
+    setState(() {
+      if (r != null) _red = r;
+      if (g != null) _green = g;
+      if (b != null) _blue = b;
+    });
+    final nextHex = _toHex(_red, _green, _blue);
+    _hexController.value = TextEditingValue(
+      text: nextHex,
+      selection: TextSelection.collapsed(offset: nextHex.length),
+    );
+  }
+
+  Widget _buildRgbSlider({
+    required ThemeData theme,
+    required String channel,
+    required int value,
+    required Color activeColor,
+    required ValueChanged<int> onChanged,
+  }) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 20,
+          child: Text(
+            channel,
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Slider(
+            value: value.toDouble(),
+            min: 0,
+            max: 255,
+            divisions: 255,
+            activeColor: activeColor,
+            onChanged: (v) => onChanged(v.round().clamp(0, 255)),
+          ),
+        ),
+        SizedBox(
+          width: 34,
+          child: Text(
+            '$value',
+            textAlign: TextAlign.end,
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final previewColor = Color.fromARGB(255, _red, _green, _blue);
+    final previewTextColor = OledTheme.contrastTextFor(previewColor);
+
+    return SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: previewColor,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: previewTextColor.withValues(alpha: 0.22),
+                  ),
+                ),
+                child: Text(
+                  '1.',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    color: previewTextColor,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Óraszám egyedi HEX / RGB színe',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _hexController,
+            decoration: const InputDecoration(
+              labelText: 'HEX színkód (#RRGGBB)',
+              hintText: '#4DA3FF',
+              prefixIcon: Icon(Icons.colorize_rounded),
+            ),
+            onChanged: (raw) {
+              final cleaned = raw.trim().replaceAll('#', '').toUpperCase();
+              if (RegExp(r'^[0-9A-F]{6}$').hasMatch(cleaned)) {
+                final parsed = int.parse('FF$cleaned', radix: 16);
+                setState(() {
+                  _red = (parsed >> 16) & 0xFF;
+                  _green = (parsed >> 8) & 0xFF;
+                  _blue = parsed & 0xFF;
+                });
+              }
+            },
+          ),
+          const SizedBox(height: 10),
+          _buildRgbSlider(
+            theme: theme,
+            channel: 'R',
+            value: _red,
+            activeColor: Colors.redAccent,
+            onChanged: (v) => _updateChannel(r: v),
+          ),
+          _buildRgbSlider(
+            theme: theme,
+            channel: 'G',
+            value: _green,
+            activeColor: Colors.green,
+            onChanged: (v) => _updateChannel(g: v),
+          ),
+          _buildRgbSlider(
+            theme: theme,
+            channel: 'B',
+            value: _blue,
+            activeColor: Colors.blueAccent,
+            onChanged: (v) => _updateChannel(b: v),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(-1),
+                child: const Text('Alapértelmezett'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Mégse'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final cleaned = _hexController.text
+                      .trim()
+                      .replaceAll('#', '')
+                      .toUpperCase();
+                  final argb = RegExp(r'^[0-9A-F]{6}$').hasMatch(cleaned)
+                      ? int.parse('FF$cleaned', radix: 16)
+                      : previewColor.toARGB32();
+                  Navigator.of(context).pop(argb);
+                },
+                child: const Text('Alkalmaz'),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

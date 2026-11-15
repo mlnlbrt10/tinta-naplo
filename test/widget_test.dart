@@ -395,7 +395,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('Karácsonyi OLED'), findsOneWidget);
-    expect(find.text('v1.0.0'), findsOneWidget);
+    expect(find.text('v1.1.0'), findsOneWidget);
   });
 
   testWidgets(
@@ -1069,7 +1069,13 @@ void main() {
 
       expect(find.textContaining('Karácsonyi mód'), findsNothing);
       expect(find.textContaining('Alkalmazás ikon választó'), findsNothing);
-      expect(find.textContaining('Kártyák soft blur'), findsOneWidget);
+      expect(find.text('Liquid Glass'), findsOneWidget);
+      expect(
+        find.text(
+          'Átlátszó üveghatású felületek és rugalmas, folyadékfizikás csúszkák',
+        ),
+        findsOneWidget,
+      );
 
       final detailScaffold = tester.widget<Scaffold>(find.byType(Scaffold).last);
       expect(detailScaffold.extendBodyBehindAppBar, isTrue);
@@ -1375,7 +1381,12 @@ void main() {
       expect(y2, lessThan(y5));
 
       // Filter by 'Igazolatlan' leaves only Fizika on Nov 12
-      await tester.tap(find.widgetWithText(ChoiceChip, 'Igazolatlan'));
+      await tester.tap(
+        find.descendant(
+          of: find.byWidgetPredicate((w) => w is LiquidBubbleTabBar),
+          matching: find.text('Igazolatlan'),
+        ),
+      );
       await tester.pumpAndSettle();
       expect(find.text(nov10Label), findsNothing);
       expect(find.text(nov12Label), findsOneWidget);
@@ -1720,7 +1731,7 @@ void main() {
   );
 
   testWidgets(
-    'Főoldal filter chips crossfade feed content smoothly with AnimatedSwitcher without duplicate Hero conflicts',
+    'Főoldal filter bar uses LiquidBubbleTabBar and smoothly collapses/expands feed cards in place without reloading or duplicate Hero conflicts',
     (tester) async {
       final session = StoredSession(
         accessToken: 'acc',
@@ -1774,27 +1785,45 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey<ActivityFeedFilter>(ActivityFeedFilter.all)), findsOneWidget);
-      expect(find.text('Biológia'), findsOneWidget);
-      expect(find.textContaining('Növénytan feladatlap'), findsOneWidget);
+      // Whole-feed AnimatedSwitcher wrapper is gone; LiquidBubbleTabBar drives filter pills.
+      expect(
+        find.byKey(const ValueKey<ActivityFeedFilter>(ActivityFeedFilter.all)),
+        findsNothing,
+      );
+      expect(
+        find.byWidgetPredicate((w) => w is LiquidBubbleTabBar),
+        findsOneWidget,
+      );
+
+      final bioSlotFinder = find
+          .ancestor(
+            of: find.text('Biológia'),
+            matching: find.byType(ClipRect),
+          )
+          .first;
+      final hwSlotFinder = find
+          .ancestor(
+            of: find.textContaining('Növénytan feladatlap'),
+            matching: find.byType(ClipRect),
+          )
+          .first;
+
+      expect(tester.getSize(bioSlotFinder).height, greaterThan(0));
+      expect(tester.getSize(hwSlotFinder).height, greaterThan(0));
 
       await tester.tap(find.text('Jegyek'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 120));
-
-      // Mid-transition both outgoing & incoming subtrees exist safely inside AnimatedSwitcher.
-      expect(find.byKey(const ValueKey<ActivityFeedFilter>(ActivityFeedFilter.grades)), findsOneWidget);
       expect(tester.takeException(), isNull);
 
       await tester.pumpAndSettle();
-      expect(find.text('Biológia'), findsOneWidget);
-      expect(find.textContaining('Növénytan feladatlap'), findsNothing);
+      expect(tester.getSize(bioSlotFinder).height, greaterThan(0));
+      expect(tester.getSize(hwSlotFinder).height, equals(0.0));
 
       await tester.tap(find.text('Házik'));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey<ActivityFeedFilter>(ActivityFeedFilter.homeworks)), findsOneWidget);
-      expect(find.textContaining('Növénytan feladatlap'), findsOneWidget);
-      expect(find.text('Biológia'), findsNothing);
+      expect(tester.getSize(hwSlotFinder).height, greaterThan(0));
+      expect(tester.getSize(bioSlotFinder).height, equals(0.0));
     },
   );
 }

@@ -18,6 +18,8 @@ Future<void> showFrostedModal({
   required String categoryLabel,
   required IconData categoryIcon,
   required Color accentColor,
+  Color? badgeColor,
+  Color? badgeTextColor,
   required String title,
   String? subtitleTimeSpan,
   String? badgeText,
@@ -34,7 +36,7 @@ Future<void> showFrostedModal({
   HapticFeedback.lightImpact();
   final effectiveCloseMode =
       closeMode ?? UserProfilePrefs.activeModalCloseMode;
-  final isSoftBlur = resolveSoftBlurEnabled(prefs);
+  final isLiquidGlass = resolveLiquidGlassEnabled(prefs);
 
   return Navigator.of(context).push<void>(
     PageRouteBuilder<void>(
@@ -53,9 +55,11 @@ Future<void> showFrostedModal({
         final theme = Theme.of(dialogContext);
         final scheme = theme.colorScheme;
         final isDark = theme.brightness == Brightness.dark;
-        final cardBg = isDark
-            ? const Color(0xFF14181F).withValues(alpha: 0.96)
-            : Colors.white.withValues(alpha: 0.97);
+        final cardBg = isLiquidGlass
+            ? (isDark
+                ? const Color(0xFF14181F).withValues(alpha: 0.96)
+                : Colors.white.withValues(alpha: 0.97))
+            : null;
 
         final fadeCurved = CurvedAnimation(
           parent: animation,
@@ -70,22 +74,29 @@ Future<void> showFrostedModal({
 
         Widget badgeOrIcon;
         if (badgeText != null) {
+          final effectiveBadgeBg = badgeColor ?? accentColor;
+          final effectiveBadgeFg = badgeTextColor ?? Colors.white;
           badgeOrIcon = Container(
             width: 54,
             height: 54,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: accentColor,
+              color: effectiveBadgeBg,
               shape: badgeShape,
               borderRadius:
                   badgeShape == BoxShape.circle ? null : OledTheme.badgeRadius,
+              border: badgeColor != null
+                  ? Border.all(
+                      color: effectiveBadgeFg.withValues(alpha: 0.22),
+                    )
+                  : null,
             ),
             child: Material(
               type: MaterialType.transparency,
               child: Text(
                 badgeText,
                 style: theme.textTheme.headlineSmall?.copyWith(
-                  color: Colors.white,
+                  color: effectiveBadgeFg,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -146,12 +157,6 @@ Future<void> showFrostedModal({
                       borderRadius: OledTheme.largeRadius,
                       solidColor: cardBg,
                       contentOpacityAnimation: fadeCurved,
-                      border: isSoftBlur
-                          ? null
-                          : Border.all(
-                              color: accentColor.withValues(alpha: 0.55),
-                              width: 1.4,
-                            ),
                       boxShadow: [
                         BoxShadow(
                           color: Colors.black.withValues(alpha: 0.45),
@@ -274,19 +279,18 @@ Future<void> showFrostedModal({
                             Container(
                               padding: const EdgeInsets.all(14),
                               decoration: BoxDecoration(
-                                color: isSoftBlur
+                                color: isLiquidGlass
                                     ? Colors.black.withValues(
                                         alpha: isDark ? 0.18 : 0.05,
                                       )
-                                    : scheme.surfaceContainerHighest
-                                        .withValues(alpha: 0.65),
+                                    : scheme.surfaceContainer,
                                 borderRadius: OledTheme.cardRadius,
                                 border: Border.all(
-                                  color: isSoftBlur
+                                  color: isLiquidGlass
                                       ? Colors.white.withValues(
                                           alpha: isDark ? 0.14 : 0.22,
                                         )
-                                      : theme.dividerColor,
+                                      : scheme.outlineVariant,
                                 ),
                               ),
                               child: Column(
@@ -344,19 +348,18 @@ Future<void> showFrostedModal({
                               Container(
                                 padding: const EdgeInsets.all(14),
                                 decoration: BoxDecoration(
-                                  color: isSoftBlur
+                                  color: isLiquidGlass
                                       ? Colors.black.withValues(
                                           alpha: isDark ? 0.16 : 0.04,
                                         )
-                                      : scheme.surfaceContainerHighest
-                                          .withValues(alpha: 0.50),
+                                      : scheme.surfaceContainer,
                                   borderRadius: OledTheme.cardRadius,
                                   border: Border.all(
-                                    color: isSoftBlur
+                                    color: isLiquidGlass
                                         ? Colors.white.withValues(
                                             alpha: isDark ? 0.14 : 0.22,
                                           )
-                                        : theme.dividerColor,
+                                        : scheme.outlineVariant,
                                   ),
                                 ),
                                 child: Column(
@@ -704,11 +707,19 @@ Future<void> showLessonInspectionModal(
   final hasSub = lesson.substituteTeacher != null &&
       lesson.substituteTeacher!.trim().isNotEmpty;
 
+  final customPeriodColor = prefs?.timetablePeriodColor;
   final accent = isCancelled
       ? const Color(0xFFC62828)
       : hasSub
           ? const Color(0xFFF9A825)
-          : OledTheme.accentPrimary;
+          : (customPeriodColor ?? OledTheme.accentPrimary);
+  final periodBadgeTextColor = isCancelled
+      ? Colors.white
+      : hasSub
+          ? Colors.black
+          : (customPeriodColor != null
+              ? OledTheme.contrastTextFor(customPeriodColor)
+              : Colors.white);
 
   final rawSubject = lesson.subject?.name ?? lesson.name;
   final subjectDisplay = prefs != null
@@ -815,6 +826,8 @@ Future<void> showLessonInspectionModal(
             : 'Tanóra részletei',
     categoryIcon: Icons.schedule_rounded,
     accentColor: accent,
+    badgeColor: accent,
+    badgeTextColor: periodBadgeTextColor,
     title: subjectDisplay,
     subtitleTimeSpan: timeSpan,
     badgeText: lesson.lessonNumber != null ? '${lesson.lessonNumber}.' : '•',

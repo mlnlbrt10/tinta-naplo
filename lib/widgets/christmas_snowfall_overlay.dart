@@ -276,7 +276,7 @@ class ChristmasAndBackgroundOverlay extends StatefulWidget {
   ) {
     final bgPreset = BackgroundPresetInfo.resolve(prefs);
     final isLight = Theme.of(context).brightness == Brightness.light;
-    return (!isLight && bgPreset.id != 'pure_oled') || prefs.cardBlurEnabled;
+    return (!isLight && bgPreset.id != 'pure_oled') || prefs.liquidGlassEnabled;
   }
 
   @override
@@ -393,7 +393,7 @@ class _ChristmasAndBackgroundOverlayState
                   ),
                   child: const SizedBox.expand(),
                 ),
-                if (widget.prefs.cardBlurEnabled) ...[
+                if (widget.prefs.liquidGlassEnabled) ...[
                   Positioned(
                     top: -40,
                     right: -30,
@@ -491,8 +491,26 @@ class _ChristmasAndBackgroundOverlayState
 
 /// Top padding for scrollable content inside an [AdaptiveBackgroundScaffold]
 /// using `extendBodyBehindAppBar: true`.
-double adaptiveAppBarTopPadding(BuildContext context, {double extra = 12.0}) {
-  return MediaQuery.paddingOf(context).top + kToolbarHeight + extra;
+double adaptiveAppBarTopPadding(BuildContext context, {double extra = 8.0}) {
+  final topInset = MediaQuery.paddingOf(context).top;
+  if (_AdaptiveScaffoldBodyScope.of(context)) {
+    // Inside Scaffold(extendBodyBehindAppBar: true), MediaQuery.padding.top
+    // already includes statusBarHeight + kToolbarHeight.
+    return topInset + extra;
+  }
+  return topInset + kToolbarHeight + extra;
+}
+
+class _AdaptiveScaffoldBodyScope extends InheritedWidget {
+  const _AdaptiveScaffoldBodyScope({required super.child});
+
+  static bool of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_AdaptiveScaffoldBodyScope>() !=
+      null;
+
+  @override
+  bool updateShouldNotify(covariant _AdaptiveScaffoldBodyScope oldWidget) =>
+      false;
 }
 
 /// Transparent [AppBar] with contrast-safe foreground color and zero scroll
@@ -539,7 +557,7 @@ class AdaptiveBackgroundScaffold extends StatelessWidget {
       backgroundColor: hasAmbient ? Colors.transparent : null,
       extendBodyBehindAppBar: true,
       appBar: appBar,
-      body: body,
+      body: _AdaptiveScaffoldBodyScope(child: body),
     );
     if (effectivePrefs == null) {
       return scaffold;

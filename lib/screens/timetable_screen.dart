@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
+import '../providers/app_providers.dart';
 import '../services/kreta_client.dart';
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
@@ -12,19 +13,30 @@ import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 import '../widgets/frosted_inspection_modal.dart';
 import '../widgets/glass_card.dart';
+import '../widgets/period_countdown_badge.dart';
 
-/// Returns true if [lesson] is marked as cancelled (`Allapot.Nev == "elmaradt"`).
-bool isLessonCancelled(Lesson lesson) {
-  final stateName = lesson.state.name.toLowerCase().trim();
-  final stateDesc = lesson.state.description.toLowerCase().trim();
-  return stateName == 'elmaradt' ||
-      stateName.contains('elmarad') ||
-      stateDesc.contains('elmarad');
+export '../widgets/period_countdown_badge.dart'
+    show
+        isLessonCancelled,
+        isInactivePlaceholderLesson,
+        PeriodCountdownPhase,
+        PeriodCountdownInfo,
+        PeriodCountdownRingPainter,
+        PeriodCountdownBadge;
+
+/// Resolves a continuous [PageView] index into `(weekOffset, dayIndex)` using
+/// floor division so negative offsets (e.g. `499` -> `weekOffset: -1`,
+/// `dayIndex: daysPerWeek - 1`) map cleanly without truncating toward zero.
+({int weekOffset, int dayIndex}) resolveTimetablePageOffset({
+  required int page,
+  int basePage = 500,
+  int daysPerWeek = 5,
+}) {
+  final int relativeDay = page - basePage;
+  final int weekOffset = (relativeDay / daysPerWeek).floor();
+  final int dayIndex = relativeDay - (weekOffset * daysPerWeek);
+  return (weekOffset: weekOffset, dayIndex: dayIndex);
 }
-
-/// Returns true if [lesson] is a synthesized placeholder for an inactive morning period.
-bool isInactivePlaceholderLesson(Lesson lesson) =>
-    lesson.uid.startsWith('inactive_period_');
 
 /// Filters a day's sorted lessons using two independent toggles:
 /// * [hideCancelled] – hides lessons flagged as cancelled ("Elmaradó órák");
@@ -139,6 +151,7 @@ class TimetableScreen extends StatefulWidget {
   final ValueChanged<bool>? onImmersiveWeeklyModeChanged;
   final bool isActiveTab;
   final int entranceEpoch;
+  final DateTime Function()? clock;
 
   const TimetableScreen({
     super.key,
@@ -151,6 +164,7 @@ class TimetableScreen extends StatefulWidget {
     this.onImmersiveWeeklyModeChanged,
     this.isActiveTab = true,
     this.entranceEpoch = 0,
+    this.clock,
   });
 
   @override
@@ -162,7 +176,8 @@ class _TimetableScreenState extends State<TimetableScreen>
   @override
   bool get wantKeepAlive => true;
 
-  Timer? _minuteTicker;
+  static const int _basePage = 500;
+  static const int _totalPageCount = 1000;
 
   static const List<String> _weekdayShortNames = [
     'H',
@@ -184,16 +199,22 @@ class _TimetableScreenState extends State<TimetableScreen>
     'Vasárnap',
   ];
 
-  late DateTime _selectedDate;
+  Timer? _minuteTicker;
+  late DateTime _anchorMonday;
+  late int _currentPage;
   late PageController _pageController;
   bool _isAnimatingPage = false;
+  int? _programmaticTargetPage;
+  int _programmaticAnimToken = 0;
   bool _isWeeklyMode = false;
   bool _showFilterPanel = false;
   bool _initialEntrancePlayed = false;
   bool _entranceActive = false;
-  bool _isLoading = false;
-  String? _error;
-  List<Lesson> _weekLessons = const [];
+  bool _isLoading = true;
+  bool _isInitialLoadComplete = false;
+  final Map<int, List<Lesson>> _weekLessonsCache = {};
+  final Map<int, Future<void>> _inFlightWeekLoads = {};
+  final Map<int, String> _weekErrors = {};
   final List<Homework> _extraHomeworks = [];
 
   List<Homework> get _allHomeworks => [
@@ -208,7 +229,145 @@ class _TimetableScreenState extends State<TimetableScreen>
   final DateFormat _dayFormat = DateFormat('MM. dd.');
   final DateFormat _fullDateFormat = DateFormat('yyyy. MM. dd.');
 
-  int get _visibleDaysCount => widget.prefs.showWeekends ? 7 : 5;
+  DateTime _mondayOfWeekOffset(int weekOffset) => DateTime(
+        _anchorMonday.year,
+        _anchorMonday.month,
+        _anchorMonday.day + (weekOffset * 7),
+      );
+
+  List<Lesson> _lessonsForWeekOffset(int weekOffset) {
+    final cached = _weekLessonsCache[weekOffset];
+    if (cached != null) return cached;
+    if (weekOffset == 0 && widget.initialTodaysLessons.isNotEmpty) {
+      return widget.initialTodaysLessons;
+    }
+    return const [];
+  }
+
+  bool _hasSaturdayLessonsForWeek(
+    int weekOffset, {
+    UserProfilePrefs? prefsOverride,
+  }) {
+    final cached = _weekLessonsCache[weekOffset];
+    if (cached == null || cached.isEmpty) return false;
+    final p = prefsOverride ?? widget.prefs;
+    final monday = _mondayOfWeekOffset(weekOffset);
+    final saturday = DateTime(monday.year, monday.month, monday.day + 5);
+    final rawSat = cached
+        .where((l) => _isSameDay(l.start.toLocal(), saturday))
+        .toList();
+    return filterLessonsForDisplay(
+      rawSat,
+      hideCancelled: p.hideCancelledLessons,
+      hideFree: p.hideFreeLessons,
+    ).isNotEmpty;
+  }
+
+  int _daysForWeekOffset(
+    int weekOffset, {
+    UserProfilePrefs? prefsOverride,
+  }) {
+    final p = prefsOverride ?? widget.prefs;
+    if (p.showWeekends) return 7;
+    return _hasSaturdayLessonsForWeek(weekOffset, prefsOverride: p) ? 6 : 5;
+  }
+
+  bool _hasAnyCachedSaturdayLessons({UserProfilePrefs? prefsOverride}) {
+    for (final weekOffset in _weekLessonsCache.keys) {
+      if (_hasSaturdayLessonsForWeek(weekOffset, prefsOverride: prefsOverride)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  ({int weekOffset, int dayIndex}) _resolvePage(
+    int page, {
+    UserProfilePrefs? prefsOverride,
+  }) {
+    final p = prefsOverride ?? widget.prefs;
+    if (p.showWeekends || !_hasAnyCachedSaturdayLessons(prefsOverride: p)) {
+      return resolveTimetablePageOffset(
+        page: page,
+        basePage: _basePage,
+        daysPerWeek: p.showWeekends ? 7 : 5,
+      );
+    }
+    if (page >= _basePage) {
+      int weekOffset = 0;
+      int cursor = _basePage;
+      while (true) {
+        final span = _daysForWeekOffset(weekOffset, prefsOverride: p);
+        if (cursor + span > page) {
+          return (weekOffset: weekOffset, dayIndex: page - cursor);
+        }
+        cursor += span;
+        weekOffset++;
+      }
+    } else {
+      int weekOffset = -1;
+      int cursor = _basePage - _daysForWeekOffset(-1, prefsOverride: p);
+      while (cursor > page) {
+        weekOffset--;
+        cursor -= _daysForWeekOffset(weekOffset, prefsOverride: p);
+      }
+      return (weekOffset: weekOffset, dayIndex: page - cursor);
+    }
+  }
+
+  int _mondayPageForWeekOffset(
+    int weekOffset, {
+    UserProfilePrefs? prefsOverride,
+  }) {
+    final p = prefsOverride ?? widget.prefs;
+    if (p.showWeekends || !_hasAnyCachedSaturdayLessons(prefsOverride: p)) {
+      final int daysPerWeek = p.showWeekends ? 7 : 5;
+      return _basePage + (weekOffset * daysPerWeek);
+    }
+    int page = _basePage;
+    if (weekOffset > 0) {
+      for (int w = 0; w < weekOffset; w++) {
+        page += _daysForWeekOffset(w, prefsOverride: p);
+      }
+    } else if (weekOffset < 0) {
+      for (int w = -1; w >= weekOffset; w--) {
+        page -= _daysForWeekOffset(w, prefsOverride: p);
+      }
+    }
+    return page;
+  }
+
+  int _pageForWeekAndDay(
+    int weekOffset,
+    int dayIndex, {
+    UserProfilePrefs? prefsOverride,
+  }) {
+    final span = _daysForWeekOffset(weekOffset, prefsOverride: prefsOverride);
+    final clampedDay = dayIndex.clamp(0, span - 1);
+    return (_mondayPageForWeekOffset(weekOffset, prefsOverride: prefsOverride) +
+            clampedDay)
+        .clamp(0, _totalPageCount - 1);
+  }
+
+  int _weekOffsetForMonday(DateTime targetMonday) {
+    final anchorUtc = DateTime.utc(
+      _anchorMonday.year,
+      _anchorMonday.month,
+      _anchorMonday.day,
+    );
+    final targetUtc = DateTime.utc(
+      targetMonday.year,
+      targetMonday.month,
+      targetMonday.day,
+    );
+    return (targetUtc.difference(anchorUtc).inDays / 7).round();
+  }
+
+  DateTime get _currentDate {
+    final pos = _resolvePage(_currentPage);
+    final monday = _mondayOfWeekOffset(pos.weekOffset);
+    return DateTime(monday.year, monday.month, monday.day + pos.dayIndex);
+  }
 
   void _armInitialEntranceIfNeeded() {
     if (!_initialEntrancePlayed && widget.isActiveTab && !_isLoading) {
@@ -220,10 +379,12 @@ class _TimetableScreenState extends State<TimetableScreen>
     }
   }
 
+  DateTime _now() => widget.clock?.call() ?? DateTime.now();
+
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
+    final now = _now();
     var initialDay = DateUtils.dateOnly(now);
     final todaysEnded = widget.initialTodaysLessons.isNotEmpty &&
         widget.initialTodaysLessons
@@ -231,24 +392,33 @@ class _TimetableScreenState extends State<TimetableScreen>
             .every((l) => !l.end.toLocal().isAfter(now));
     if (initialDay.weekday > 5) {
       // Weekend -> Monday.
-      initialDay = initialDay.add(Duration(days: 8 - initialDay.weekday));
+      initialDay = DateTime(
+        initialDay.year,
+        initialDay.month,
+        initialDay.day + (8 - initialDay.weekday),
+      );
     } else if (now.hour >= 18 || todaysEnded) {
       // Evening / school day over -> tomorrow (Friday evening -> Monday).
-      initialDay = initialDay.add(
-        Duration(days: initialDay.weekday == 5 ? 3 : 1),
+      initialDay = DateTime(
+        initialDay.year,
+        initialDay.month,
+        initialDay.day + (initialDay.weekday == 5 ? 3 : 1),
       );
     }
-    _selectedDate = initialDay;
-    final initialPage =
-        (_selectedDate.weekday - 1).clamp(0, _visibleDaysCount - 1);
-    _pageController = PageController(initialPage: initialPage);
-    _weekLessons = _isSameDay(initialDay, DateUtils.dateOnly(now))
-        ? List<Lesson>.from(widget.initialTodaysLessons)
-        : const [];
-    _loadCurrentWeek(showFullSpinner: true);
-    // Keeps the "ongoing lesson" glow in sync with the clock.
-    _minuteTicker = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted && widget.isActiveTab) setState(() {});
+    _anchorMonday = _mondayOf(initialDay);
+    final initialDayOffset = (initialDay.weekday - 1).clamp(
+      0,
+      widget.prefs.showWeekends ? 6 : 4,
+    );
+    _currentPage = _basePage + initialDayOffset;
+    _pageController = PageController(initialPage: _currentPage);
+    _ensureWeekLoaded(0, isInitialLoad: true, prefetchNeighbors: true);
+    // Keeps the ongoing highlight and period countdown ring synced second-by-second.
+    _minuteTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !widget.isActiveTab) return;
+      if (_isSameDay(_currentDate, _now())) {
+        setState(() {});
+      }
     });
   }
 
@@ -264,6 +434,32 @@ class _TimetableScreenState extends State<TimetableScreen>
     } else if (!oldWidget.isActiveTab && widget.isActiveTab && _isWeeklyMode) {
       _applyOrientation(weeklyLandscape: true);
       widget.onImmersiveWeeklyModeChanged?.call(true);
+    }
+    final prefsChanged =
+        oldWidget.prefs.showWeekends != widget.prefs.showWeekends ||
+            oldWidget.prefs.hideCancelledLessons !=
+                widget.prefs.hideCancelledLessons ||
+            oldWidget.prefs.hideFreeLessons != widget.prefs.hideFreeLessons;
+    if (prefsChanged) {
+      final prevPos = _resolvePage(
+        _currentPage,
+        prefsOverride: oldWidget.prefs,
+      );
+      final targetDayIdx = (!widget.prefs.showWeekends &&
+              prevPos.dayIndex > _daysForWeekOffset(prevPos.weekOffset) - 1)
+          ? 0
+          : prevPos.dayIndex;
+      final updatedPage = _pageForWeekAndDay(prevPos.weekOffset, targetDayIdx);
+      if (updatedPage != _currentPage) {
+        _currentPage = updatedPage;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted &&
+              _pageController.hasClients &&
+              !_pageController.position.isScrollingNotifier.value) {
+            _pageController.jumpToPage(updatedPage);
+          }
+        });
+      }
     }
   }
 
@@ -300,10 +496,8 @@ class _TimetableScreenState extends State<TimetableScreen>
     widget.onImmersiveWeeklyModeChanged?.call(weekly && widget.isActiveTab);
     if (!weekly) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_pageController.hasClients) {
-          final targetPage =
-              (_selectedDate.weekday - 1).clamp(0, _visibleDaysCount - 1);
-          _pageController.jumpToPage(targetPage);
+        if (mounted && _pageController.hasClients) {
+          _pageController.jumpToPage(_currentPage);
         }
       });
     }
@@ -314,14 +508,6 @@ class _TimetableScreenState extends State<TimetableScreen>
     HapticFeedback.lightImpact();
     final nextVal = !widget.prefs.showWeekends;
     widget.onPrefsChanged(widget.prefs.copyWith(showWeekends: nextVal));
-    if (!nextVal && _selectedDate.weekday > 5) {
-      setState(() {
-        _selectedDate = _mondayOf(_selectedDate);
-        });
-      if (_pageController.hasClients) {
-        _pageController.jumpToPage(0);
-      }
-    }
   }
 
   void _toggleHideCancelledLessons() {
@@ -339,24 +525,65 @@ class _TimetableScreenState extends State<TimetableScreen>
     );
   }
 
-  DateTime _mondayOf(DateTime date) {
-    final normalized = DateTime(date.year, date.month, date.day);
-    return normalized.subtract(Duration(days: normalized.weekday - 1));
-  }
+  DateTime _mondayOf(DateTime date) =>
+      DateTime(date.year, date.month, date.day - (date.weekday - 1));
 
   bool _isSameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
-  Future<void> _loadCurrentWeek({bool showFullSpinner = false}) async {
-    final monday = _mondayOf(_selectedDate);
-    final sunday = monday.add(const Duration(days: 6));
-
-    if (mounted && showFullSpinner) {
-      setState(() {
-        _isLoading = true;
-        _error = null;
-      });
+  Future<void> _ensureWeekLoaded(
+    int weekOffset, {
+    bool isInitialLoad = false,
+    bool prefetchNeighbors = false,
+    bool forceRefresh = false,
+  }) {
+    if (!forceRefresh && _weekLessonsCache.containsKey(weekOffset)) {
+      if (prefetchNeighbors) {
+        _prefetchAdjacentWeeks(weekOffset);
+      }
+      return Future.value();
     }
+    final inFlight = _inFlightWeekLoads[weekOffset];
+    if (inFlight != null) {
+      if (prefetchNeighbors) {
+        inFlight.whenComplete(() {
+          if (mounted) _prefetchAdjacentWeeks(weekOffset);
+        });
+      }
+      return inFlight;
+    }
+    if (forceRefresh) {
+      _weekErrors.remove(weekOffset);
+    }
+    final future = _fetchWeekInternal(
+      weekOffset,
+      isInitialLoad: isInitialLoad,
+      prefetchNeighbors: prefetchNeighbors,
+    );
+    _inFlightWeekLoads[weekOffset] = future;
+    return future;
+  }
+
+  void _prefetchAdjacentWeeks(int centerWeekOffset) {
+    if (!mounted) return;
+    // Asynchronously pre-fetch both adjacent weeks so bidirectional swiping
+    // forward or backward renders immediately without blanking or stuttering.
+    for (final neighbor in [centerWeekOffset - 1, centerWeekOffset + 1]) {
+      if (!_weekLessonsCache.containsKey(neighbor) &&
+          !_inFlightWeekLoads.containsKey(neighbor) &&
+          !_weekErrors.containsKey(neighbor)) {
+        unawaited(_ensureWeekLoaded(neighbor));
+      }
+    }
+  }
+
+  Future<void> _fetchWeekInternal(
+    int weekOffset, {
+    bool isInitialLoad = false,
+    bool prefetchNeighbors = false,
+  }) async {
+    final monday = _mondayOfWeekOffset(weekOffset);
+    final sunday = DateTime(monday.year, monday.month, monday.day + 6);
 
     try {
       final lessons = await widget.kretaClient.fetchTimetableForRange(
@@ -364,13 +591,48 @@ class _TimetableScreenState extends State<TimetableScreen>
         from: monday,
         to: sunday,
       );
+      _inFlightWeekLoads.remove(weekOffset);
       if (!mounted) return;
+
+      final currentPos = _resolvePage(_currentPage);
+      final ({int weekOffset, int dayIndex})? progPos =
+          _programmaticTargetPage != null
+              ? _resolvePage(_programmaticTargetPage!)
+              : null;
+
       setState(() {
-        _weekLessons = lessons;
-        _isLoading = false;
-        _error = null;
+        _weekLessonsCache[weekOffset] = lessons;
+        _weekErrors.remove(weekOffset);
+        if (isInitialLoad || !_isInitialLoadComplete) {
+          _isInitialLoadComplete = true;
+          _isLoading = false;
+        }
+        final updatedPage = _pageForWeekAndDay(
+          currentPos.weekOffset,
+          currentPos.dayIndex,
+        );
+        if (updatedPage != _currentPage) {
+          _currentPage = updatedPage;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted &&
+                _pageController.hasClients &&
+                !_pageController.position.isScrollingNotifier.value) {
+              _pageController.jumpToPage(updatedPage);
+            }
+          });
+        }
+        if (progPos != null) {
+          _programmaticTargetPage = _pageForWeekAndDay(
+            progPos.weekOffset,
+            progPos.dayIndex,
+          );
+        }
         _armInitialEntranceIfNeeded();
       });
+
+      if (prefetchNeighbors) {
+        _prefetchAdjacentWeeks(weekOffset);
+      }
 
       // Hydrate any lesson homeworkUid not yet present in _allHomeworks
       final missingUids = <String>{};
@@ -400,27 +662,77 @@ class _TimetableScreenState extends State<TimetableScreen>
         }
       }
     } catch (e) {
+      _inFlightWeekLoads.remove(weekOffset);
       if (!mounted) return;
       setState(() {
-        _isLoading = false;
-        _error = e.toString();
+        _weekErrors[weekOffset] = e.toString();
+        if (isInitialLoad || !_isInitialLoadComplete) {
+          _isInitialLoadComplete = true;
+          _isLoading = false;
+        }
       });
+    }
+  }
+
+  Future<void> _animateToPageSmooth(int targetPage) async {
+    final clampedTarget = targetPage.clamp(0, _totalPageCount - 1);
+    final token = ++_programmaticAnimToken;
+    if (!mounted) return;
+    setState(() {
+      _currentPage = clampedTarget;
+      _programmaticTargetPage = clampedTarget;
+      _isAnimatingPage = _pageController.hasClients;
+    });
+    if (!_pageController.hasClients) {
+      if (token == _programmaticAnimToken && mounted) {
+        setState(() {
+          _isAnimatingPage = false;
+          _programmaticTargetPage = null;
+        });
+      }
+      return;
+    }
+    final currentCtrlPage = _pageController.page?.round() ?? _currentPage;
+    final distance = (clampedTarget - currentCtrlPage).abs();
+    try {
+      if (distance > 14) {
+        _pageController.jumpToPage(clampedTarget);
+      } else {
+        await _pageController.animateToPage(
+          clampedTarget,
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    } finally {
+      if (mounted && token == _programmaticAnimToken) {
+        final corrected = _currentPage;
+        setState(() {
+          _isAnimatingPage = false;
+          _programmaticTargetPage = null;
+        });
+        if (_pageController.hasClients &&
+            (_pageController.page?.round() ?? corrected) != corrected) {
+          _pageController.jumpToPage(corrected);
+        }
+      }
     }
   }
 
   void _shiftWeek(int deltaWeeks) {
     HapticFeedback.lightImpact();
-    setState(() {
-      _selectedDate = _selectedDate.add(Duration(days: 7 * deltaWeeks));
-    });
-    _loadCurrentWeek(showFullSpinner: true);
+    final currentPos = _resolvePage(_currentPage);
+    final targetWeekOffset = currentPos.weekOffset + deltaWeeks;
+    _ensureWeekLoaded(targetWeekOffset, prefetchNeighbors: true);
+    final targetMondayPage = _mondayPageForWeekOffset(targetWeekOffset);
+    unawaited(_animateToPageSmooth(targetMondayPage));
   }
 
   Future<void> _openDatePicker() async {
     HapticFeedback.lightImpact();
     final picked = await showDatePicker(
       context: context,
-      initialDate: _selectedDate,
+      initialDate: _currentDate,
       firstDate: DateTime(2023, 9, 1),
       lastDate: DateTime(2030, 8, 31),
       helpText: 'Ugrás kiválasztott dátumra',
@@ -429,89 +741,60 @@ class _TimetableScreenState extends State<TimetableScreen>
     );
     if (picked == null || !mounted) return;
 
-    var target = DateTime(picked.year, picked.month, picked.day);
-    if (!widget.prefs.showWeekends && target.weekday > 5) {
-      target = _mondayOf(target);
-    }
-    final weekChanged =
-        !_isSameDay(_mondayOf(_selectedDate), _mondayOf(target));
-    final pageIdx = (target.weekday - 1).clamp(0, _visibleDaysCount - 1);
+    final target = DateTime(picked.year, picked.month, picked.day);
+    final targetMonday = _mondayOf(target);
+    final targetWeekOffset = _weekOffsetForMonday(targetMonday);
+    unawaited(_ensureWeekLoaded(targetWeekOffset, prefetchNeighbors: true));
 
-    setState(() {
-      _selectedDate = target;
-      _isAnimatingPage = _pageController.hasClients;
-    });
-    if (_pageController.hasClients) {
-      await _pageController.animateToPage(
-        pageIdx,
-        duration: const Duration(milliseconds: 260),
-        curve: Curves.easeOutCubic,
-      );
-      if (mounted) {
-        setState(() => _isAnimatingPage = false);
-      }
-    }
-    if (weekChanged) {
-      _loadCurrentWeek(showFullSpinner: true);
-    }
+    final span = _daysForWeekOffset(targetWeekOffset);
+    final targetDayIdx =
+        (!widget.prefs.showWeekends && target.weekday > span)
+            ? 0
+            : (target.weekday - 1).clamp(0, span - 1);
+    final targetPage = _pageForWeekAndDay(targetWeekOffset, targetDayIdx);
+    await _animateToPageSmooth(targetPage);
   }
 
   Future<void> _jumpToToday() async {
     HapticFeedback.lightImpact();
-    final now = DateTime.now();
-    var today = DateTime(now.year, now.month, now.day);
-    if (!widget.prefs.showWeekends && today.weekday > 5) {
-      today = _mondayOf(today);
-    }
-    final weekChanged = !_isSameDay(_mondayOf(_selectedDate), _mondayOf(today));
-    final pageIdx = (today.weekday - 1).clamp(0, _visibleDaysCount - 1);
-    setState(() {
-      _selectedDate = today;
-      _isAnimatingPage = _pageController.hasClients;
-    });
-    if (_pageController.hasClients) {
-      await _pageController.animateToPage(
-        pageIdx,
-        duration: const Duration(milliseconds: 280),
-        curve: Curves.easeOutCubic,
-      );
-      if (mounted) {
-        setState(() => _isAnimatingPage = false);
-      }
-    }
-    if (weekChanged) {
-      _loadCurrentWeek(showFullSpinner: true);
-    }
+    final now = _now();
+    final today = DateTime(now.year, now.month, now.day);
+    final targetMonday = _mondayOf(today);
+    final targetWeekOffset = _weekOffsetForMonday(targetMonday);
+    unawaited(_ensureWeekLoaded(targetWeekOffset, prefetchNeighbors: true));
+
+    final span = _daysForWeekOffset(targetWeekOffset);
+    final targetDayIdx =
+        (!widget.prefs.showWeekends && today.weekday > span)
+            ? 0
+            : (today.weekday - 1).clamp(0, span - 1);
+    final targetPage = _pageForWeekAndDay(targetWeekOffset, targetDayIdx);
+    await _animateToPageSmooth(targetPage);
   }
 
-  Future<void> _onSelectWeekdayPill(int idx, DateTime monday) async {
-    final targetDay = monday.add(Duration(days: idx));
-    if (_isSameDay(targetDay, _selectedDate)) return;
-    HapticFeedback.selectionClick();
-    setState(() {
-      _selectedDate = targetDay;
-      _isAnimatingPage = _pageController.hasClients;
-    });
-    if (_pageController.hasClients) {
-      await _pageController.animateToPage(
-        idx,
-        duration: const Duration(milliseconds: 280),
-        curve: Curves.easeOutCubic,
-      );
-      if (mounted) {
-        setState(() => _isAnimatingPage = false);
-      }
+  Future<void> _onSelectWeekdayPill(int idx, int weekOffset) async {
+    final currentPos = _resolvePage(_currentPage);
+    if (currentPos.weekOffset == weekOffset && currentPos.dayIndex == idx) {
+      return;
     }
+    HapticFeedback.selectionClick();
+    final targetPage = _pageForWeekAndDay(weekOffset, idx);
+    await _animateToPageSmooth(targetPage);
   }
 
-  void _onPageSwiped(int pageIdx, DateTime monday) {
-    if (_isAnimatingPage) return;
-    final swipedDay = monday.add(Duration(days: pageIdx));
-    if (_isSameDay(swipedDay, _selectedDate)) return;
+  void _onPageSwiped(int pageIdx) {
+    if (_isAnimatingPage &&
+        _programmaticTargetPage != null &&
+        pageIdx != _programmaticTargetPage) {
+      return;
+    }
+    if (pageIdx == _currentPage) return;
     HapticFeedback.selectionClick();
+    final pos = _resolvePage(pageIdx);
     setState(() {
-      _selectedDate = swipedDay;
+      _currentPage = pageIdx;
     });
+    _ensureWeekLoaded(pos.weekOffset, prefetchNeighbors: true);
   }
 
   @override
@@ -519,9 +802,19 @@ class _TimetableScreenState extends State<TimetableScreen>
     super.build(context);
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final monday = _mondayOf(_selectedDate);
-    final visibleDaysCount = _visibleDaysCount;
-    final endDay = monday.add(Duration(days: visibleDaysCount - 1));
+    final pos = _resolvePage(_currentPage);
+    final mondayPage = _mondayPageForWeekOffset(pos.weekOffset);
+    final monday = _mondayOfWeekOffset(pos.weekOffset);
+    final visibleDaysCount = _daysForWeekOffset(pos.weekOffset);
+    final endDay = DateTime(
+      monday.year,
+      monday.month,
+      monday.day + visibleDaysCount - 1,
+    );
+    final currentWeekError =
+        _weekLessonsCache.containsKey(pos.weekOffset)
+            ? null
+            : _weekErrors[pos.weekOffset];
 
     if (_isWeeklyMode) {
       return SafeArea(
@@ -532,12 +825,14 @@ class _TimetableScreenState extends State<TimetableScreen>
                 padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
                 child: _isLoading
                     ? const Center(child: CircularProgressIndicator())
-                    : _error != null
-                        ? Center(child: _buildErrorCard(theme, _error!))
+                    : currentWeekError != null &&
+                            !_inFlightWeekLoads.containsKey(pos.weekOffset)
+                        ? Center(child: _buildErrorCard(theme, currentWeekError))
                         : _buildWeeklyLandscapeBoard(
                             theme,
                             scheme,
                             monday,
+                            pos.weekOffset,
                             visibleDaysCount,
                           ),
               ),
@@ -578,8 +873,15 @@ class _TimetableScreenState extends State<TimetableScreen>
               _buildTopControlsCard(theme, scheme, monday, endDay)
                   .staggeredEntrance(0, enabled: _entranceActive),
               const SizedBox(height: 6),
-              _buildWeekdaySelector(theme, scheme, monday, visibleDaysCount)
-                  .staggeredEntrance(1, enabled: _entranceActive),
+              _buildWeekdaySelector(
+                theme,
+                scheme,
+                monday,
+                pos.weekOffset,
+                mondayPage,
+                pos.dayIndex,
+                visibleDaysCount,
+              ).staggeredEntrance(1, enabled: _entranceActive),
               AnimatedSize(
                 duration: const Duration(milliseconds: 180),
                 curve: Curves.easeOutCubic,
@@ -597,32 +899,75 @@ class _TimetableScreenState extends State<TimetableScreen>
         Expanded(
           child: _isLoading
               ? const Center(child: CircularProgressIndicator())
-              : _error != null
+              : pos.weekOffset == 0 &&
+                      _weekLessonsCache.isEmpty &&
+                      currentWeekError != null
                   ? Padding(
                       padding: const EdgeInsets.all(16),
-                      child: _buildErrorCard(theme, _error!),
+                      child: _buildErrorCard(theme, currentWeekError),
                     )
                   : PageView.builder(
                       controller: _pageController,
                       physics: const PageScrollPhysics(),
-                      itemCount: visibleDaysCount,
-                      onPageChanged: (idx) => _onPageSwiped(idx, monday),
+                      itemCount: _totalPageCount,
+                      onPageChanged: _onPageSwiped,
                       itemBuilder: (context, pageIdx) {
-                        final day = monday.add(Duration(days: pageIdx));
+                        final pagePos = _resolvePage(pageIdx);
+                        if (!_weekLessonsCache.containsKey(pagePos.weekOffset) &&
+                            !_inFlightWeekLoads.containsKey(pagePos.weekOffset) &&
+                            !_weekErrors.containsKey(pagePos.weekOffset)) {
+                          Future.microtask(
+                            () => _ensureWeekLoaded(pagePos.weekOffset),
+                          );
+                        }
+                        final pageMonday =
+                            _mondayOfWeekOffset(pagePos.weekOffset);
+                        final day = DateTime(
+                          pageMonday.year,
+                          pageMonday.month,
+                          pageMonday.day + pagePos.dayIndex,
+                        );
+                        final pageError =
+                            _weekLessonsCache.containsKey(pagePos.weekOffset)
+                                ? null
+                                : _weekErrors[pagePos.weekOffset];
                         return RefreshIndicator(
                           displacement: 44,
                           edgeOffset: 8,
                           strokeWidth: 2.6,
-                          onRefresh: () =>
-                              _loadCurrentWeek(showFullSpinner: false),
-                          child: ListView(
-                            physics: const BouncingScrollPhysics(
-                              parent: AlwaysScrollableScrollPhysics(),
-                            ),
-                            padding:
-                                const EdgeInsets.fromLTRB(16, 2, 16, 100),
-                            children: _buildDailyList(theme, scheme, day),
+                          onRefresh: () => _ensureWeekLoaded(
+                            pagePos.weekOffset,
+                            prefetchNeighbors: true,
+                            forceRefresh: true,
                           ),
+                          child: pageError != null
+                              ? ListView(
+                                  primary: false,
+                                  physics: const BouncingScrollPhysics(
+                                    parent: AlwaysScrollableScrollPhysics(),
+                                  ),
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    16,
+                                    16,
+                                    100,
+                                  ),
+                                  children: [_buildErrorCard(theme, pageError)],
+                                )
+                              : ListView(
+                                  primary: false,
+                                  physics: const BouncingScrollPhysics(
+                                    parent: AlwaysScrollableScrollPhysics(),
+                                  ),
+                                  padding:
+                                      const EdgeInsets.fromLTRB(16, 2, 16, 100),
+                                  children: _buildDailyList(
+                                    theme,
+                                    scheme,
+                                    day,
+                                    pagePos.weekOffset,
+                                  ),
+                                ),
                         );
                       },
                     ),
@@ -865,78 +1210,34 @@ class _TimetableScreenState extends State<TimetableScreen>
     ThemeData theme,
     ColorScheme scheme,
     DateTime monday,
+    int weekOffset,
+    int mondayPage,
+    int selectedIdx,
     int visibleDaysCount,
   ) {
-    final selectedIdx =
-        (_selectedDate.weekday - 1).clamp(0, visibleDaysCount - 1);
-    return SoftGlassCard(
-      prefs: widget.prefs,
-      padding: const EdgeInsets.all(3),
-      borderRadius: BorderRadius.circular(16),
-      border: Border.all(color: theme.dividerColor),
-      child: LiquidSpringPillTrack(
-        itemCount: visibleDaysCount,
-        selectedIndex: selectedIdx,
-        height: 34,
-        pillHeight: 34,
-        pageController: _pageController,
-        ignorePageController: _isAnimatingPage,
-        clipBehavior: Clip.hardEdge,
-        clipBorderRadius: BorderRadius.circular(12),
-        pillBuilder: (context, _) => Container(
-          decoration: BoxDecoration(
-            color: scheme.primary,
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        itemBuilder: (context, idx, activeProgress) {
-          final day = monday.add(Duration(days: idx));
-          final mainColor = Color.lerp(
-            scheme.onSurface,
-            scheme.onPrimary,
-            activeProgress,
-          )!;
-          final subColor = Color.lerp(
-            scheme.onSurface.withValues(alpha: 0.62),
-            scheme.onPrimary.withValues(alpha: 0.88),
-            activeProgress,
-          )!;
-          return TactileBounce(
-            onTap: () => _onSelectWeekdayPill(idx, monday),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2),
-              child: Center(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _weekdayShortNames[idx],
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          color: mainColor,
-                        ),
-                      ),
-                      const SizedBox(width: 3),
-                      Text(
-                        '${day.day}.',
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w600,
-                          color: subColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
+    final clampedIdx = selectedIdx.clamp(0, visibleDaysCount - 1);
+    final effectivePrefs =
+        AppProvidersScope.maybeOf(context)?.settings.prefs ?? widget.prefs;
+    return LiquidBubbleTabBar(
+      padding: EdgeInsets.zero,
+      height: 40,
+      fontSize: 12,
+      itemPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+      equalFlex: true,
+      liquidGlassEnabled: effectivePrefs.liquidGlassEnabled,
+      pageController: _pageController,
+      pageOffset: mondayPage.toDouble(),
+      ignorePageController: _isAnimatingPage,
+      selectedIndex: clampedIdx,
+      onSelected: (idx) => _onSelectWeekdayPill(idx, weekOffset),
+      items: List.generate(visibleDaysCount, (idx) {
+        final day = DateTime(monday.year, monday.month, monday.day + idx);
+        return LiquidBubbleTabItem(
+          key: ValueKey<String>('weekday-pill-$idx'),
+          label: _weekdayShortNames[idx],
+          subLabel: '${day.day}.',
+        );
+      }),
     );
   }
 
@@ -944,8 +1245,10 @@ class _TimetableScreenState extends State<TimetableScreen>
     ThemeData theme,
     ColorScheme scheme,
     DateTime day,
+    int weekOffset,
   ) {
-    final rawDayLessons = _weekLessons
+    final weekLessons = _lessonsForWeekOffset(weekOffset);
+    final rawDayLessons = weekLessons
         .where((l) => _isSameDay(l.start.toLocal(), day))
         .toList();
     final dayLessons = filterLessonsForDisplay(
@@ -953,6 +1256,8 @@ class _TimetableScreenState extends State<TimetableScreen>
       hideCancelled: widget.prefs.hideCancelledLessons,
       hideFree: widget.prefs.hideFreeLessons,
     );
+    final isWeekFetching = !_weekLessonsCache.containsKey(weekOffset) &&
+        _inFlightWeekLoads.containsKey(weekOffset);
 
     final dayName = _weekdayFullNames[(day.weekday - 1).clamp(0, 6)];
 
@@ -993,20 +1298,36 @@ class _TimetableScreenState extends State<TimetableScreen>
         ),
       ),
       if (dayLessons.isEmpty)
-        _buildEmptyLessonsCard(theme, scheme)
-            .staggeredEntrance(2, enabled: _entranceActive)
+        isWeekFetching
+            ? const Padding(
+                padding: EdgeInsets.symmetric(vertical: 48),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            : RepaintBoundary(
+                child: _buildEmptyLessonsCard(theme, scheme),
+              )
       else
-        ...List.generate(dayLessons.length, (idx) {
-          final lesson = dayLessons[idx];
-          return buildOledLessonCard(
-            context,
-            theme,
-            lesson,
-            _timeFormat,
-            prefs: widget.prefs,
-            homework: _resolveHomeworkForLesson(lesson),
-          ).staggeredEntrance(idx + 2, enabled: _entranceActive);
-        }),
+        ...() {
+          final now = _now();
+          final countdownInfo = PeriodCountdownInfo.evaluate(
+            rawDayLessons,
+            now,
+            onlyOnDate: day,
+          );
+          return List.generate(dayLessons.length, (idx) {
+            final lesson = dayLessons[idx];
+            return buildOledLessonCard(
+              context,
+              theme,
+              lesson,
+              _timeFormat,
+              prefs: widget.prefs,
+              homework: _resolveHomeworkForLesson(lesson),
+              countdownInfo: countdownInfo,
+              nowOverride: now,
+            );
+          });
+        }(),
     ];
   }
 
@@ -1015,13 +1336,15 @@ class _TimetableScreenState extends State<TimetableScreen>
     ThemeData theme,
     ColorScheme scheme,
     DateTime monday,
+    int weekOffset,
     int visibleDaysCount,
   ) {
+    final weekLessons = _lessonsForWeekOffset(weekOffset);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: List.generate(visibleDaysCount, (i) {
-        final day = monday.add(Duration(days: i));
-        final rawDayLessons = _weekLessons
+        final day = DateTime(monday.year, monday.month, monday.day + i);
+        final rawDayLessons = weekLessons
             .where((l) => _isSameDay(l.start.toLocal(), day))
             .toList();
         final dayLessons = filterLessonsForDisplay(
@@ -1029,7 +1352,7 @@ class _TimetableScreenState extends State<TimetableScreen>
           hideCancelled: widget.prefs.hideCancelledLessons,
           hideFree: widget.prefs.hideFreeLessons,
         );
-        final isToday = _isSameDay(day, DateTime.now());
+        final isToday = _isSameDay(day, _now());
 
         return Expanded(
           child: Padding(
@@ -1178,7 +1501,12 @@ class _TimetableScreenState extends State<TimetableScreen>
                         ? scheme.onSurface.withValues(alpha: 0.45)
                         : isCancelled
                             ? const Color(0xFFFF5252)
-                            : scheme.primary,
+                            : widget.prefs.timetablePeriodColor != null
+                                ? OledTheme.readableInlineColor(
+                                    widget.prefs.timetablePeriodColor!,
+                                    theme.brightness,
+                                  )
+                                : scheme.primary,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
@@ -1276,6 +1604,8 @@ Widget buildOledLessonCard(
   String? heroPrefix,
   UserProfilePrefs? prefs,
   Homework? homework,
+  PeriodCountdownInfo? countdownInfo,
+  DateTime? nowOverride,
 }) {
   final scheme = theme.colorScheme;
   final isPlaceholder = isInactivePlaceholderLesson(lesson);
@@ -1295,13 +1625,14 @@ Widget buildOledLessonCard(
   final timeRange =
       '${timeFormat.format(startLocal)} - ${timeFormat.format(endLocal)}';
 
+  final customPeriodColor = prefs?.timetablePeriodColor;
   final badgeBg = isPlaceholder
       ? scheme.surfaceContainerHigh.withValues(alpha: 0.45)
       : isCancelled
           ? const Color(0xFFC62828)
           : hasSubstitute
               ? const Color(0xFFF9A825)
-              : scheme.surfaceContainerHigh;
+              : (customPeriodColor ?? scheme.surfaceContainerHigh);
 
   final badgeTextColor = isPlaceholder
       ? scheme.onSurface.withValues(alpha: 0.45)
@@ -1309,7 +1640,9 @@ Widget buildOledLessonCard(
           ? Colors.white
           : hasSubstitute
               ? Colors.black
-              : scheme.onSurface;
+              : (customPeriodColor != null
+                  ? OledTheme.contrastTextFor(customPeriodColor)
+                  : scheme.onSurface);
 
   final heroTag = heroPrefix != null
       ? '${heroPrefix}_${lesson.uid}'
@@ -1327,11 +1660,25 @@ Widget buildOledLessonCard(
           ? prefs.resolveTeacherName(lesson.substituteTeacher)
           : lesson.substituteTeacher;
 
-  final nowLocal = DateTime.now();
+  final nowLocal = (nowOverride ?? DateTime.now()).toLocal();
   final isOngoing = !isPlaceholder &&
       !isCancelled &&
       !nowLocal.isBefore(startLocal) &&
-      !nowLocal.isAfter(endLocal);
+      nowLocal.isBefore(endLocal);
+  final showsCountdownRing = !isPlaceholder &&
+      !isCancelled &&
+      countdownInfo != null &&
+      countdownInfo.targetLesson.uid == lesson.uid;
+  final countdownFraction =
+      showsCountdownRing ? countdownInfo.remainingFraction : null;
+  final ringColor = hasSubstitute
+      ? const Color(0xFFF9A825)
+      : (customPeriodColor != null
+          ? OledTheme.readableInlineColor(
+              customPeriodColor,
+              theme.brightness,
+            )
+          : scheme.primary);
 
   Widget card = TactileBounce(
       pressedScale: 0.97,
@@ -1369,24 +1716,26 @@ Widget buildOledLessonCard(
                 tag: heroTag,
                 child: Material(
                   type: MaterialType.transparency,
-                  child: Container(
-                    width: 34,
-                    height: 34,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: badgeBg,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: theme.dividerColor),
+                  child: PeriodCountdownBadge(
+                    label: lesson.lessonNumber != null
+                        ? '${lesson.lessonNumber}.'
+                        : '•',
+                    backgroundColor: badgeBg,
+                    textStyle: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      color: badgeTextColor,
                     ),
-                    child: Text(
-                      lesson.lessonNumber != null
-                          ? '${lesson.lessonNumber}.'
-                          : '•',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w900,
-                        color: badgeTextColor,
-                      ),
+                    ringColor: ringColor,
+                    remainingFraction: countdownFraction,
+                    border: Border.all(
+                      color: (!isPlaceholder &&
+                              !isCancelled &&
+                              !hasSubstitute &&
+                              customPeriodColor != null)
+                          ? OledTheme.contrastTextFor(customPeriodColor)
+                              .withValues(alpha: 0.22)
+                          : theme.dividerColor,
                     ),
                   ),
                 ),
@@ -1631,8 +1980,10 @@ Widget buildOledLessonCard(
     );
   }
 
-  return Padding(
-    padding: const EdgeInsets.only(bottom: 7),
-    child: card,
+  return RepaintBoundary(
+    child: Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: card,
+    ),
   );
 }

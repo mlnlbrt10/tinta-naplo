@@ -10,7 +10,7 @@ import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 
 /// Dedicated "Az alkalmazásról" (About App / Rendszer & Névjegy) screen with:
-/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v1.0.0'),
+/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v1.1.0'),
 ///   and developer credits.
 /// - Direct link to `https://github.com/mlnlbrt10/tinta-naplo`.
 /// - Manual "Frissítések keresése" button (GitHub Releases OTA updater).
@@ -60,6 +60,8 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
   }
 
   void _updatePrefs(UserProfilePrefs nextPrefs) {
+    UserProfilePrefs.syncActiveGlobals(nextPrefs);
+    TokenStorageService.saveProfilePrefsToSharedPrefs(nextPrefs);
     setState(() => _currentPrefs = nextPrefs);
     widget.onPrefsChanged(nextPrefs);
   }
@@ -504,16 +506,16 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
                 context,
                 currentVersion: _version,
                 release: const GitHubReleaseInfo(
-                  tagName: 'v1.0.0',
-                  title: 'Tinta Napló v1.0.0 — OTA Frissítő Előnézet',
+                  tagName: 'v1.1.0',
+                  title: 'Tinta Napló v1.1.0 — OTA Frissítő Előnézet',
                   releaseNotes:
                       '• 120Hz-es fizikai animációk és Hero átmenetek\n'
                       '• Szellemjegy Számoló, Ösztöndíj Kalkulátor és egyedi kerekítési határok\n'
                       '• Titkos UwU mód és Tsundere mód :3\n'
-                      '• Közvetlen GitHub Releases APK letöltés és telepítés (Tinta-Naplo-v1.0.0.apk)',
+                      '• Közvetlen GitHub Releases APK letöltés és telepítés (Tinta-Naplo-v1.1.0.apk)',
                   htmlUrl: GitHubUpdaterService.repoUrl,
                   apkDownloadUrl:
-                      '${GitHubUpdaterService.repoUrl}/releases/latest/download/Tinta-Naplo-v1.0.0.apk',
+                      '${GitHubUpdaterService.repoUrl}/releases/latest/download/Tinta-Naplo-v1.1.0.apk',
                 ),
               );
             },

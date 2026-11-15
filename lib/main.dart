@@ -1,6 +1,7 @@
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart';
 
+import 'providers/app_providers.dart';
 import 'screens/home_screen.dart';
 import 'screens/webview_login_screen.dart';
 import 'services/dynamic_icon_service.dart';
@@ -34,10 +35,16 @@ class _ReKretaAppState extends State<ReKretaApp> {
       widget.tokenStorage ?? const TokenStorageService();
   late final KretaClient _kretaClient =
       widget.kretaClient ?? KretaClient(storage: _tokenStorage);
+  late final SettingsProvider _settingsProvider = SettingsProvider(
+    storage: _tokenStorage,
+  );
+  late final ThemeProvider _themeProvider = ThemeProvider(_settingsProvider);
+  late final CommuteProvider _commuteProvider =
+      CommuteProvider(_settingsProvider);
 
   StoredSession? _session;
   DashboardData? _cachedDashboard;
-  UserProfilePrefs _prefs = const UserProfilePrefs();
+  UserProfilePrefs get _prefs => _settingsProvider.prefs;
   bool _isRestoringSession = true;
   bool _isSplashLoading = true;
   bool _showSplashOverlay = true;
@@ -63,7 +70,13 @@ class _ReKretaAppState extends State<ReKretaApp> {
   @override
   void initState() {
     super.initState();
+    _settingsProvider.addListener(_onProviderPrefsChanged);
     _restoreSavedSessionAndPrefs();
+  }
+
+  void _onProviderPrefsChanged() {
+    if (!mounted) return;
+    _set(() {});
   }
 
   @override
@@ -77,6 +90,10 @@ class _ReKretaAppState extends State<ReKretaApp> {
 
   @override
   void dispose() {
+    _settingsProvider.removeListener(_onProviderPrefsChanged);
+    _commuteProvider.dispose();
+    _themeProvider.dispose();
+    _settingsProvider.dispose();
     _instituteController.dispose();
     _usernameController.dispose();
     _rootRevision.dispose();
@@ -87,7 +104,7 @@ class _ReKretaAppState extends State<ReKretaApp> {
     try {
       final results = await Future.wait<Object?>([
         _tokenStorage.loadSession(),
-        _tokenStorage.loadProfilePrefs(),
+        _settingsProvider.load(),
       ]);
       if (!mounted) return;
       final restoredSession = results[0] as StoredSession?;
@@ -99,9 +116,11 @@ class _ReKretaAppState extends State<ReKretaApp> {
       }
       if (!mounted) return;
       UserProfilePrefs.syncActiveGlobals(restoredPrefs);
+      if (restoredCache != null) {
+        _commuteProvider.setLessons(restoredCache.todaysLessons);
+      }
       _set(() {
         _session = restoredSession;
-        _prefs = restoredPrefs;
         _cachedDashboard = restoredCache;
         _isRestoringSession = false;
       });
@@ -120,11 +139,12 @@ class _ReKretaAppState extends State<ReKretaApp> {
   }
 
   Future<void> _updatePrefs(UserProfilePrefs nextPrefs) async {
-    UserProfilePrefs.syncActiveGlobals(nextPrefs);
-    _set(() => _prefs = nextPrefs);
-    // Persist first: the alias swap may restart the process.
-    await _tokenStorage.saveProfilePrefs(nextPrefs);
-    await DynamicIconService.syncIconWithPrefs(nextPrefs);
+    final prevIcon = _prefs.appIconPreset;
+    // Update reactive provider immediately + persist to SharedPreferences & SecureStorage.
+    await _settingsProvider.updatePrefs(nextPrefs);
+    if (nextPrefs.appIconPreset != prevIcon) {
+      await DynamicIconService.syncIconWithPrefs(nextPrefs);
+    }
   }
 
   Future<void> _launchWebViewLogin(BuildContext navContext) async {
@@ -163,42 +183,52 @@ class _ReKretaAppState extends State<ReKretaApp> {
 
   @override
   Widget build(BuildContext context) {
-    return DynamicColorBuilder(
-      builder: (ColorScheme? lightDynamic, ColorScheme? darkDynamic) {
-        final isLight = _prefs.themeStyle == AppThemeStyle.light;
-        final activeTheme = OledTheme.buildTheme(
-          prefs: _prefs,
-          dynamicScheme: isLight ? lightDynamic : darkDynamic,
-        );
+    return AppProvidersScope(
+      settings: _settingsProvider,
+      theme: _themeProvider,
+      commute: _commuteProvider,
+      child: ListenableBuilder(
+        listenable: Listenable.merge([_settingsProvider, _themeProvider]),
+        builder: (context, _) {
+          return DynamicColorBuilder(
+            builder: (ColorScheme? lightDynamic, ColorScheme? darkDynamic) {
+              final isLight = _prefs.themeStyle == AppThemeStyle.light;
+              final activeTheme = OledTheme.buildTheme(
+                prefs: _prefs,
+                dynamicScheme: isLight ? lightDynamic : darkDynamic,
+              );
 
-        return MaterialApp(
-          title: 'Tinta Napló',
-          debugShowCheckedModeBanner: false,
-          theme: activeTheme,
-          darkTheme: activeTheme,
-          themeMode: isLight ? ThemeMode.light : ThemeMode.dark,
-          builder: (context, child) {
-            return Stack(
-              children: [
-                child ?? const SizedBox.shrink(),
-                if (_showSplashOverlay)
-                  TintaSplashOverlay(
-                    key: const ValueKey<String>('tinta-splash-overlay'),
-                    isLoading: _isSplashLoading,
-                    accentColor: activeTheme.colorScheme.primary,
-                    onDismissed: () {
-                      if (mounted) {
-                        setState(() => _showSplashOverlay = false);
-                      }
-                    },
-                  ),
-              ],
-            );
-          },
-          home: _rootRoute(),
-          routes: {'/login': (_) => _rootRoute()},
-        );
-      },
+              return MaterialApp(
+                title: 'Tinta Napló',
+                debugShowCheckedModeBanner: false,
+                theme: activeTheme,
+                darkTheme: activeTheme,
+                themeMode: isLight ? ThemeMode.light : ThemeMode.dark,
+                builder: (context, child) {
+                  return Stack(
+                    children: [
+                      child ?? const SizedBox.shrink(),
+                      if (_showSplashOverlay)
+                        TintaSplashOverlay(
+                          key: const ValueKey<String>('tinta-splash-overlay'),
+                          isLoading: _isSplashLoading,
+                          accentColor: activeTheme.colorScheme.primary,
+                          onDismissed: () {
+                            if (mounted) {
+                              setState(() => _showSplashOverlay = false);
+                            }
+                          },
+                        ),
+                    ],
+                  );
+                },
+                home: _rootRoute(),
+                routes: {'/login': (_) => _rootRoute()},
+              );
+            },
+          );
+        },
+      ),
     );
   }
 

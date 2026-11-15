@@ -2,21 +2,26 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import '../providers/app_providers.dart';
 import '../services/token_storage_service.dart';
 
-/// Resolves whether Settings "Soft Blur" (`Kártyák soft blur & áttetszőség`)
-/// is active and returns its normalized sigma for `BackdropFilter` surfaces.
-bool resolveSoftBlurEnabled([UserProfilePrefs? prefs]) {
-  return prefs?.cardBlurEnabled ?? UserProfilePrefs.activeSoftBlurEnabled;
+/// Resolves whether Settings "Liquid Glass" is active and enables glassmorphic
+/// `BackdropFilter` surfaces and fluid droplet slider physics.
+bool resolveLiquidGlassEnabled([UserProfilePrefs? prefs]) {
+  return prefs?.liquidGlassEnabled ?? UserProfilePrefs.activeLiquidGlassEnabled;
 }
+
+/// Backwards-compatible alias for [resolveLiquidGlassEnabled].
+bool resolveSoftBlurEnabled([UserProfilePrefs? prefs]) =>
+    resolveLiquidGlassEnabled(prefs);
 
 double resolveSoftBlurBackdropSigma([UserProfilePrefs? prefs]) {
   final raw = prefs?.cardBlurSigma ?? UserProfilePrefs.activeSoftBlurSigma;
   return (12.0 + raw * 2.0).clamp(12.0, 20.0);
 }
 
-/// Returns a lighter scrim behind frosted glass modals and dialogs when Soft
-/// Blur is enabled so blurred underlying content shines cleanly through.
+/// Returns a lighter scrim behind frosted glass modals and dialogs when Liquid
+/// Glass is enabled so blurred underlying content shines cleanly through.
 Color resolveSoftBlurBarrierColor(
   BuildContext context, {
   UserProfilePrefs? prefs,
@@ -24,7 +29,7 @@ Color resolveSoftBlurBarrierColor(
   double solidLightAlpha = 0.34,
 }) {
   final isDark = Theme.of(context).brightness == Brightness.dark;
-  if (resolveSoftBlurEnabled(prefs)) {
+  if (resolveLiquidGlassEnabled(prefs)) {
     return Colors.black.withValues(alpha: isDark ? 0.30 : 0.20);
   }
   return Colors.black.withValues(
@@ -34,8 +39,8 @@ Color resolveSoftBlurBarrierColor(
 
 /// Liquid frosted glass container matching the floating bottom tab bar's
 /// `BackdropFilter` + translucent tint + 1px specular border when Settings
-/// Soft Blur is ON, falling back cleanly to a solid/opaque elevated surface
-/// without `BackdropFilter` when Soft Blur is OFF.
+/// Liquid Glass is ON, falling back cleanly to a solid opaque Material 3
+/// elevated surface without `BackdropFilter` when OFF.
 class LiquidGlassSurface extends StatelessWidget {
   final UserProfilePrefs? prefs;
   final Widget child;
@@ -69,11 +74,13 @@ class LiquidGlassSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final softBlurEnabled = resolveSoftBlurEnabled(prefs);
-    final resolvedSolidColor = solidColor ??
-        theme.cardTheme.color ??
-        (isDark ? const Color(0xFF161922) : Colors.white);
+    final effectivePrefs =
+        prefs ?? AppProvidersScope.maybeOf(context)?.settings.prefs;
+    final liquidGlassEnabled = resolveLiquidGlassEnabled(effectivePrefs);
+    final resolvedSolidColor =
+        (solidColor ?? scheme.surfaceContainerHigh).withValues(alpha: 1.0);
     final rawContent = Material(
       type: MaterialType.transparency,
       child: child,
@@ -85,13 +92,14 @@ class LiquidGlassSurface extends StatelessWidget {
           )
         : rawContent;
 
-    if (!softBlurEnabled) {
+    if (!liquidGlassEnabled) {
       final solidBox = Container(
         padding: padding,
         decoration: BoxDecoration(
           color: resolvedSolidColor,
           borderRadius: borderRadius,
-          border: border ?? Border.all(color: theme.dividerColor, width: 1.0),
+          border: border ??
+              Border.all(color: scheme.outlineVariant, width: 1.0),
           boxShadow: boxShadow,
         ),
         child: rawContent,
@@ -106,7 +114,7 @@ class LiquidGlassSurface extends StatelessWidget {
       );
     }
 
-    final maxSigma = resolveSoftBlurBackdropSigma(prefs);
+    final maxSigma = resolveSoftBlurBackdropSigma(effectivePrefs);
 
     late final Color topTint;
     late final Color bottomTint;
@@ -155,28 +163,67 @@ class LiquidGlassSurface extends StatelessWidget {
           ? specularBorder
           : _scaleBoxBorderAlpha(specularBorder, t);
 
-      final glassContent = ClipRRect(
-        borderRadius: borderRadius,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(
-            sigmaX: animatedSigma,
-            sigmaY: animatedSigma,
-          ),
-          child: Container(
-            padding: padding,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [animTopTint, animBottomTint],
+      final Widget glassContent;
+      if (isDockStyle) {
+        // Keep the BackdropFilter blur clipped inside the rounded dock capsule
+        // while allowing child liquid bubbles to overscroll past left/right ends.
+        glassContent = Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned.fill(
+              child: IgnorePointer(
+                child: ClipRRect(
+                  borderRadius: borderRadius,
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(
+                      sigmaX: animatedSigma,
+                      sigmaY: animatedSigma,
+                    ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [animTopTint, animBottomTint],
+                        ),
+                        borderRadius: borderRadius,
+                        border: animBorder,
+                      ),
+                    ),
+                  ),
+                ),
               ),
-              borderRadius: borderRadius,
-              border: animBorder,
             ),
-            child: innerChild,
+            Padding(
+              padding: padding,
+              child: innerChild,
+            ),
+          ],
+        );
+      } else {
+        glassContent = ClipRRect(
+          borderRadius: borderRadius,
+          child: BackdropFilter(
+            filter: ImageFilter.blur(
+              sigmaX: animatedSigma,
+              sigmaY: animatedSigma,
+            ),
+            child: Container(
+              padding: padding,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [animTopTint, animBottomTint],
+                ),
+                borderRadius: borderRadius,
+                border: animBorder,
+              ),
+              child: innerChild,
+            ),
           ),
-        ),
-      );
+        );
+      }
 
       if (baseOuterShadows == null) {
         return glassContent;
@@ -345,6 +392,7 @@ class SoftGlassCard extends StatelessWidget {
   final BorderRadius borderRadius;
   final Color? color;
   final BoxBorder? border;
+  final Color? borderColor;
 
   const SoftGlassCard({
     super.key,
@@ -354,25 +402,29 @@ class SoftGlassCard extends StatelessWidget {
     this.borderRadius = const BorderRadius.all(Radius.circular(16)),
     this.color,
     this.border,
+    this.borderColor,
   });
 
   @override
   Widget build(BuildContext context) {
+    final activePrefs =
+        AppProvidersScope.maybeOf(context)?.settings.prefs ?? prefs;
     final theme = Theme.of(context);
-    final surfaceColor =
-        color ?? theme.cardTheme.color ?? theme.colorScheme.surface;
-    final borderSide = border ?? Border.all(color: theme.dividerColor);
+    final scheme = theme.colorScheme;
+    final resolvedBorderColor = borderColor ?? scheme.outlineVariant;
+    final borderSide = border ?? Border.all(color: resolvedBorderColor, width: 1.0);
     final contentChild = Material(
       type: MaterialType.transparency,
       child: child,
     );
 
-    if (!prefs.cardBlurEnabled) {
+    if (!activePrefs.liquidGlassEnabled) {
+      final solidColor = (color ?? scheme.surfaceContainer).withValues(alpha: 1.0);
       return RepaintBoundary(
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
-            color: surfaceColor,
+            color: solidColor,
             borderRadius: borderRadius,
             border: borderSide,
           ),
@@ -381,15 +433,20 @@ class SoftGlassCard extends StatelessWidget {
       );
     }
 
+    final surfaceColor =
+        color ?? theme.cardTheme.color ?? scheme.surface;
     final isDark = theme.brightness == Brightness.dark;
     final clearTint = isDark
-        ? Colors.black.withValues(alpha: 0.18)
+        ? Colors.black.withValues(
+            alpha: (activePrefs.cardOpacity * 0.42).clamp(0.14, 0.44),
+          )
         : surfaceColor.withValues(
-            alpha: (prefs.cardOpacity * 0.45).clamp(0.20, 0.36),
+            alpha: (activePrefs.cardOpacity * 0.45).clamp(0.20, 0.42),
           );
     final glassBorder = border ??
         Border.all(
-          color: Colors.white.withValues(alpha: isDark ? 0.14 : 0.28),
+          color: borderColor ??
+              Colors.white.withValues(alpha: isDark ? 0.14 : 0.28),
           width: 1.0,
         );
 
