@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
 /// Returns true if [lesson] is marked as cancelled (`Allapot.Nev == "elmaradt"`).
@@ -132,16 +136,283 @@ class PeriodCountdownInfo {
     // 4. All lessons for today have ended.
     return null;
   }
+
+  /// Start timestamp of the active ongoing or break window, or `null` pre-school.
+  DateTime? get windowStart => switch (phase) {
+        PeriodCountdownPhase.ongoing => targetLesson.start.toLocal(),
+        PeriodCountdownPhase.inBreak => previousLesson?.end.toLocal(),
+        PeriodCountdownPhase.beforeSchool => null,
+      };
+
+  /// End timestamp of the active ongoing or break window, or `null` pre-school.
+  DateTime? get windowEnd => switch (phase) {
+        PeriodCountdownPhase.ongoing => targetLesson.end.toLocal(),
+        PeriodCountdownPhase.inBreak => targetLesson.start.toLocal(),
+        PeriodCountdownPhase.beforeSchool => null,
+      };
 }
 
-/// Paints a circular track and clockwise remaining-progress arc around a period
-/// number badge.
+/// Formats remaining duration consistently for active lessons and breaks,
+/// switching to `"59 mp"`, `"58 mp"`, ..., `"1 mp"` in the final minute.
+String formatCountdownRemainingLabel(
+  Duration remaining, {
+  String finalSuffix = ' mp',
+  String minuteSuffix = ' perc van hátra',
+}) {
+  final ms = remaining.inMilliseconds;
+  if (ms <= 0) return '0$finalSuffix';
+  if (ms <= 60000) {
+    final secs = ((ms + 999) ~/ 1000).clamp(1, 60);
+    return '$secs$finalSuffix';
+  }
+  final mins = ((ms + 59999) ~/ 60000).clamp(1, 600);
+  return '$mins$minuteSuffix';
+}
+
+/// Snapshot emitted by [LiveCountdownProgressScope] for countdown rings and
+/// perimeter borders.
+class LiveCountdownSnapshot {
+  final double progress;
+  final int remainingMillis;
+  final bool isFinalMinute;
+  final bool isRefilling;
+
+  const LiveCountdownSnapshot({
+    required this.progress,
+    required this.remainingMillis,
+    required this.isFinalMinute,
+    required this.isRefilling,
+  });
+
+  Duration get remainingDuration =>
+      Duration(milliseconds: remainingMillis < 0 ? 0 : remainingMillis);
+
+  String formattedRemaining({
+    String finalSuffix = ' mp',
+    String minuteSuffix = ' perc van hátra',
+  }) =>
+      formatCountdownRemainingLabel(
+        remainingDuration,
+        finalSuffix: finalSuffix,
+        minuteSuffix: minuteSuffix,
+      );
+}
+
+/// Scopes final-minute (`<= 60s`) 500ms easeOutCubic refill and smooth 120Hz
+/// `Ticker` depletion strictly around the active countdown badge / break card
+/// inside a [RepaintBoundary] so the surrounding screen never rebuilds on vsync.
+class LiveCountdownProgressScope extends StatefulWidget {
+  final DateTime startTime;
+  final DateTime endTime;
+  final DateTime? now;
+  final DateTime Function()? clock;
+  final Widget Function(BuildContext context, LiveCountdownSnapshot snapshot)
+      builder;
+
+  const LiveCountdownProgressScope({
+    super.key,
+    required this.startTime,
+    required this.endTime,
+    this.now,
+    this.clock,
+    required this.builder,
+  });
+
+  @override
+  State<LiveCountdownProgressScope> createState() =>
+      _LiveCountdownProgressScopeState();
+}
+
+class _LiveCountdownProgressScopeState
+    extends State<LiveCountdownProgressScope>
+    with TickerProviderStateMixin {
+  late final AnimationController _refillCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 500),
+  );
+  Ticker? _finalMinuteTicker;
+  Timer? _boundaryTimer;
+  final ValueNotifier<int> _frameTick = ValueNotifier<int>(0);
+
+  bool _wasAboveOneMinute = false;
+  double _lastNormalFraction = 1.0;
+  double _refillFrom = 0.0;
+
+  int get _totalMs => widget.endTime
+      .difference(widget.startTime)
+      .inMilliseconds
+      .clamp(1, 86400000);
+
+  DateTime _sampleNow({bool forLiveTick = false}) {
+    if (widget.clock != null) return widget.clock!();
+    if (forLiveTick) return DateTime.now();
+    return widget.now ?? DateTime.now();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final remMs = widget.endTime.difference(_sampleNow()).inMilliseconds;
+    _lastNormalFraction = (remMs / _totalMs).clamp(0.0, 1.0);
+    if (remMs <= 60000) {
+      // Mounted already inside final minute: start directly at proportional fraction
+      // without triggering a false refill sweep.
+      _wasAboveOneMinute = false;
+      _refillCtrl.value = 1.0;
+    } else {
+      _wasAboveOneMinute = true;
+      _refillCtrl.value = 1.0;
+    }
+    _syncTimingState(allowRefillTrigger: false);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncTimingState(allowRefillTrigger: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant LiveCountdownProgressScope oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final windowChanged = oldWidget.startTime != widget.startTime ||
+        oldWidget.endTime != widget.endTime;
+    if (windowChanged) {
+      final remMs = widget.endTime.difference(_sampleNow()).inMilliseconds;
+      _lastNormalFraction = (remMs / _totalMs).clamp(0.0, 1.0);
+      _wasAboveOneMinute = remMs > 60000;
+      _refillCtrl.value = 1.0;
+    }
+    _syncTimingState(allowRefillTrigger: !windowChanged);
+  }
+
+  void _syncTimingState({required bool allowRefillTrigger}) {
+    final remMs = widget.endTime.difference(_sampleNow()).inMilliseconds;
+    if (remMs > 60000) {
+      _wasAboveOneMinute = true;
+      _lastNormalFraction = (remMs / _totalMs).clamp(0.0, 1.0);
+      _stopFinalMinuteTicker();
+      _scheduleBoundaryTimer(remMs - 60000 + 2);
+      return;
+    }
+
+    _boundaryTimer?.cancel();
+    _boundaryTimer = null;
+
+    if (remMs <= 0) {
+      _wasAboveOneMinute = false;
+      _stopFinalMinuteTicker();
+      return;
+    }
+
+    if (allowRefillTrigger && _wasAboveOneMinute) {
+      _wasAboveOneMinute = false;
+      _refillFrom = _lastNormalFraction;
+      _refillCtrl.forward(from: 0.0);
+    } else {
+      _wasAboveOneMinute = false;
+    }
+
+    if (widget.clock == null && TickerMode.valuesOf(context).enabled) {
+      _ensureFinalMinuteTicker();
+    } else {
+      _stopFinalMinuteTicker();
+    }
+  }
+
+  void _scheduleBoundaryTimer(int delayMs) {
+    _boundaryTimer?.cancel();
+    _boundaryTimer = null;
+    if (widget.clock != null || delayMs <= 0) return;
+    _boundaryTimer = Timer(Duration(milliseconds: delayMs), () {
+      if (!mounted) return;
+      _syncTimingState(allowRefillTrigger: true);
+      _frameTick.value++;
+    });
+  }
+
+  void _ensureFinalMinuteTicker() {
+    _finalMinuteTicker ??= createTicker((_) {
+      if (!mounted) return;
+      final remMs =
+          widget.endTime.difference(_sampleNow(forLiveTick: true)).inMilliseconds;
+      _frameTick.value++;
+      if (remMs <= 0) {
+        _stopFinalMinuteTicker();
+      }
+    });
+    if (!_finalMinuteTicker!.isActive) {
+      _finalMinuteTicker!.start();
+    }
+  }
+
+  void _stopFinalMinuteTicker() {
+    if (_finalMinuteTicker?.isActive ?? false) {
+      _finalMinuteTicker!.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _boundaryTimer?.cancel();
+    _finalMinuteTicker?.dispose();
+    _refillCtrl.dispose();
+    _frameTick.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_frameTick, _refillCtrl]),
+        builder: (context, _) {
+          final isTickerLive = _finalMinuteTicker?.isActive ?? false;
+          final now = _sampleNow(forLiveTick: isTickerLive);
+          final remMs = widget.endTime.difference(now).inMilliseconds;
+          final clampedRem = remMs < 0 ? 0 : remMs;
+          final bool isFinalMinute = clampedRem > 0 && clampedRem <= 60000;
+          final bool isRefilling = _refillCtrl.isAnimating;
+
+          double progress;
+          if (clampedRem <= 0) {
+            progress = 0.0;
+          } else if (clampedRem > 60000) {
+            progress = (clampedRem / _totalMs).clamp(0.0, 1.0);
+          } else {
+            final target = (clampedRem / 60000.0).clamp(0.0, 1.0);
+            if (_refillCtrl.value < 1.0) {
+              final t = Curves.easeOutCubic.transform(_refillCtrl.value);
+              progress = ui.lerpDouble(_refillFrom, target, t)!.clamp(0.0, 1.0);
+            } else {
+              progress = target;
+            }
+          }
+
+          return widget.builder(
+            context,
+            LiveCountdownSnapshot(
+              progress: progress,
+              remainingMillis: clampedRem,
+              isFinalMinute: isFinalMinute,
+              isRefilling: isRefilling,
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Paints a circular track, soft radial glow, and clockwise remaining-progress
+/// arc around a period number badge.
 class PeriodCountdownRingPainter extends CustomPainter {
   final double remainingFraction;
   final Color ringColor;
   final Color trackColor;
   final double strokeWidth;
   final StrokeCap strokeCap;
+  final double glowSigma;
 
   const PeriodCountdownRingPainter({
     required this.remainingFraction,
@@ -149,6 +420,7 @@ class PeriodCountdownRingPainter extends CustomPainter {
     required this.trackColor,
     this.strokeWidth = 3.2,
     this.strokeCap = StrokeCap.round,
+    this.glowSigma = 4.5,
   });
 
   @override
@@ -166,16 +438,28 @@ class PeriodCountdownRingPainter extends CustomPainter {
 
     if (clamped <= 0.0) return;
 
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    final sweep = 2 * math.pi * clamped;
+
+    if (glowSigma > 0) {
+      final glowPaint = Paint()
+        ..color = ringColor.withValues(alpha: 0.42)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth * 1.75
+        ..strokeCap = strokeCap
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, glowSigma);
+      canvas.drawArc(rect, -math.pi / 2, sweep, false, glowPaint);
+    }
+
     final arcPaint = Paint()
       ..color = ringColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth
       ..strokeCap = strokeCap;
-    final rect = Rect.fromCircle(center: center, radius: radius);
     canvas.drawArc(
       rect,
       -math.pi / 2,
-      2 * math.pi * clamped,
+      sweep,
       false,
       arcPaint,
     );
@@ -187,44 +471,104 @@ class PeriodCountdownRingPainter extends CustomPainter {
       oldDelegate.ringColor != ringColor ||
       oldDelegate.trackColor != trackColor ||
       oldDelegate.strokeWidth != strokeWidth ||
-      oldDelegate.strokeCap != strokeCap;
+      oldDelegate.strokeCap != strokeCap ||
+      oldDelegate.glowSigma != glowSigma;
 }
 
 /// Period number badge that displays either a quiet rounded-square badge or,
-/// when [remainingFraction] is non-null, a circular badge encircled by
-/// [PeriodCountdownRingPainter].
+/// when [remainingFraction] (or a live [startTime]/[endTime] window) is active,
+/// a circular badge encircled by [PeriodCountdownRingPainter].
 class PeriodCountdownBadge extends StatelessWidget {
   final String label;
+  final Widget? centerChild;
   final Color backgroundColor;
   final TextStyle textStyle;
   final Color ringColor;
   final double? remainingFraction;
+  final DateTime? startTime;
+  final DateTime? endTime;
+  final DateTime? now;
+  final DateTime Function()? clock;
   final BoxBorder? border;
   final double outerSize;
   final double innerSize;
   final double idleSize;
   final double strokeWidth;
+  final double glowSigma;
   final BorderRadius idleBorderRadius;
 
   const PeriodCountdownBadge({
     super.key,
     required this.label,
+    this.centerChild,
     required this.backgroundColor,
     required this.textStyle,
     required this.ringColor,
     this.remainingFraction,
+    this.startTime,
+    this.endTime,
+    this.now,
+    this.clock,
     this.border,
-    this.outerSize = 42,
+    this.outerSize = 44,
     this.innerSize = 30,
     this.idleSize = 34,
     this.strokeWidth = 3.2,
+    this.glowSigma = 4.5,
     this.idleBorderRadius = const BorderRadius.all(Radius.circular(10)),
   });
 
+  Widget _buildCenterContent() {
+    if (centerChild != null) return centerChild!;
+    final existingFeatures = textStyle.fontFeatures;
+    final tabularStyle = textStyle.copyWith(
+      fontFeatures: (existingFeatures != null && existingFeatures.isNotEmpty)
+          ? existingFeatures
+          : const [ui.FontFeature.tabularFigures()],
+    );
+    return Text(label, style: tabularStyle);
+  }
+
+  Widget _buildActiveRingBadge(double fraction) {
+    return RepaintBoundary(
+      child: SizedBox(
+        width: outerSize,
+        height: outerSize,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Positioned.fill(
+              child: CustomPaint(
+                painter: PeriodCountdownRingPainter(
+                  remainingFraction: fraction,
+                  ringColor: ringColor,
+                  trackColor: ringColor.withValues(alpha: 0.16),
+                  strokeWidth: strokeWidth,
+                  glowSigma: glowSigma,
+                ),
+              ),
+            ),
+            Container(
+              width: innerSize,
+              height: innerSize,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: backgroundColor,
+                shape: BoxShape.circle,
+                border: border,
+              ),
+              child: _buildCenterContent(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final fraction = remainingFraction;
-    if (fraction == null) {
+    final hasLiveWindow = startTime != null && endTime != null;
+    if (remainingFraction == null && !hasLiveWindow) {
       return Container(
         width: idleSize,
         height: idleSize,
@@ -234,38 +578,268 @@ class PeriodCountdownBadge extends StatelessWidget {
           borderRadius: idleBorderRadius,
           border: border,
         ),
-        child: Text(label, style: textStyle),
+        child: _buildCenterContent(),
       );
     }
 
-    return SizedBox(
-      width: outerSize,
-      height: outerSize,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Positioned.fill(
+    if (hasLiveWindow) {
+      return LiveCountdownProgressScope(
+        startTime: startTime!,
+        endTime: endTime!,
+        now: now,
+        clock: clock,
+        builder: (_, snapshot) => _buildActiveRingBadge(snapshot.progress),
+      );
+    }
+
+    return _buildActiveRingBadge(remainingFraction!);
+  }
+}
+
+/// CustomPainter drawing a continuous, glowing full-perimeter rounded-rectangle
+/// countdown progress border starting at top-center and sweeping clockwise.
+class BreakPerimeterCountdownPainter extends CustomPainter {
+  final double progress;
+  final Color color;
+  final Color trackColor;
+  final double radius;
+  final double strokeWidth;
+  final double glowSigma;
+
+  const BreakPerimeterCountdownPainter({
+    required this.progress,
+    required this.color,
+    required this.trackColor,
+    this.radius = 20.0,
+    this.strokeWidth = 2.2,
+    this.glowSigma = 6.0,
+  });
+
+  static Path _buildTopCenterClockwiseRRect(Rect rect, double cornerRadius) {
+    final maxR = math.min(rect.width, rect.height) / 2.0;
+    final r = Radius.circular(cornerRadius.clamp(0.0, maxR));
+    final rx = r.x;
+    final ry = r.y;
+    return Path()
+      ..moveTo(rect.center.dx, rect.top)
+      ..lineTo(rect.right - rx, rect.top)
+      ..arcToPoint(Offset(rect.right, rect.top + ry), radius: r)
+      ..lineTo(rect.right, rect.bottom - ry)
+      ..arcToPoint(Offset(rect.right - rx, rect.bottom), radius: r)
+      ..lineTo(rect.left + rx, rect.bottom)
+      ..arcToPoint(Offset(rect.left, rect.bottom - ry), radius: r)
+      ..lineTo(rect.left, rect.top + ry)
+      ..arcToPoint(Offset(rect.left + rx, rect.top), radius: r)
+      ..close();
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final inset = strokeWidth / 2.0 + 0.5;
+    final rect = Rect.fromLTWH(
+      inset,
+      inset,
+      math.max(0.0, size.width - inset * 2),
+      math.max(0.0, size.height - inset * 2),
+    );
+    if (rect.width <= 0 || rect.height <= 0) return;
+
+    final trackPath = _buildTopCenterClockwiseRRect(
+      rect,
+      math.max(0.0, radius - inset),
+    );
+
+    final trackPaint = Paint()
+      ..color = trackColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth;
+    canvas.drawPath(trackPath, trackPaint);
+
+    final clamped = progress.clamp(0.0, 1.0);
+    if (clamped <= 0.0) return;
+
+    final extracted = Path();
+    for (final metric in trackPath.computeMetrics()) {
+      extracted.addPath(
+        metric.extractPath(0.0, metric.length * clamped),
+        Offset.zero,
+      );
+    }
+
+    if (glowSigma > 0) {
+      final glowPaint = Paint()
+        ..color = color.withValues(alpha: 0.45)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth * 2.0
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, glowSigma);
+      canvas.drawPath(extracted, glowPaint);
+    }
+
+    final arcPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    canvas.drawPath(extracted, arcPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant BreakPerimeterCountdownPainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.color != color ||
+      oldDelegate.trackColor != trackColor ||
+      oldDelegate.radius != radius ||
+      oldDelegate.strokeWidth != strokeWidth ||
+      oldDelegate.glowSigma != glowSigma;
+}
+
+/// Dedicated glowing full-perimeter Break (`Szünet`) card rendered between
+/// consecutive lessons during an active break. Uses zero `BackdropFilter` so
+/// Timetable horizontal swiping and vertical scrolling stay locked at 120fps.
+class BreakCountdownCard extends StatelessWidget {
+  final DateTime breakStart;
+  final DateTime breakEnd;
+  final DateTime? now;
+  final DateTime Function()? clock;
+  final String Function(String)? textTransform;
+
+  const BreakCountdownCard({
+    super.key,
+    required this.breakStart,
+    required this.breakEnd,
+    this.now,
+    this.clock,
+    this.textTransform,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final transform = textTransform ?? (s) => s;
+    final timeFormat = DateFormat('HH:mm');
+    final accent = scheme.primary;
+    final fill = scheme.surfaceContainerHigh.withValues(alpha: isDark ? 0.90 : 0.96);
+
+    return RepaintBoundary(
+      child: LiveCountdownProgressScope(
+        startTime: breakStart,
+        endTime: breakEnd,
+        now: now,
+        clock: clock,
+        builder: (context, snapshot) {
+          final remainingLabel = transform(
+            snapshot.formattedRemaining(
+              finalSuffix: ' mp',
+              minuteSuffix: ' perc van hátra',
+            ),
+          );
+          return Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            decoration: BoxDecoration(
+              color: fill,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: accent.withValues(alpha: isDark ? 0.16 : 0.10),
+                  blurRadius: 14,
+                  spreadRadius: -2,
+                ),
+              ],
+            ),
             child: CustomPaint(
-              painter: PeriodCountdownRingPainter(
-                remainingFraction: fraction,
-                ringColor: ringColor,
-                trackColor: ringColor.withValues(alpha: 0.18),
-                strokeWidth: strokeWidth,
+              foregroundPainter: BreakPerimeterCountdownPainter(
+                progress: snapshot.progress,
+                color: accent,
+                trackColor: accent.withValues(alpha: isDark ? 0.18 : 0.16),
+                radius: 20.0,
+                strokeWidth: 2.2,
+                glowSigma: 6.0,
+              ),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 34,
+                      height: 34,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: accent.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(11),
+                      ),
+                      child: Icon(
+                        Icons.pause_rounded,
+                        color: accent,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            transform('Szünet'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w900,
+                              color: scheme.onSurface,
+                            ),
+                          ),
+                          const SizedBox(height: 1),
+                          Text(
+                            '${timeFormat.format(breakStart)} – ${timeFormat.format(breakEnd)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: scheme.onSurface.withValues(alpha: 0.68),
+                              fontWeight: FontWeight.w700,
+                              fontFeatures: const [
+                                ui.FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: accent.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Text(
+                        remainingLabel,
+                        maxLines: 1,
+                        softWrap: false,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: accent,
+                          fontWeight: FontWeight.w900,
+                          fontFeatures: const [
+                            ui.FontFeature.tabularFigures(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          Container(
-            width: innerSize,
-            height: innerSize,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: backgroundColor,
-              shape: BoxShape.circle,
-              border: border,
-            ),
-            child: Text(label, style: textStyle),
-          ),
-        ],
+          );
+        },
       ),
     );
   }

@@ -1,7 +1,13 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../providers/app_providers.dart';
 import '../services/github_updater_service.dart';
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
@@ -10,20 +16,24 @@ import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 
 /// Dedicated "Az alkalmazásról" (About App / Rendszer & Névjegy) screen with:
-/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v1.1.0'),
+/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v1.1.1'),
 ///   and developer credits.
 /// - Direct link to `https://github.com/mlnlbrt10/tinta-naplo`.
 /// - Manual "Frissítések keresése" button (GitHub Releases OTA updater).
 /// - 5-tap secret Easter egg on the version text to unlock "Fejlesztői beállítások"
-///   with "UwU mód" and "Tsundere mód" toggles.
+///   with Liquid Glass Modes, Studio & Custom Image Backdrops, UwU & Tsundere modes.
 class AboutAppScreen extends StatefulWidget {
   final UserProfilePrefs prefs;
   final ValueChanged<UserProfilePrefs> onPrefsChanged;
+  final Future<Uint8List?> Function()? customImagePicker;
+  final Future<Directory> Function()? backdropDirectoryProvider;
 
   const AboutAppScreen({
     super.key,
     required this.prefs,
     required this.onPrefsChanged,
+    this.customImagePicker,
+    this.backdropDirectoryProvider,
   });
 
   @override
@@ -35,20 +45,56 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
   int _versionTapCount = 0;
   DateTime? _lastTapTime;
   bool _isCheckingUpdates = false;
+  bool _isPickingBackdrop = false;
 
-  late UserProfilePrefs _currentPrefs;
+  late UserProfilePrefs _currentPrefsStorage;
+  SettingsProvider? _settingsProvider;
+
+  UserProfilePrefs get _currentPrefs =>
+      _settingsProvider?.prefs ?? _currentPrefsStorage;
 
   @override
   void initState() {
     super.initState();
-    _currentPrefs = widget.prefs;
+    _currentPrefsStorage = widget.prefs;
     _loadPackageVersion();
+  }
+
+  void _handleSettingsChanged() {
+    if (!mounted) return;
+    final latest = _settingsProvider?.prefs;
+    if (latest != null) {
+      _currentPrefsStorage = latest;
+    }
+    setState(() {});
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final nextProvider = AppProvidersScope.maybeOf(context)?.settings;
+    if (_settingsProvider != nextProvider) {
+      _settingsProvider?.removeListener(_handleSettingsChanged);
+      _settingsProvider = nextProvider;
+      _settingsProvider?.addListener(_handleSettingsChanged);
+    }
+    if (_settingsProvider != null) {
+      _currentPrefsStorage = _settingsProvider!.prefs;
+    }
   }
 
   @override
   void didUpdateWidget(covariant AboutAppScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _currentPrefs = widget.prefs;
+    if (_settingsProvider == null && widget.prefs != oldWidget.prefs) {
+      _currentPrefsStorage = widget.prefs;
+    }
+  }
+
+  @override
+  void dispose() {
+    _settingsProvider?.removeListener(_handleSettingsChanged);
+    super.dispose();
   }
 
   Future<void> _loadPackageVersion() async {
@@ -61,9 +107,75 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
 
   void _updatePrefs(UserProfilePrefs nextPrefs) {
     UserProfilePrefs.syncActiveGlobals(nextPrefs);
-    TokenStorageService.saveProfilePrefsToSharedPrefs(nextPrefs);
-    setState(() => _currentPrefs = nextPrefs);
+    _currentPrefsStorage = nextPrefs;
+    final provider = _settingsProvider ??
+        (mounted ? context.getInheritedWidgetOfExactType<AppProvidersScope>()?.settings : null);
+    if (provider != null) {
+      unawaited(provider.updatePrefs(nextPrefs));
+    } else {
+      TokenStorageService.saveProfilePrefsToSharedPrefs(nextPrefs);
+    }
+    if (mounted) {
+      setState(() => _currentPrefsStorage = nextPrefs);
+    }
     widget.onPrefsChanged(nextPrefs);
+  }
+
+  Future<void> _pickCustomBackdropImage() async {
+    if (_isPickingBackdrop) return;
+    setState(() => _isPickingBackdrop = true);
+    try {
+      final Uint8List? bytes;
+      if (widget.customImagePicker != null) {
+        bytes = await widget.customImagePicker!();
+      } else {
+        final picked = await ImagePicker().pickImage(
+          source: ImageSource.gallery,
+        );
+        bytes = picked != null ? await picked.readAsBytes() : null;
+      }
+      if (bytes == null || bytes.isEmpty) return;
+
+      final docsDir = await (widget.backdropDirectoryProvider != null
+          ? widget.backdropDirectoryProvider!()
+          : getApplicationDocumentsDirectory());
+      final targetFile = File('${docsDir.path}/custom_backdrop.jpg');
+      await targetFile.writeAsBytes(bytes, flush: true);
+
+      // Evict stale image cache so replacing custom_backdrop.jpg updates immediately.
+      await FileImage(targetFile).evict();
+      await ResizeImage(FileImage(targetFile), width: 1440).evict();
+
+      final lum = await AdaptiveContrastTokens.computeImageLuminance(bytes);
+      if (!mounted) return;
+      _updatePrefs(
+        _currentPrefs.copyWith(
+          customBackdropPath: targetFile.path,
+          customBackdropLuminance: lum,
+        ),
+      );
+    } catch (_) {
+      // Ignore canceled picker or transient IO errors cleanly.
+    } finally {
+      if (mounted) {
+        setState(() => _isPickingBackdrop = false);
+      }
+    }
+  }
+
+  Future<void> _clearCustomBackdropImage() async {
+    final existingPath = _currentPrefs.customBackdropPath;
+    _updatePrefs(_currentPrefs.copyWith(clearCustomBackdropPath: true));
+    if (existingPath != null && existingPath.trim().isNotEmpty) {
+      try {
+        final f = File(existingPath);
+        await FileImage(f).evict();
+        await ResizeImage(FileImage(f), width: 1440).evict();
+        if (await f.exists()) {
+          await f.delete();
+        }
+      } catch (_) {}
+    }
   }
 
   void _handleVersionTap() {
@@ -499,23 +611,172 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
               },
             ),
           ),
+          const SizedBox(height: 16),
+          Text(
+            uwu('Liquid Glass Mód (Fizikai optika)'),
+            style: theme.textTheme.labelLarge?.copyWith(
+              fontWeight: FontWeight.w900,
+              color: scheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _currentPrefs.liquidGlassMode.description,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: scheme.onSurface.withValues(alpha: 0.72),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: LiquidGlassMode.values.map((mode) {
+              final selected = _currentPrefs.liquidGlassMode == mode;
+              return ChoiceChip(
+                label: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      mode.label,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight:
+                            selected ? FontWeight.w900 : FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      mode.subtitle,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: scheme.onSurface.withValues(alpha: 0.65),
+                      ),
+                    ),
+                  ],
+                ),
+                selected: selected,
+                onSelected: (_) {
+                  HapticFeedback.selectionClick();
+                  _updatePrefs(
+                    _currentPrefs.copyWith(liquidGlassMode: mode),
+                  );
+                },
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 16),
+          const Divider(height: 1),
+          const SizedBox(height: 14),
+          Text(
+            uwu('Stúdió hátterek & Saját háttérkép'),
+            style: theme.textTheme.labelLarge?.copyWith(
+              fontWeight: FontWeight.w900,
+              color: scheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: BackgroundPresetInfo.presets.map((bg) {
+              final selected = !_currentPrefs.hasCustomBackdrop &&
+                  _currentPrefs.backgroundPreset == bg.id;
+              return ChoiceChip(
+                avatar: Icon(
+                  selected ? Icons.check_circle_rounded : bg.icon,
+                  size: 16,
+                  color: selected ? scheme.primary : null,
+                ),
+                label: Text(
+                  bg.label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                  ),
+                ),
+                selected: selected,
+                onSelected: (_) {
+                  HapticFeedback.selectionClick();
+                  _updatePrefs(
+                    _currentPrefs.copyWith(
+                      backgroundPreset: bg.id,
+                      clearCustomBackdropPath: true,
+                    ),
+                  );
+                },
+              );
+            }).toList(),
+          ),
           const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed:
+                    _isPickingBackdrop ? null : _pickCustomBackdropImage,
+                icon: _isPickingBackdrop
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.photo_library_rounded, size: 18),
+                label: Text(uwu('Saját háttérkép kiválasztása')),
+              ),
+              if (_currentPrefs.hasCustomBackdrop)
+                OutlinedButton.icon(
+                  onPressed: _clearCustomBackdropImage,
+                  icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                  label: Text(uwu('Háttérkép törlése')),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                uwu('Háttér sötétítés / kontraszt'),
+                style: theme.textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Text(
+                '${(_currentPrefs.customBackdropDim.clamp(0.0, 0.75) * 100).round()}%',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w900,
+                  color: scheme.primary,
+                ),
+              ),
+            ],
+          ),
+          Slider(
+            value: _currentPrefs.customBackdropDim.clamp(0.0, 0.75),
+            min: 0.0,
+            max: 0.75,
+            divisions: 15,
+            onChanged: (v) => _updatePrefs(
+              _currentPrefs.copyWith(customBackdropDim: v),
+            ),
+          ),
+          const SizedBox(height: 10),
           TactileBounce(
             onTap: () {
               GitHubUpdaterService.showFrostedUpdateDialog(
                 context,
                 currentVersion: _version,
                 release: const GitHubReleaseInfo(
-                  tagName: 'v1.1.0',
-                  title: 'Tinta Napló v1.1.0 — OTA Frissítő Előnézet',
+                  tagName: 'v1.1.1',
+                  title: 'Tinta Napló v1.1.1 — OTA Frissítő Előnézet',
                   releaseNotes:
                       '• 120Hz-es fizikai animációk és Hero átmenetek\n'
-                      '• Szellemjegy Számoló, Ösztöndíj Kalkulátor és egyedi kerekítési határok\n'
-                      '• Titkos UwU mód és Tsundere mód :3\n'
-                      '• Közvetlen GitHub Releases APK letöltés és telepítés (Tinta-Naplo-v1.1.0.apk)',
+                      '• MenetrendGO reggeli/délutáni helyreállítás és Szünet visszaszámláló\n'
+                      '• Kísérleti Liquid Glass módok, Stúdió hátterek és saját háttérkép\n'
+                      '• Közvetlen GitHub Releases APK letöltés és telepítés (tinta-naplo-v1.1.1.apk)',
                   htmlUrl: GitHubUpdaterService.repoUrl,
                   apkDownloadUrl:
-                      '${GitHubUpdaterService.repoUrl}/releases/latest/download/Tinta-Naplo-v1.1.0.apk',
+                      '${GitHubUpdaterService.repoUrl}/releases/latest/download/tinta-naplo-v1.1.1.apk',
                 ),
               );
             },

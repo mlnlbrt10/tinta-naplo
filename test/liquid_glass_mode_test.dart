@@ -572,5 +572,78 @@ void main() {
       expect(colors[2].a, closeTo(0.14, 0.01));
       expect(colors[4].a, closeTo(0.25, 0.01));
     });
+
+    testWidgets(
+      'toggling Liquid Glass OFF in Megjelenés és témák synchronously updates SettingsProvider/ThemeProvider and allows immediate Backdrop Color selection on same frame',
+      (tester) async {
+        const initialPrefs = UserProfilePrefs(
+          themeStyle: AppThemeStyle.oledPureBlack,
+          liquidGlassEnabled: true,
+          backgroundPreset: 'pure_oled',
+        );
+        final settings = SettingsProvider(initialPrefs: initialPrefs);
+        addTearDown(settings.dispose);
+        final theme = ThemeProvider(settings);
+        addTearDown(theme.dispose);
+        final commute = CommuteProvider(settings);
+        addTearDown(commute.dispose);
+
+        await tester.pumpWidget(
+          AppProvidersScope(
+            settings: settings,
+            theme: theme,
+            commute: commute,
+            child: ListenableBuilder(
+              listenable: Listenable.merge([settings, theme]),
+              builder: (context, _) => MaterialApp(
+                theme: OledTheme.buildTheme(prefs: settings.prefs),
+                home: AppSettingsScreen(
+                  session: _testSession(),
+                  student: null,
+                  kretaClient: KretaClient(),
+                  prefs: initialPrefs, // Deliberately static to verify provider reactivity
+                  onPrefsChanged: (_) {},
+                  onLogout: () {},
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        await tester.tap(find.text('Megjelenés és témák'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 320));
+
+        expect(find.text('Áttetszőség'), findsOneWidget);
+        expect(find.text('Elmosás erőssége'), findsOneWidget);
+
+        // Toggle Liquid Glass OFF
+        await tester.tap(find.widgetWithText(SwitchListTile, 'Liquid Glass'));
+        await tester.pump();
+
+        expect(settings.prefs.liquidGlassEnabled, isFalse);
+        expect(theme.liquidGlassEnabled, isFalse);
+        expect(find.text('Áttetszőség'), findsNothing);
+        expect(find.text('Elmosás erőssége'), findsNothing);
+
+        // Select studio preset 'Nordic Slate' immediately without leaving Settings
+        final slateChip = find.text('Nordic Slate');
+        await tester.ensureVisible(slateChip);
+        await tester.tap(slateChip);
+        await tester.pump();
+
+        expect(settings.prefs.backgroundPreset, 'nordic_slate');
+        expect(theme.backgroundPreset, 'nordic_slate');
+        expect(
+          ChristmasAndBackgroundOverlay.hasAmbientBackdrop(
+            tester.element(find.byType(ChristmasAndBackgroundOverlay).last),
+            settings.prefs,
+          ),
+          isTrue,
+        );
+      },
+    );
   });
 }

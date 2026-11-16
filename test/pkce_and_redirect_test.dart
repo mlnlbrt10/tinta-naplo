@@ -227,31 +227,31 @@ void main() {
       GitHubUpdaterService.latestReleaseApiUrl,
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest',
     );
-    expect(GitHubUpdaterService.fallbackAppVersion, '1.1.0');
-    expect(GitHubUpdaterService.fallbackBuildNumber, '2');
-    expect(GitHubUpdaterService.defaultApkFileName, 'Tinta-Naplo-v1.1.0.apk');
+    expect(GitHubUpdaterService.fallbackAppVersion, '1.1.1');
+    expect(GitHubUpdaterService.fallbackBuildNumber, '13');
+    expect(GitHubUpdaterService.defaultApkFileName, 'tinta-naplo-v1.1.1.apk');
     expect(
-      GitHubUpdaterService.apkFileNameForTag('v1.1.0'),
-      'Tinta-Naplo-v1.1.0.apk',
+      GitHubUpdaterService.apkFileNameForTag('v1.1.1'),
+      'tinta-naplo-v1.1.1.apk',
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.1.0', 'v1.1.1'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.1.1', 'v1.1.2'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.1.0', 'v1.1.0'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.1.1', 'v1.1.1'),
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.1.0-alpha', 'v1.1.0'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.1.1-alpha', 'v1.1.1'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.1.0-alpha', 'v1.1.0-alpha'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.1.1-alpha', 'v1.1.1-alpha'),
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.1.0', 'v1.0.9'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.1.1', 'v1.1.0'),
       isFalse,
     );
     // Legacy pre-rebrand v1.2.x / v1.1.x tags must not prompt updates on v1.0.0.
@@ -280,29 +280,29 @@ void main() {
       isFalse,
     );
     final brandedFutureRelease = GitHubReleaseInfo.fromJson({
-      'tag_name': 'v1.1.0',
-      'name': 'Tinta Napló v1.1.0',
+      'tag_name': 'v1.1.1',
+      'name': 'Tinta Napló v1.1.1',
       'body': 'Újdonságok',
-      'html_url': 'https://github.com/mlnlbrt10/tinta-naplo/releases/tag/v1.1.0',
+      'html_url': 'https://github.com/mlnlbrt10/tinta-naplo/releases/tag/v1.1.1',
       'assets': [
         {
           'name': 'app-release.apk',
           'browser_download_url': 'https://example.com/app-release.apk',
         },
         {
-          'name': 'Tinta-Naplo-v1.1.0.apk',
-          'browser_download_url': 'https://example.com/Tinta-Naplo-v1.1.0.apk',
+          'name': 'tinta-naplo-v1.1.1.apk',
+          'browser_download_url': 'https://example.com/tinta-naplo-v1.1.1.apk',
         },
       ],
     });
     expect(
       brandedFutureRelease.apkDownloadUrl,
-      'https://example.com/Tinta-Naplo-v1.1.0.apk',
+      'https://example.com/tinta-naplo-v1.1.1.apk',
     );
     expect(
       GitHubUpdaterService.isRemoteVersionNewer(
         '1.0.0',
-        'v1.1.0',
+        'v1.1.1',
         release: brandedFutureRelease,
       ),
       isTrue,

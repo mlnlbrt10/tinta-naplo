@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../providers/app_providers.dart';
 import '../services/token_storage_service.dart';
+import '../theme/oled_theme.dart';
 
 /// Resolves whether Settings "Liquid Glass" is active and enables glassmorphic
 /// `BackdropFilter` surfaces and fluid droplet slider physics.
@@ -411,20 +412,38 @@ class SoftGlassCard extends StatelessWidget {
         AppProvidersScope.maybeOf(context)?.settings.prefs ?? prefs;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final resolvedBorderColor = borderColor ?? scheme.outlineVariant;
+    final activePreset = BackgroundPresetInfo.resolve(activePrefs);
+    final hasStudioOrCustomBackdrop =
+        activePrefs.hasCustomBackdrop || activePreset.id != 'pure_oled';
+    final contrast = AdaptiveContrastTokens.resolve(activePrefs);
+    final resolvedBorderColor = borderColor ??
+        (hasStudioOrCustomBackdrop
+            ? contrast.cardBorder
+            : scheme.outlineVariant);
     final borderSide = border ?? Border.all(color: resolvedBorderColor, width: 1.0);
+    final Widget themedChild = hasStudioOrCustomBackdrop
+        ? DefaultTextStyle.merge(
+            style: TextStyle(color: contrast.primaryText),
+            child: IconTheme.merge(
+              data: IconThemeData(color: contrast.iconColor),
+              child: child,
+            ),
+          )
+        : child;
     final contentChild = Material(
       type: MaterialType.transparency,
-      child: child,
+      child: themedChild,
     );
 
     if (!activePrefs.liquidGlassEnabled) {
-      final solidColor = (color ?? scheme.surfaceContainer).withValues(alpha: 1.0);
+      final baseSolid = hasStudioOrCustomBackdrop
+          ? (color ?? contrast.cardFill.withValues(alpha: 1.0))
+          : (color ?? scheme.surfaceContainer).withValues(alpha: 1.0);
       return RepaintBoundary(
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
-            color: solidColor,
+            color: baseSolid,
             borderRadius: borderRadius,
             border: borderSide,
           ),
@@ -436,17 +455,21 @@ class SoftGlassCard extends StatelessWidget {
     final surfaceColor =
         color ?? theme.cardTheme.color ?? scheme.surface;
     final isDark = theme.brightness == Brightness.dark;
-    final clearTint = isDark
-        ? Colors.black.withValues(
-            alpha: (activePrefs.cardOpacity * 0.42).clamp(0.14, 0.44),
-          )
-        : surfaceColor.withValues(
-            alpha: (activePrefs.cardOpacity * 0.45).clamp(0.20, 0.42),
-          );
+    final clearTint = hasStudioOrCustomBackdrop
+        ? (color ?? contrast.cardFill)
+        : (isDark
+            ? Colors.black.withValues(
+                alpha: (activePrefs.cardOpacity * 0.42).clamp(0.14, 0.44),
+              )
+            : surfaceColor.withValues(
+                alpha: (activePrefs.cardOpacity * 0.45).clamp(0.20, 0.42),
+              ));
     final glassBorder = border ??
         Border.all(
           color: borderColor ??
-              Colors.white.withValues(alpha: isDark ? 0.14 : 0.28),
+              (hasStudioOrCustomBackdrop
+                  ? contrast.cardBorder
+                  : Colors.white.withValues(alpha: isDark ? 0.14 : 0.28)),
           width: 1.0,
         );
 

@@ -16,6 +16,93 @@ enum AppThemeStyle {
   light,
 }
 
+/// Physical-optics Liquid Glass rendering & spring physics presets selectable
+/// in Developer Options (`Fejlesztői beállítások`).
+enum LiquidGlassMode {
+  classicFrost(
+    label: 'Classic Frost',
+    subtitle: 'Alapértelmezett matt üveg',
+    description:
+        'Kiegyensúlyozott matt üvegfelület, tiszta rugófizika és lágy felső peremfény.',
+    stiffnessX: 340.0,
+    dampingX: 22.0,
+    stiffnessY: 290.0,
+    dampingY: 14.5,
+    stretchMultiplier: 1.0,
+  ),
+  hydroMercury(
+    label: 'Hydro Mercury',
+    subtitle: 'Folyékony Higany',
+    description:
+        'Nagy felületi feszültségű higanycsepp fizika, nyújtás húzáskor és fémes peremtükröződés.',
+    stiffnessX: 430.0,
+    dampingX: 14.0,
+    stiffnessY: 340.0,
+    dampingY: 11.5,
+    stretchMultiplier: 1.45,
+  ),
+  opticalPrism(
+    label: 'Optical Prism',
+    subtitle: 'Optikai Prizma',
+    description:
+        'Kristálytiszta üveg finom meleg-borostyán és jégkék kromatikus élszóródással.',
+    stiffnessX: 350.0,
+    dampingX: 21.0,
+    stiffnessY: 290.0,
+    dampingY: 14.5,
+    stretchMultiplier: 1.05,
+  ),
+  smokedObsidian(
+    label: 'Smoked Obsidian',
+    subtitle: 'Füstölt Obszidián',
+    description:
+        'ND füstölt stúdióüveg kritikusan csillapított viszkózus csúszással és 1px csiszolt éllel.',
+    stiffnessX: 210.0,
+    dampingX: 34.0,
+    stiffnessY: 210.0,
+    dampingY: 32.0,
+    stretchMultiplier: 0.25,
+  ),
+  rippleGel(
+    label: 'Ripple Gel',
+    subtitle: 'Hidrogél',
+    description:
+        'Puha rugalmas zselé összenyomódás érintéspontból sugárzó koncentrikus fényhullámmal.',
+    stiffnessX: 265.0,
+    dampingX: 16.5,
+    stiffnessY: 240.0,
+    dampingY: 12.5,
+    stretchMultiplier: 1.15,
+  );
+
+  final String label;
+  final String subtitle;
+  final String description;
+  final double stiffnessX;
+  final double dampingX;
+  final double stiffnessY;
+  final double dampingY;
+  final double stretchMultiplier;
+
+  const LiquidGlassMode({
+    required this.label,
+    required this.subtitle,
+    required this.description,
+    required this.stiffnessX,
+    required this.dampingX,
+    required this.stiffnessY,
+    required this.dampingY,
+    required this.stretchMultiplier,
+  });
+
+  static LiquidGlassMode fromName(String? name) {
+    return LiquidGlassMode.values.firstWhere(
+      (e) => e.name == name,
+      orElse: () => LiquidGlassMode.classicFrost,
+    );
+  }
+}
+
 /// Configurable close button display modes for inspection & detail modals.
 enum ModalCloseButtonMode {
   onlyX,
@@ -120,11 +207,13 @@ class UserProfilePrefs {
   static ModalCloseButtonMode activeModalCloseMode = ModalCloseButtonMode.both;
   static bool activeLiquidGlassEnabled = false;
   static bool get activeSoftBlurEnabled => activeLiquidGlassEnabled;
+  static LiquidGlassMode activeLiquidGlassMode = LiquidGlassMode.classicFrost;
   static double activeSoftBlurSigma = 4.0;
 
   static void syncActiveGlobals(UserProfilePrefs prefs) {
     activeModalCloseMode = prefs.modalCloseMode;
     activeLiquidGlassEnabled = prefs.liquidGlassEnabled;
+    activeLiquidGlassMode = prefs.liquidGlassMode;
     activeSoftBlurSigma = prefs.cardBlurSigma;
   }
 
@@ -165,8 +254,15 @@ class UserProfilePrefs {
   final bool calcAllow200Weight;
   final bool liquidGlassEnabled;
   bool get cardBlurEnabled => liquidGlassEnabled;
+  final LiquidGlassMode liquidGlassMode;
+  final String? customBackdropPath;
+  final double customBackdropDim;
+  final double customBackdropLuminance;
   final double cardOpacity;
   final double cardBlurSigma;
+
+  bool get hasCustomBackdrop =>
+      customBackdropPath != null && customBackdropPath!.trim().isNotEmpty;
   final String favoriteRoute1stPeriod;
   final String favoriteRoute2ndPeriod;
   final Map<String, GradeRoundingConfig> subjectRoundingOverrides;
@@ -222,6 +318,10 @@ class UserProfilePrefs {
     this.calcAllow200Weight = false,
     bool? liquidGlassEnabled,
     @Deprecated('Use liquidGlassEnabled instead') bool? cardBlurEnabled,
+    this.liquidGlassMode = LiquidGlassMode.classicFrost,
+    this.customBackdropPath,
+    this.customBackdropDim = 0.35,
+    this.customBackdropLuminance = 0.15,
     this.cardOpacity = 0.9,
     this.cardBlurSigma = 4.0,
     this.favoriteRoute1stPeriod = '',
@@ -465,6 +565,11 @@ class UserProfilePrefs {
     bool? calcAllow200Weight,
     bool? liquidGlassEnabled,
     @Deprecated('Use liquidGlassEnabled instead') bool? cardBlurEnabled,
+    LiquidGlassMode? liquidGlassMode,
+    String? customBackdropPath,
+    bool clearCustomBackdropPath = false,
+    double? customBackdropDim,
+    double? customBackdropLuminance,
     double? cardOpacity,
     double? cardBlurSigma,
     String? favoriteRoute1stPeriod,
@@ -516,6 +621,15 @@ class UserProfilePrefs {
       calcAllow200Weight: calcAllow200Weight ?? this.calcAllow200Weight,
       liquidGlassEnabled:
           liquidGlassEnabled ?? cardBlurEnabled ?? this.liquidGlassEnabled,
+      liquidGlassMode: liquidGlassMode ?? this.liquidGlassMode,
+      customBackdropPath: clearCustomBackdropPath
+          ? null
+          : (customBackdropPath ?? this.customBackdropPath),
+      customBackdropDim:
+          (customBackdropDim ?? this.customBackdropDim).clamp(0.0, 0.75),
+      customBackdropLuminance:
+          (customBackdropLuminance ?? this.customBackdropLuminance)
+              .clamp(0.0, 1.0),
       cardOpacity: cardOpacity ?? this.cardOpacity,
       cardBlurSigma: cardBlurSigma ?? this.cardBlurSigma,
       favoriteRoute1stPeriod:
@@ -569,6 +683,10 @@ class UserProfilePrefs {
       'walkSchoolToTrainMinutes': walkSchoolToTrainMinutes,
       'calcAllow200Weight': calcAllow200Weight,
       'liquidGlassEnabled': liquidGlassEnabled,
+      'liquidGlassMode': liquidGlassMode.name,
+      'customBackdropPath': customBackdropPath,
+      'customBackdropDim': customBackdropDim,
+      'customBackdropLuminance': customBackdropLuminance,
       'cardOpacity': cardOpacity,
       'cardBlurSigma': cardBlurSigma,
       'favoriteRoute1stPeriod': favoriteRoute1stPeriod,
@@ -710,6 +828,17 @@ class UserProfilePrefs {
             json['cardBlurEnabled'] ??
             json['softBlur'],
       ),
+      liquidGlassMode: LiquidGlassMode.fromName(json['liquidGlassMode'] as String?),
+      customBackdropPath:
+          (json['customBackdropPath'] as String?)?.trim().isNotEmpty == true
+              ? (json['customBackdropPath'] as String).trim()
+              : null,
+      customBackdropDim:
+          ((json['customBackdropDim'] as num?)?.toDouble() ?? 0.35)
+              .clamp(0.0, 0.75),
+      customBackdropLuminance:
+          ((json['customBackdropLuminance'] as num?)?.toDouble() ?? 0.15)
+              .clamp(0.0, 1.0),
       cardOpacity: ((json['cardOpacity'] as num?)?.toDouble() ?? 0.9).clamp(0.6, 1.0),
       cardBlurSigma: ((json['cardBlurSigma'] as num?)?.toDouble() ?? 4.0).clamp(2.0, 8.0),
       favoriteRoute1stPeriod:
@@ -848,6 +977,10 @@ class TokenStorageService {
   static const _keyCalcAllow200Weight = 'kreta_calc_allow_200';
   static const _keyLiquidGlassEnabled = 'kreta_liquid_glass_enabled';
   static const _keyCardBlurEnabled = 'kreta_card_blur_enabled';
+  static const _keyLiquidGlassMode = 'kreta_liquid_glass_mode';
+  static const _keyCustomBackdropPath = 'kreta_custom_backdrop_path';
+  static const _keyCustomBackdropDim = 'kreta_custom_backdrop_dim';
+  static const _keyCustomBackdropLuminance = 'kreta_custom_backdrop_luminance';
   static const _keyCardOpacity = 'kreta_card_opacity';
   static const _keyCardBlurSigma = 'kreta_card_blur_sigma';
   static const _keyFavoriteRoute1stPeriod = 'kreta_fav_route_1st';
@@ -1223,6 +1356,18 @@ class TokenStorageService {
       liquidGlassEnabled:
           (values[_keyLiquidGlassEnabled] ?? values[_keyCardBlurEnabled]) ==
               'true',
+      liquidGlassMode:
+          LiquidGlassMode.fromName(values[_keyLiquidGlassMode]),
+      customBackdropPath:
+          (values[_keyCustomBackdropPath]?.trim().isNotEmpty ?? false)
+              ? values[_keyCustomBackdropPath]!.trim()
+              : null,
+      customBackdropDim:
+          (double.tryParse(values[_keyCustomBackdropDim] ?? '') ?? 0.35)
+              .clamp(0.0, 0.75),
+      customBackdropLuminance:
+          (double.tryParse(values[_keyCustomBackdropLuminance] ?? '') ?? 0.15)
+              .clamp(0.0, 1.0),
       cardOpacity:
           (double.tryParse(values[_keyCardOpacity] ?? '') ?? 0.9).clamp(0.6, 1.0),
       cardBlurSigma:
@@ -1384,6 +1529,26 @@ class TokenStorageService {
       _storage.write(
         key: _keyLiquidGlassEnabled,
         value: prefs.liquidGlassEnabled.toString(),
+      ),
+      _storage.write(
+        key: _keyLiquidGlassMode,
+        value: prefs.liquidGlassMode.name,
+      ),
+      if (prefs.customBackdropPath == null ||
+          prefs.customBackdropPath!.trim().isEmpty)
+        _storage.delete(key: _keyCustomBackdropPath)
+      else
+        _storage.write(
+          key: _keyCustomBackdropPath,
+          value: prefs.customBackdropPath!.trim(),
+        ),
+      _storage.write(
+        key: _keyCustomBackdropDim,
+        value: prefs.customBackdropDim.toString(),
+      ),
+      _storage.write(
+        key: _keyCustomBackdropLuminance,
+        value: prefs.customBackdropLuminance.toString(),
       ),
       _storage.write(
         key: _keyCardOpacity,

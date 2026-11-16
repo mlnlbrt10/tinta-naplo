@@ -1,8 +1,12 @@
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 
 import '../services/token_storage_service.dart';
+import '../theme/oled_theme.dart';
+
+export '../theme/oled_theme.dart' show BackgroundPresetInfo, AdaptiveContrastTokens;
 
 /// Visual App Icon theme presets selectable in Personalization.
 class AppIconPresetInfo {
@@ -115,68 +119,77 @@ class AppIconPresetInfo {
   }
 }
 
-/// Visual Background Accent presets selectable in Personalization.
-class BackgroundPresetInfo {
-  final String id;
-  final String label;
-  final IconData icon;
-  final List<Color> gradientColors;
+/// CustomPainter drawing crisp architectural topographic elevation contours at
+/// ultra-subtle alpha over deep midnight charcoal (`#0B0E14`). Zero bitmap overhead.
+class TopographicContourPainter extends CustomPainter {
+  final Color lineColor;
 
-  const BackgroundPresetInfo({
-    required this.id,
-    required this.label,
-    required this.icon,
-    required this.gradientColors,
+  const TopographicContourPainter({
+    this.lineColor = const Color(0x0EFFFFFF),
   });
 
-  static const List<BackgroundPresetInfo> presets = [
-    BackgroundPresetInfo(
-      id: 'pure_oled',
-      label: 'OLED Fekete (Pure Black)',
-      icon: Icons.contrast_rounded,
-      gradientColors: [Colors.black, Colors.black],
-    ),
-    BackgroundPresetInfo(
-      id: 'brand_navy',
-      label: 'Mély Ciánkék (Brand Cyan/Navy #0B1E28)',
-      icon: Icons.water_drop_rounded,
-      gradientColors: [Color(0xFF0B1E28), Color(0xFF0B1E28)],
-    ),
-    BackgroundPresetInfo(
-      id: 'midnight_aurora',
-      label: 'Éjszakai Aurora',
-      icon: Icons.auto_awesome_rounded,
-      gradientColors: [Color(0xFF071324), Color(0xFF000000), Color(0xFF091A18)],
-    ),
-    BackgroundPresetInfo(
-      id: 'cyber_violet',
-      label: 'Cyber Ibolya',
-      icon: Icons.blur_on_rounded,
-      gradientColors: [Color(0xFF190A26), Color(0xFF000000), Color(0xFF0B1528)],
-    ),
-    BackgroundPresetInfo(
-      id: 'sunset_ember',
-      label: 'Alkonyati Parázs',
-      icon: Icons.wb_twilight_rounded,
-      gradientColors: [Color(0xFF240E0B), Color(0xFF000000), Color(0xFF180B1E)],
-    ),
-    BackgroundPresetInfo(
-      id: 'winter_frost',
-      label: 'Téli Fagy (Ünnepi)',
-      icon: Icons.ac_unit_rounded,
-      gradientColors: [Color(0xFF0A1E29), Color(0xFF03080C), Color(0xFF0E2419)],
-    ),
-  ];
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final paint = Paint()
+      ..color = lineColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0
+      ..isAntiAlias = true;
 
-  static BackgroundPresetInfo resolve(UserProfilePrefs prefs) {
-    if (prefs.christmasModeEnabled && prefs.backgroundPreset == 'pure_oled') {
-      return presets.firstWhere((p) => p.id == 'winter_frost');
+    const ringCount = 11;
+    final center1 = Offset(size.width * 0.24, size.height * 0.22);
+    final center2 = Offset(size.width * 0.82, size.height * 0.74);
+
+    for (int i = 1; i <= ringCount; i++) {
+      final frac = i / ringCount;
+      final rx1 = size.width * (0.14 + frac * 0.95);
+      final ry1 = size.height * (0.08 + frac * 0.56);
+      final p1 = Path();
+      const steps = 40;
+      for (int s = 0; s <= steps; s++) {
+        final theta = (s / steps) * 2 * pi;
+        final wobble = 1.0 +
+            0.09 * sin(theta * 3.0 + i * 0.55) +
+            0.05 * cos(theta * 5.0 - i * 0.35);
+        final x = center1.dx + rx1 * wobble * cos(theta);
+        final y = center1.dy + ry1 * wobble * sin(theta);
+        if (s == 0) {
+          p1.moveTo(x, y);
+        } else {
+          p1.lineTo(x, y);
+        }
+      }
+      p1.close();
+      canvas.drawPath(p1, paint);
+
+      if (i <= 8) {
+        final f2 = i / 8.0;
+        final rx2 = size.width * (0.12 + f2 * 0.72);
+        final ry2 = size.height * (0.09 + f2 * 0.45);
+        final p2 = Path();
+        for (int s = 0; s <= steps; s++) {
+          final theta = (s / steps) * 2 * pi;
+          final wobble = 1.0 +
+              0.08 * cos(theta * 3.0 - i * 0.45) +
+              0.04 * sin(theta * 4.0 + i * 0.65);
+          final x = center2.dx + rx2 * wobble * cos(theta);
+          final y = center2.dy + ry2 * wobble * sin(theta);
+          if (s == 0) {
+            p2.moveTo(x, y);
+          } else {
+            p2.lineTo(x, y);
+          }
+        }
+        p2.close();
+        canvas.drawPath(p2, paint);
+      }
     }
-    return presets.firstWhere(
-      (p) => p.id == prefs.backgroundPreset,
-      orElse: () => presets.first,
-    );
   }
+
+  @override
+  bool shouldRepaint(covariant TopographicContourPainter oldDelegate) =>
+      oldDelegate.lineColor != lineColor;
 }
 
 /// Renders the customized or festive Christmas App Brand Icon Badge.
@@ -274,7 +287,9 @@ class ChristmasAndBackgroundOverlay extends StatefulWidget {
     BuildContext context,
     UserProfilePrefs prefs,
   ) {
+    if (prefs.hasCustomBackdrop) return true;
     final bgPreset = BackgroundPresetInfo.resolve(prefs);
+    if (bgPreset.id != 'pure_oled') return true;
     final isLight = Theme.of(context).brightness == Brightness.light;
     return (!isLight && bgPreset.id != 'pure_oled') || prefs.liquidGlassEnabled;
   }
@@ -346,144 +361,281 @@ class _ChristmasAndBackgroundOverlayState
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final bgPreset = BackgroundPresetInfo.resolve(widget.prefs);
-    final theme = Theme.of(context);
+  Widget _buildBackdropLayers(
+    BuildContext context,
+    UserProfilePrefs activePrefs,
+    BackgroundPresetInfo bgPreset,
+    ThemeData theme,
+  ) {
+    final primary = theme.colorScheme.primary;
+    final secondary = theme.colorScheme.secondary;
+    final baseBg = theme.scaffoldBackgroundColor;
     final isLight = theme.brightness == Brightness.light;
-    final hasGradient = !isLight && bgPreset.id != 'pure_oled';
 
-    Widget content = widget.child;
-    if (ChristmasAndBackgroundOverlay.hasAmbientBackdrop(
-      context,
-      widget.prefs,
-    )) {
-      final primary = theme.colorScheme.primary;
-      final secondary = theme.colorScheme.secondary;
-      final baseBg = theme.scaffoldBackgroundColor;
-      content = Stack(
-        fit: StackFit.expand,
-        children: [
-          RepaintBoundary(
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: hasGradient
-                          ? bgPreset.gradientColors
-                          : [
-                              Color.alphaBlend(
-                                primary.withValues(alpha: isLight ? 0.14 : 0.22),
-                                baseBg,
-                              ),
-                              Color.alphaBlend(
-                                primary.withValues(alpha: isLight ? 0.04 : 0.07),
-                                baseBg,
-                              ),
-                              Color.alphaBlend(
-                                secondary.withValues(alpha: isLight ? 0.12 : 0.18),
-                                baseBg,
-                              ),
-                            ],
-                    ),
+    if (activePrefs.hasCustomBackdrop) {
+      final path = activePrefs.customBackdropPath!.trim();
+      final dim = activePrefs.customBackdropDim.clamp(0.0, 0.75);
+      return RepaintBoundary(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image(
+              image: ResizeImage(
+                FileImage(File(path)),
+                width: 1440,
+              ),
+              fit: BoxFit.cover,
+              filterQuality: FilterQuality.medium,
+              errorBuilder: (_, _, _) => DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: bgPreset.gradientColors,
                   ),
-                  child: const SizedBox.expand(),
                 ),
-                if (widget.prefs.liquidGlassEnabled) ...[
-                  Positioned(
-                    top: -40,
-                    right: -30,
-                    child: IgnorePointer(
-                      child: Container(
-                        width: 310,
-                        height: 310,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: RadialGradient(
-                            colors: [
-                              primary.withValues(alpha: isLight ? 0.26 : 0.34),
-                              primary.withValues(alpha: 0.0),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    top: 220,
-                    left: -60,
-                    child: IgnorePointer(
-                      child: Container(
-                        width: 320,
-                        height: 320,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: RadialGradient(
-                            colors: [
-                              secondary.withValues(alpha: isLight ? 0.22 : 0.28),
-                              secondary.withValues(alpha: 0.0),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    bottom: 50,
-                    right: -40,
-                    child: IgnorePointer(
-                      child: Container(
-                        width: 290,
-                        height: 290,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: RadialGradient(
-                            colors: [
-                              primary.withValues(alpha: isLight ? 0.22 : 0.28),
-                              primary.withValues(alpha: 0.0),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ],
+                child: const SizedBox.expand(),
+              ),
             ),
-          ),
-          content,
-        ],
+            if (dim > 0.001)
+              ColoredBox(color: Colors.black.withValues(alpha: dim)),
+          ],
+        ),
       );
     }
 
-    if (!widget.prefs.christmasModeEnabled) {
-      return content;
-    }
+    final hasStudioGradient = bgPreset.id != 'pure_oled';
+    return RepaintBoundary(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: bgPreset.id == 'brushed_titanium'
+                    ? const Alignment(-1.0, -0.8)
+                    : Alignment.topLeft,
+                end: bgPreset.id == 'brushed_titanium'
+                    ? const Alignment(1.0, 0.8)
+                    : Alignment.bottomRight,
+                colors: hasStudioGradient
+                    ? bgPreset.gradientColors
+                    : [
+                        Color.alphaBlend(
+                          primary.withValues(alpha: isLight ? 0.14 : 0.22),
+                          baseBg,
+                        ),
+                        Color.alphaBlend(
+                          primary.withValues(alpha: isLight ? 0.04 : 0.07),
+                          baseBg,
+                        ),
+                        Color.alphaBlend(
+                          secondary.withValues(alpha: isLight ? 0.12 : 0.18),
+                          baseBg,
+                        ),
+                      ],
+              ),
+            ),
+            child: const SizedBox.expand(),
+          ),
+          if (bgPreset.isVectorContour)
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  painter: TopographicContourPainter(
+                    lineColor: Colors.white.withValues(alpha: 0.055),
+                  ),
+                ),
+              ),
+            ),
+          if (bgPreset.id == 'brushed_titanium')
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topRight,
+                      end: Alignment.bottomLeft,
+                      stops: const [0.0, 0.45, 0.55, 1.0],
+                      colors: [
+                        Colors.white.withValues(alpha: 0.045),
+                        Colors.transparent,
+                        Colors.white.withValues(alpha: 0.025),
+                        Colors.black.withValues(alpha: 0.16),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          if (bgPreset.id == 'monolith_mesh') ...[
+            Positioned(
+              top: -60,
+              right: -40,
+              child: IgnorePointer(
+                child: Container(
+                  width: 340,
+                  height: 340,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        const Color(0xFF3A2A22).withValues(alpha: 0.38),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -40,
+              left: -50,
+              child: IgnorePointer(
+                child: Container(
+                  width: 340,
+                  height: 340,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        const Color(0xFF1B2B3A).withValues(alpha: 0.36),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ] else if (bgPreset.id == 'nordic_slate' ||
+              bgPreset.id == 'warm_alabaster') ...[
+            Positioned(
+              top: -80,
+              left: -30,
+              child: IgnorePointer(
+                child: Container(
+                  width: 360,
+                  height: 300,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        (bgPreset.id == 'warm_alabaster'
+                                ? Colors.white
+                                : const Color(0xFF334155))
+                            .withValues(
+                          alpha: bgPreset.id == 'warm_alabaster' ? 0.55 : 0.22,
+                        ),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ] else if (activePrefs.liquidGlassEnabled && !hasStudioGradient) ...[
+            Positioned(
+              top: -40,
+              right: -30,
+              child: IgnorePointer(
+                child: Container(
+                  width: 310,
+                  height: 310,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        primary.withValues(alpha: isLight ? 0.26 : 0.34),
+                        primary.withValues(alpha: 0.0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 220,
+              left: -60,
+              child: IgnorePointer(
+                child: Container(
+                  width: 320,
+                  height: 320,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        secondary.withValues(alpha: isLight ? 0.22 : 0.28),
+                        secondary.withValues(alpha: 0.0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: 50,
+              right: -40,
+              child: IgnorePointer(
+                child: Container(
+                  width: 290,
+                  height: 290,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        primary.withValues(alpha: isLight ? 0.22 : 0.28),
+                        primary.withValues(alpha: 0.0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
+  @override
+  Widget build(BuildContext context) {
+    final activePrefs = widget.prefs;
+    final bgPreset = BackgroundPresetInfo.resolve(activePrefs);
+    final theme = Theme.of(context);
+    final showBackdrop = ChristmasAndBackgroundOverlay.hasAmbientBackdrop(
+      context,
+      activePrefs,
+    );
+
+    // Keep widget.child inside a stable Stack slot across all backdrop/glass
+    // toggles so pushed routes and open sub-screens never unmount mid-toggle.
     return Stack(
       fit: StackFit.expand,
       children: [
-        content,
-        RepaintBoundary(
-          child: IgnorePointer(
-            child: AnimatedBuilder(
-            animation: _controller,
-            builder: (context, _) {
-              for (final p in _particles) {
-                p.step();
-              }
-              return CustomPaint(
-                painter: _SnowfallPhysicsPainter(particles: _particles),
-                size: Size.infinite,
-              );
-            },
+        if (showBackdrop)
+          Positioned.fill(
+            child: _buildBackdropLayers(context, activePrefs, bgPreset, theme),
           ),
-        ),
-        ),
+        widget.child,
+        if (activePrefs.christmasModeEnabled)
+          Positioned.fill(
+            child: RepaintBoundary(
+              child: IgnorePointer(
+                child: AnimatedBuilder(
+                  animation: _controller,
+                  builder: (context, _) {
+                    for (final p in _particles) {
+                      p.step();
+                    }
+                    return CustomPaint(
+                      painter: _SnowfallPhysicsPainter(particles: _particles),
+                      size: Size.infinite,
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }

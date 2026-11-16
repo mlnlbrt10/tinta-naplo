@@ -1,8 +1,13 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:kreta_api/kreta_api.dart';
 import 'package:rekreta_app/providers/app_providers.dart';
+import 'package:rekreta_app/screens/home_screen.dart';
 import 'package:rekreta_app/screens/more_screen.dart';
 import 'package:rekreta_app/services/kreta_client.dart';
 import 'package:rekreta_app/services/menetrend_service.dart';
@@ -981,4 +986,179 @@ void main() {
       );
     });
   });
+
+  group('Bug 7: MenetrendGO morning & afternoon HomeScreen restore', () {
+    testWidgets(
+      'HomeScreen renders MenetrendHomeCard for both morning (cached + arriveBy fallback) and afternoon commutes',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        FlutterSecureStorage.setMockInitialValues({});
+
+        final lessons = [
+          _lesson(
+            number: 1,
+            start: DateTime(2026, 11, 13, 8, 0),
+            end: DateTime(2026, 11, 13, 8, 45),
+          ),
+          _lesson(
+            number: 5,
+            start: DateTime(2026, 11, 13, 13, 10),
+            end: DateTime(2026, 11, 13, 13, 55),
+          ),
+        ];
+
+        final mockHttp = MockClient((req) async {
+          final body = jsonDecode(req.body) as Map<String, dynamic>;
+          final q = (body['query'] ?? '').toString();
+          if (q.contains('arriveBy: true')) {
+            // Return empty on arriveBy: true to exercise morning arriveBy: false fallback
+            return http.Response(
+              jsonEncode({'data': {'plan': {'itineraries': []}}}),
+              200,
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          final isMorningQuery =
+              q.contains('time: "08:') || q.contains('time: "06:');
+          final dep = isMorningQuery
+              ? DateTime(2026, 11, 13, 7, 14)
+              : DateTime(2026, 11, 13, 14, 15);
+          final arr = dep.add(const Duration(minutes: 28));
+          final payload = {
+            'data': {
+              'plan': {
+                'itineraries': [
+                  {
+                    'startTime': dep.millisecondsSinceEpoch,
+                    'endTime': arr.millisecondsSinceEpoch,
+                    'legs': [
+                      {
+                        'mode': 'RAIL',
+                        'startTime': dep.millisecondsSinceEpoch,
+                        'endTime': arr.millisecondsSinceEpoch,
+                        'departureDelay': 0,
+                        'arrivalDelay': 0,
+                        'realTime': true,
+                        'headsign': isMorningQuery ? 'Székesfehérvár' : 'Bodajk',
+                        'from': {
+                          'name': isMorningQuery ? 'Bodajk' : 'Székesfehérvár',
+                          'stop': {'platformCode': '1'},
+                        },
+                        'to': {
+                          'name': isMorningQuery ? 'Székesfehérvár' : 'Bodajk',
+                          'stop': {'platformCode': '2'},
+                        },
+                        'route': {'shortName': 'S150', 'longName': 'Személy'},
+                        'trip': {'gtfsId': 'MAV:1', 'tripShortName': 'S150'},
+                        'intermediateStops': const [],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          };
+          return http.Response(
+            jsonEncode(payload),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        });
+
+        final prefs = const UserProfilePrefs(
+          transitCardEnabled: true,
+          transitHomeStation: 'Bodajk',
+          transitSchoolStation: 'Székesfehérvár',
+          extras: {
+            'homeTrainStation': 'Bodajk',
+            'homeTrainLat': 47.32,
+            'homeTrainLon': 18.23,
+            'schoolTrainStation': 'Székesfehérvár',
+            'schoolTrainLat': 47.18,
+            'schoolTrainLon': 18.42,
+          },
+        );
+        final settings = SettingsProvider(initialPrefs: prefs);
+        addTearDown(settings.dispose);
+        final theme = ThemeProvider(settings);
+        addTearDown(theme.dispose);
+        final commute = CommuteProvider(
+          settings,
+          menetrendService: MenetrendService(httpClient: mockHttp),
+        );
+        addTearDown(commute.dispose);
+
+        final session = StoredSession(
+          accessToken: 'acc',
+          refreshToken: 'ref',
+          idToken: 'id',
+          instituteCode: 'klik001',
+          expiresAt: DateTime.now().add(const Duration(hours: 2)),
+        );
+        final data = DashboardData(
+          student: null,
+          todaysLessons: lessons,
+          allGrades: const [],
+          latestGrades: const [],
+          homeworks: const [],
+          tests: const [],
+          omissions: const [],
+          messages: const [],
+          activeSession: session,
+        );
+
+        var fakeNow = DateTime(2026, 11, 13, 5, 30); // 2h30m before 1st lesson
+        await tester.pumpWidget(
+          AppProvidersScope(
+            settings: settings,
+            theme: theme,
+            commute: commute,
+            child: MaterialApp(
+              theme: OledTheme.buildTheme(prefs: prefs),
+              home: HomeScreen(
+                initialSession: session,
+                initialCachedData: data,
+                kretaClient: _FakeCommuteDashboardClient(data),
+                prefs: prefs,
+                onPrefsChanged: (_) {},
+                onLogout: () {},
+                clock: () => fakeNow,
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(find.byType(MenetrendHomeCard), findsOneWidget);
+        expect(commute.evaluation, isNotNull);
+        expect(commute.evaluation!.isMorningMode, isTrue);
+
+        // Advance into afternoon homebound window (14:00) and tick 1s timer -> switches automatically
+        fakeNow = DateTime(2026, 11, 13, 14, 0);
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pump(const Duration(milliseconds: 200));
+
+        expect(commute.evaluation, isNotNull);
+        expect(commute.evaluation!.isMorningMode, isFalse);
+        expect(find.byType(MenetrendHomeCard), findsOneWidget);
+      },
+    );
+  });
+}
+
+class _FakeCommuteDashboardClient extends KretaClient {
+  final DashboardData data;
+  _FakeCommuteDashboardClient(this.data) : super();
+
+  @override
+  Future<DashboardData?> loadCachedDashboard(StoredSession session) async =>
+      data;
+
+  @override
+  Future<DashboardData> fetchDashboardData(
+    StoredSession session, {
+    DateTime? date,
+  }) async =>
+      data;
 }

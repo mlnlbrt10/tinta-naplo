@@ -41,8 +41,8 @@ android {
 
     applicationVariants.all {
         val variant = this
-        val versionLabel = variant.versionName ?: "1.1.0"
-        val customApkName = "Tinta-Naplo-v${versionLabel}.apk"
+        val versionLabel = variant.versionName ?: "1.1.1"
+        val customApkName = "tinta-naplo-v${versionLabel}.apk"
         variant.outputs
             .map { it as com.android.build.gradle.internal.api.BaseVariantOutputImpl }
             .forEach { output ->

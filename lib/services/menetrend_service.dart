@@ -340,6 +340,23 @@ class MenetrendTripOption {
       isFavorite: matchedFav,
     );
   }
+
+  /// Compares route, stations, schedule, delay, cancellation, favorite, and
+  /// walk duration without comparing transient UI state.
+  bool isMeaningfullyEqual(MenetrendTripOption other) =>
+      routeShortName == other.routeShortName &&
+      mode == other.mode &&
+      departureStation == other.departureStation &&
+      arrivalStation == other.arrivalStation &&
+      scheduledDeparture == other.scheduledDeparture &&
+      scheduledArrival == other.scheduledArrival &&
+      delayMinutes == other.delayMinutes &&
+      arrivalDelayMinutes == other.arrivalDelayMinutes &&
+      isCancelled == other.isCancelled &&
+      walkToStationMinutes == other.walkToStationMinutes &&
+      walkToDestinationMinutes == other.walkToDestinationMinutes &&
+      isFavorite == other.isFavorite &&
+      tripId == other.tripId;
 }
 
 class CommuteEvaluation {
@@ -434,6 +451,25 @@ class CommuteEvaluation {
       now: now ?? this.now,
     );
   }
+
+  /// Compares two commute evaluations ignoring volatile sample timestamp [now].
+  bool isMeaningfullyEqual(CommuteEvaluation other) {
+    if (isMorningMode != other.isMorningMode ||
+        targetPeriodNumber != other.targetPeriodNumber ||
+        effectiveWalkMinutes != other.effectiveWalkMinutes ||
+        alertBufferMinutes != other.alertBufferMinutes ||
+        targetLesson?.uid != other.targetLesson?.uid ||
+        alternatives.length != other.alternatives.length ||
+        !recommendedTrip.isMeaningfullyEqual(other.recommendedTrip)) {
+      return false;
+    }
+    for (int i = 0; i < alternatives.length; i++) {
+      if (!alternatives[i].isMeaningfullyEqual(other.alternatives[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
 }
 
 /// Service integrating MenetrendGO (MÁVPlusz OTP2 GraphQL & GTFS schedule engine)
@@ -462,7 +498,7 @@ class MenetrendService {
         'Content-Type': 'application/json; charset=utf-8',
         'Origin': 'https://mavplusz.hu',
         'Referer': 'https://mavplusz.hu/',
-        'User-Agent': 'MenetrendGO/1.1.0 (Android)',
+        'User-Agent': 'MenetrendGO/1.1.1 (Android)',
       };
 
   /// Snaps any stored walking speed to one of the three supported presets:
@@ -708,16 +744,32 @@ class MenetrendService {
     required DateTime? lastEnd,
   }) {
     if (firstStart != null &&
-        !now.isBefore(firstStart.subtract(const Duration(hours: 2))) &&
+        !now.isBefore(firstStart.subtract(const Duration(hours: 3))) &&
         now.isBefore(firstStart)) {
       return true;
     }
     if (lastEnd != null &&
-        !now.isBefore(lastEnd.subtract(const Duration(minutes: 30))) &&
-        !now.isAfter(lastEnd.add(const Duration(hours: 1)))) {
+        !now.isBefore(lastEnd.subtract(const Duration(minutes: 45))) &&
+        !now.isAfter(lastEnd.add(const Duration(hours: 2)))) {
       return false;
     }
     return null;
+  }
+
+  /// Evaluates [commuteWindow] from raw [lessons], sorting and filtering out
+  /// cancelled lessons automatically.
+  static bool? commuteWindowForLessons({
+    required DateTime now,
+    required List<Lesson> lessons,
+  }) {
+    final active = lessons.where((l) => !isLessonCancelledStatic(l)).toList()
+      ..sort((a, b) => a.start.toLocal().compareTo(b.start.toLocal()));
+    if (active.isEmpty) return null;
+    return commuteWindow(
+      now: now,
+      firstStart: active.first.start.toLocal(),
+      lastEnd: active.last.end.toLocal(),
+    );
   }
 
   /// A trip is catchable when the user can still walk to the boarding point
@@ -790,7 +842,7 @@ class MenetrendService {
         'addressdetails': '1',
       });
       final response = await _http.get(uri, headers: const {
-        'User-Agent': 'TintaNaplo-Android/1.1.0',
+        'User-Agent': 'TintaNaplo-Android/1.1.1',
         'Accept': 'application/json',
       }).timeout(const Duration(seconds: 6));
       if (response.statusCode == 200) {
@@ -828,7 +880,7 @@ class MenetrendService {
         'limit': '6',
       });
       final res = await _http
-          .get(photonUri, headers: const {'User-Agent': 'TintaNaplo-Android/1.1.0'})
+          .get(photonUri, headers: const {'User-Agent': 'TintaNaplo-Android/1.1.1'})
           .timeout(const Duration(seconds: 6));
       if (res.statusCode == 200) {
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));
@@ -886,6 +938,17 @@ class MenetrendService {
 
   static final Map<String, ({double lat, double lon})> _coordCache = {};
 
+  /// Decodes a JSON response safely, falling back to Latin-1 if the upstream
+  /// server omits `charset=utf-8` on Hungarian stop names.
+  static dynamic _decodeJsonResponse(http.Response response) {
+    final bytes = response.bodyBytes;
+    try {
+      return jsonDecode(utf8.decode(bytes));
+    } on FormatException {
+      return jsonDecode(latin1.decode(bytes));
+    }
+  }
+
   /// Searches real stops/stations by name in the MÁVPlusz OTP2 backend.
   Future<List<TransitStopResult>> searchStops(String query) async {
     final q = query.trim();
@@ -902,7 +965,7 @@ class MenetrendService {
         )
         .timeout(const Duration(seconds: 6));
     if (response.statusCode != 200) return const [];
-    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    final decoded = _decodeJsonResponse(response);
     final stops = decoded['data']?['stops'];
     if (stops is! List) return const [];
     final seen = <String>{};
@@ -914,22 +977,92 @@ class MenetrendService {
       final lon = (st['lon'] as num?)?.toDouble();
       if (name.isEmpty || lat == null || lon == null) continue;
       if (!seen.add(name)) continue;
-      _coordCache[name] = (lat: lat, lon: lon);
+      final coord = (lat: lat, lon: lon);
+      _coordCache[name] = coord;
+      _coordCache[name.trim().toLowerCase()] = coord;
       out.add(TransitStopResult(name: name, lat: lat, lon: lon));
     }
     return out;
   }
 
   Future<({double lat, double lon})?> _resolve(String name) async {
-    final cached = _coordCache[name];
+    final normalized = name.trim().toLowerCase();
+    final cached = _coordCache[name] ?? _coordCache[normalized];
     if (cached != null) return cached;
     final results = await searchStops(name);
     if (results.isEmpty) return null;
     final exact = results.firstWhere(
-      (r) => r.name.toLowerCase() == name.toLowerCase(),
+      (r) => r.name.toLowerCase() == normalized,
       orElse: () => results.first,
     );
     return (lat: exact.lat, lon: exact.lon);
+  }
+
+  static ({double lat, double lon})? _savedStopCoord(
+    UserProfilePrefs prefs, {
+    required bool isHomeSide,
+    required String name,
+  }) {
+    final target = name.trim().toLowerCase();
+    if (target.isEmpty) return null;
+    final busName =
+        (isHomeSide ? prefs.homeBusStop : prefs.schoolBusStop).trim().toLowerCase();
+    final trainName =
+        (isHomeSide ? prefs.homeTrainStation : prefs.schoolTrainStation)
+            .trim()
+            .toLowerCase();
+    final busLatKey = isHomeSide ? 'homeBusLat' : 'schoolBusLat';
+    final busLonKey = isHomeSide ? 'homeBusLon' : 'schoolBusLon';
+    final trainLatKey = isHomeSide ? 'homeTrainLat' : 'schoolTrainLat';
+    final trainLonKey = isHomeSide ? 'homeTrainLon' : 'schoolTrainLon';
+    if (target == busName) {
+      final lat = (prefs.extras[busLatKey] as num?)?.toDouble();
+      final lon = (prefs.extras[busLonKey] as num?)?.toDouble();
+      if (lat != null && lon != null) return (lat: lat, lon: lon);
+    }
+    if (target == trainName) {
+      final lat = (prefs.extras[trainLatKey] as num?)?.toDouble();
+      final lon = (prefs.extras[trainLonKey] as num?)?.toDouble();
+      if (lat != null && lon != null) return (lat: lat, lon: lon);
+    }
+    return null;
+  }
+
+  Future<({double lat, double lon})?> _resolveEndpointCoord({
+    required UserProfilePrefs prefs,
+    required bool isHomeSide,
+    required String name,
+    required bool exactAddress,
+  }) async {
+    if (isHomeSide &&
+        prefs.homeAddressLat != null &&
+        prefs.homeAddressLon != null) {
+      return (lat: prefs.homeAddressLat!, lon: prefs.homeAddressLon!);
+    }
+    if (!isHomeSide &&
+        prefs.schoolAddressLat != null &&
+        prefs.schoolAddressLon != null) {
+      return (lat: prefs.schoolAddressLat!, lon: prefs.schoolAddressLon!);
+    }
+    if (!exactAddress) {
+      final savedStop = _savedStopCoord(
+        prefs,
+        isHomeSide: isHomeSide,
+        name: name,
+      );
+      if (savedStop != null) return savedStop;
+    }
+    final primary = exactAddress
+        ? await _geocodeAddress(name)
+        : await _resolve(name);
+    if (primary != null) return primary;
+    final fallbackStop = _savedStopCoord(
+      prefs,
+      isHomeSide: isHomeSide,
+      name: isHomeSide ? prefs.primaryHomeStop : prefs.primarySchoolStop,
+    );
+    if (fallbackStop != null) return fallbackStop;
+    return exactAddress ? await _resolve(name) : await _geocodeAddress(name);
   }
 
   static MenetrendTransportMode _modeFor(Map leg) {
@@ -1001,60 +1134,30 @@ class MenetrendService {
     final dayUseLocalBus = rawDirLocalBus != false;
 
     try {
-      Future<({double lat, double lon})?> resolveOrigin() async {
-        if (isMorning &&
-            prefs.homeAddressLat != null &&
-            prefs.homeAddressLon != null) {
-          return (lat: prefs.homeAddressLat!, lon: prefs.homeAddressLon!);
-        }
-        if (!isMorning &&
-            prefs.schoolAddressLat != null &&
-            prefs.schoolAddressLon != null) {
-          return (lat: prefs.schoolAddressLat!, lon: prefs.schoolAddressLon!);
-        }
-        return fromExact
-            ? await _geocodeAddress(fromName)
-            : await _resolve(fromName);
-      }
-
-      Future<({double lat, double lon})?> resolveDestination() async {
-        if (isMorning &&
-            prefs.schoolAddressLat != null &&
-            prefs.schoolAddressLon != null) {
-          return (lat: prefs.schoolAddressLat!, lon: prefs.schoolAddressLon!);
-        }
-        if (!isMorning &&
-            prefs.homeAddressLat != null &&
-            prefs.homeAddressLon != null) {
-          return (lat: prefs.homeAddressLat!, lon: prefs.homeAddressLon!);
-        }
-        return toExact ? await _geocodeAddress(toName) : await _resolve(toName);
-      }
-
-      final from = await resolveOrigin();
-      final to = await resolveDestination();
+      final from = await _resolveEndpointCoord(
+        prefs: prefs,
+        isHomeSide: isMorning,
+        name: fromName,
+        exactAddress: fromExact,
+      );
+      final to = await _resolveEndpointCoord(
+        prefs: prefs,
+        isHomeSide: !isMorning,
+        name: toName,
+        exactAddress: toExact,
+      );
       if (from == null || to == null) return null;
 
-      final DateTime refTime;
-      final bool arriveBy;
-      if (isMorning) {
-        arriveBy = firstStartLocal != null;
-        refTime = firstStartLocal ?? now;
-      } else {
-        arriveBy = false;
-        final lastEnd = lastLesson?.end.toLocal() ?? now;
-        refTime = now.isAfter(lastEnd) ? now : lastEnd;
-      }
-
-      final query = '''
+      Future<List?> queryPlan(DateTime ref, bool arriveBy) async {
+        final query = '''
       {
         plan(
           from: {lat: ${from.lat}, lon: ${from.lon}},
           to: {lat: ${to.lat}, lon: ${to.lon}},
-          date: "${DateFormat('yyyy-MM-dd').format(refTime)}",
-          time: "${DateFormat('HH:mm').format(refTime)}",
+          date: "${DateFormat('yyyy-MM-dd').format(ref)}",
+          time: "${DateFormat('HH:mm').format(ref)}",
           arriveBy: $arriveBy,
-          numItineraries: 6
+          numItineraries: 8
         ) {
           itineraries {
             startTime
@@ -1080,37 +1183,63 @@ class MenetrendService {
       }
       ''';
 
-      final response = await _http
-          .post(
-            Uri.parse('$mavPluszBaseUrl/index/graphql'),
-            headers: mavHeaders,
-            body: jsonEncode({'query': query}),
-          )
-          .timeout(const Duration(seconds: 8));
-      if (response.statusCode != 200) return null;
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-      final itineraries = decoded['data']?['plan']?['itineraries'];
-      if (itineraries is! List) return null;
+        final response = await _http
+            .post(
+              Uri.parse('$mavPluszBaseUrl/index/graphql'),
+              headers: mavHeaders,
+              body: jsonEncode({'query': query}),
+            )
+            .timeout(const Duration(seconds: 8));
+        if (response.statusCode != 200) return null;
+        final decoded = _decodeJsonResponse(response);
+        final itineraries = decoded['data']?['plan']?['itineraries'];
+        return itineraries is List ? itineraries : null;
+      }
 
-      return parseItinerariesForCommute(
-        itineraries: itineraries,
-        isMorning: isMorning,
-        firstLesson: firstLesson,
-        lastLesson: lastLesson,
-        prefs: prefs,
-        effectiveWalk: effectiveWalk,
-        fromName: fromName,
-        toName: toName,
-        fromExact: fromExact,
-        toExact: toExact,
-        fromLat: from.lat,
-        fromLon: from.lon,
-        toLat: to.lat,
-        toLon: to.lon,
-        dayLine: dayLine,
-        dayUseLocalBus: dayUseLocalBus,
-        now: now,
-      );
+      CommuteEvaluation? evalFrom(List itineraries) =>
+          parseItinerariesForCommute(
+            itineraries: itineraries,
+            isMorning: isMorning,
+            firstLesson: firstLesson,
+            lastLesson: lastLesson,
+            prefs: prefs,
+            effectiveWalk: effectiveWalk,
+            fromName: fromName,
+            toName: toName,
+            fromExact: fromExact,
+            toExact: toExact,
+            fromLat: from.lat,
+            fromLon: from.lon,
+            toLat: to.lat,
+            toLon: to.lon,
+            dayLine: dayLine,
+            dayUseLocalBus: dayUseLocalBus,
+            now: now,
+          );
+
+      final DateTime refTime;
+      final bool arriveBy;
+      if (isMorning) {
+        arriveBy = firstStartLocal != null;
+        refTime = firstStartLocal ?? now;
+      } else {
+        arriveBy = false;
+        final lastEnd = lastLesson?.end.toLocal() ?? now;
+        refTime = now.isAfter(lastEnd) ? now : lastEnd;
+      }
+
+      final primaryItins = await queryPlan(refTime, arriveBy);
+      final primaryEval = primaryItins != null ? evalFrom(primaryItins) : null;
+      if (primaryEval != null || !isMorning || firstStartLocal == null) {
+        return primaryEval;
+      }
+
+      // Some OTP2 stop pairs return no catchable morning itineraries when
+      // constrained to arriveBy: true; fall back to depart-after `now`.
+      final morningEarliest = firstStartLocal.subtract(const Duration(minutes: 90));
+      final fallbackAnchor = now.isAfter(morningEarliest) ? now : morningEarliest;
+      final fallbackItins = await queryPlan(fallbackAnchor, false);
+      return fallbackItins != null ? evalFrom(fallbackItins) : null;
     } catch (_) {
       return null;
     }
@@ -1219,11 +1348,10 @@ class MenetrendService {
 
       int walkSecondsOf(Map? leg) {
         if (leg == null) return 0;
-        return (((leg['endTime'] as num).toInt() -
-                    (leg['startTime'] as num).toInt()) /
-                1000)
-            .round()
-            .clamp(0, 36000);
+        final startMs = (leg['startTime'] as num?)?.toInt();
+        final endMs = (leg['endTime'] as num?)?.toInt();
+        if (startMs == null || endMs == null) return 0;
+        return ((endMs - startMs) / 1000).round().clamp(0, 36000);
       }
 
       final leadWalk = allLegs.isNotEmpty && allLegs.first['mode'] == 'WALK'
@@ -1449,27 +1577,18 @@ class MenetrendService {
     if (fromName.isEmpty || toName.isEmpty) return const [];
 
     try {
-      Future<({double lat, double lon})?> resolveEndpoint(
-        bool isHome,
-        String name,
-      ) async {
-        if (isHome &&
-            prefs.homeAddressLat != null &&
-            prefs.homeAddressLon != null) {
-          return (lat: prefs.homeAddressLat!, lon: prefs.homeAddressLon!);
-        }
-        if (!isHome &&
-            prefs.schoolAddressLat != null &&
-            prefs.schoolAddressLon != null) {
-          return (lat: prefs.schoolAddressLat!, lon: prefs.schoolAddressLon!);
-        }
-        final stopCoord = await _resolve(name);
-        if (stopCoord != null) return stopCoord;
-        return _geocodeAddress(name);
-      }
-
-      final from = await resolveEndpoint(isMorning, fromName);
-      final to = await resolveEndpoint(!isMorning, toName);
+      final from = await _resolveEndpointCoord(
+        prefs: prefs,
+        isHomeSide: isMorning,
+        name: fromName,
+        exactAddress: isMorning ? prefs.homeAddress.isNotEmpty : prefs.schoolAddress.isNotEmpty,
+      );
+      final to = await _resolveEndpointCoord(
+        prefs: prefs,
+        isHomeSide: !isMorning,
+        name: toName,
+        exactAddress: isMorning ? prefs.schoolAddress.isNotEmpty : prefs.homeAddress.isNotEmpty,
+      );
       if (from == null || to == null) return const [];
 
       final now = DateTime.now();
@@ -1516,7 +1635,7 @@ class MenetrendService {
           )
           .timeout(const Duration(seconds: 7));
       if (response.statusCode != 200) return const [];
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final decoded = _decodeJsonResponse(response);
       final itineraries = decoded['data']?['plan']?['itineraries'];
       if (itineraries is! List) return const [];
 

@@ -528,7 +528,11 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   void _handlePrefsChanged(UserProfilePrefs next) {
     setState(() => _prefs = next);
     final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
-    if (scope == null) {
+    if (scope != null) {
+      if (scope.settings.prefs != next) {
+        unawaited(scope.settings.updatePrefs(next));
+      }
+    } else {
       TokenStorageService.saveProfilePrefsToSharedPrefs(next);
     }
     widget.onPrefsChanged(next);
@@ -536,24 +540,33 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final activePrefs =
-        AppProvidersScope.maybeOf(context)?.settings.prefs ?? _prefs;
-    return AdaptiveBackgroundScaffold(
-      prefs: activePrefs,
-      appBar: buildAdaptiveTransparentAppBar(
-        context,
-        title: uwu('Alkalmazás beállítások'),
-      ),
-      body: MoreScreen(
-        session: widget.session,
-        student: widget.student,
-        kretaClient: widget.kretaClient,
-        dashboardData: widget.dashboardData,
+    final scope = AppProvidersScope.maybeOf(context);
+    Widget buildScaffold(UserProfilePrefs activePrefs) {
+      return AdaptiveBackgroundScaffold(
         prefs: activePrefs,
-        onPrefsChanged: _handlePrefsChanged,
-        onLogout: widget.onLogout,
-        settingsOnly: true,
-      ),
+        appBar: buildAdaptiveTransparentAppBar(
+          context,
+          title: uwu('Alkalmazás beállítások'),
+        ),
+        body: MoreScreen(
+          session: widget.session,
+          student: widget.student,
+          kretaClient: widget.kretaClient,
+          dashboardData: widget.dashboardData,
+          prefs: activePrefs,
+          onPrefsChanged: _handlePrefsChanged,
+          onLogout: widget.onLogout,
+          settingsOnly: true,
+        ),
+      );
+    }
+
+    if (scope == null) {
+      return buildScaffold(_prefs);
+    }
+    return ListenableBuilder(
+      listenable: scope.settings,
+      builder: (context, _) => buildScaffold(scope.settings.prefs),
     );
   }
 }
@@ -616,7 +629,16 @@ class _MoreScreenState extends State<MoreScreen>
   @override
   bool get wantKeepAlive => true;
 
-  late UserProfilePrefs _currentPrefs;
+  late UserProfilePrefs _currentPrefsStorage;
+  SettingsProvider? _settingsProvider;
+
+  UserProfilePrefs get _currentPrefs =>
+      _settingsProvider?.prefs ?? _currentPrefsStorage;
+
+  set _currentPrefs(UserProfilePrefs value) {
+    _currentPrefsStorage = value;
+  }
+
   int _selectedGradeToCustomize = 5;
   _AttendanceFilter _attendanceFilter = _AttendanceFilter.all;
   late final AnimationController _attendanceFilterFadeCtrl =
@@ -629,7 +651,7 @@ class _MoreScreenState extends State<MoreScreen>
       _attendanceFilterFadeCtrl.drive(CurveTween(curve: Curves.easeOutCubic));
   bool _showSentMessages = false;
   bool _isLoadingModules = false;
-  String _appVersion = '1.1.0';
+  String _appVersion = '1.1.1';
   bool _initialEntrancePlayed = false;
   bool _entranceActive = false;
 
@@ -774,8 +796,32 @@ class _MoreScreenState extends State<MoreScreen>
     }
   }
 
+  void _handleSettingsProviderChanged() {
+    if (!mounted) return;
+    final latest = _settingsProvider?.prefs;
+    if (latest != null) {
+      _currentPrefsStorage = latest;
+    }
+    setState(() {});
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final nextProvider = AppProvidersScope.maybeOf(context)?.settings;
+    if (_settingsProvider != nextProvider) {
+      _settingsProvider?.removeListener(_handleSettingsProviderChanged);
+      _settingsProvider = nextProvider;
+      _settingsProvider?.addListener(_handleSettingsProviderChanged);
+    }
+    if (_settingsProvider != null) {
+      _currentPrefsStorage = _settingsProvider!.prefs;
+    }
+  }
+
   @override
   void dispose() {
+    _settingsProvider?.removeListener(_handleSettingsProviderChanged);
     _attendanceFilterFadeCtrl.dispose();
     _homeStationController.dispose();
     _homeTrainStationController.dispose();
@@ -796,14 +842,27 @@ class _MoreScreenState extends State<MoreScreen>
   }
 
   void _updatePrefs(UserProfilePrefs nextPrefs) {
-    UserProfilePrefs.syncActiveGlobals(nextPrefs);
-    setState(() => _currentPrefs = nextPrefs);
-    _stateVersion.value++;
-    final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
-    if (scope == null) {
-      TokenStorageService.saveProfilePrefsToSharedPrefs(nextPrefs);
+    var effectiveNext = nextPrefs;
+    if (!_currentPrefs.transitConfigured &&
+        effectiveNext.transitConfigured &&
+        !effectiveNext.transitCardEnabled) {
+      effectiveNext = effectiveNext.copyWith(transitCardEnabled: true);
     }
-    widget.onPrefsChanged(nextPrefs);
+    UserProfilePrefs.syncActiveGlobals(effectiveNext);
+    _currentPrefsStorage = effectiveNext;
+    final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
+    if (scope != null) {
+      // Update SettingsProvider & ThemeProvider synchronously BEFORE disk IO.
+      unawaited(scope.settings.updatePrefs(effectiveNext));
+    } else {
+      TokenStorageService.saveProfilePrefsToSharedPrefs(effectiveNext);
+    }
+    if (mounted) {
+      setState(() => _currentPrefsStorage = effectiveNext);
+    } else {
+      _stateVersion.value++;
+    }
+    widget.onPrefsChanged(effectiveNext);
   }
 
   /// Recalculates coordinate-derived walk times immediately when walking speed changes.
@@ -2419,7 +2478,8 @@ class _MoreScreenState extends State<MoreScreen>
               padding: const EdgeInsets.symmetric(horizontal: 16),
               spacing: 8,
               children: BackgroundPresetInfo.presets.map((bg) {
-                final selected = _currentPrefs.backgroundPreset == bg.id;
+                final selected = !_currentPrefs.hasCustomBackdrop &&
+                    _currentPrefs.backgroundPreset == bg.id;
                 return ChoiceChip(
                   avatar: Icon(
                     selected ? Icons.check_circle_rounded : bg.icon,
@@ -2437,7 +2497,10 @@ class _MoreScreenState extends State<MoreScreen>
                   onSelected: (_) {
                     HapticFeedback.selectionClick();
                     _updatePrefs(
-                      _currentPrefs.copyWith(backgroundPreset: bg.id),
+                      _currentPrefs.copyWith(
+                        backgroundPreset: bg.id,
+                        clearCustomBackdropPath: true,
+                      ),
                     );
                   },
                 );
@@ -4272,24 +4335,24 @@ class _AllOmissionsScreenState extends State<AllOmissionsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final summary = OmissionsSummary.fromList(widget.omissions);
-    final filtered = _filterOmissions(summary, _filter);
-    final dailyGroups = groupOmissionsByDay(filtered);
+    final scope = AppProvidersScope.maybeOf(context);
+    Widget buildScaffold(UserProfilePrefs activePrefs) {
+      final summary = OmissionsSummary.fromList(widget.omissions);
+      final filtered = _filterOmissions(summary, _filter);
+      final dailyGroups = groupOmissionsByDay(filtered);
 
-    return AdaptiveBackgroundScaffold(
-      prefs: widget.prefs,
-      appBar: buildAdaptiveTransparentAppBar(
-        context,
-        title: uwu('Összes hiányzás és késés'),
-      ),
-      body: Builder(
-        builder: (bodyContext) {
-          final theme = Theme.of(bodyContext);
-          final scheme = theme.colorScheme;
-          final isDark = theme.brightness == Brightness.dark;
-          final effectivePrefs =
-              AppProvidersScope.maybeOf(bodyContext)?.settings.prefs ??
-                  widget.prefs;
+      return AdaptiveBackgroundScaffold(
+        prefs: activePrefs,
+        appBar: buildAdaptiveTransparentAppBar(
+          context,
+          title: uwu('Összes hiányzás és késés'),
+        ),
+        body: Builder(
+          builder: (bodyContext) {
+            final theme = Theme.of(bodyContext);
+            final scheme = theme.colorScheme;
+            final isDark = theme.brightness == Brightness.dark;
+            final effectivePrefs = activePrefs;
           final liquidGlass = resolveLiquidGlassEnabled(effectivePrefs);
           final blurSigma = resolveSoftBlurBackdropSigma(effectivePrefs);
           final topPad = adaptiveAppBarTopPadding(bodyContext, extra: 4);
@@ -4381,44 +4444,53 @@ class _AllOmissionsScreenState extends State<AllOmissionsScreen> {
                               ),
                               padding:
                                   const EdgeInsets.fromLTRB(16, 12, 16, 36),
-                              children: [
-                                _buildEmptyOmissionCard(
-                                  prefs: widget.prefs,
-                                  message:
-                                      'Nincs rögzített mulasztás vagy késés ebben a szűrőben.',
+                                children: [
+                                  _buildEmptyOmissionCard(
+                                    prefs: effectivePrefs,
+                                    message:
+                                        'Nincs rögzített mulasztás vagy késés ebben a szűrőben.',
+                                  ),
+                                ],
+                              )
+                            : ListView.builder(
+                                key: ValueKey<String>(
+                                  'all-omissions-list-${_filter.name}',
                                 ),
-                              ],
-                            )
-                          : ListView.builder(
-                              key: ValueKey<String>(
-                                'all-omissions-list-${_filter.name}',
-                              ),
-                              physics: const BouncingScrollPhysics(
-                                parent: AlwaysScrollableScrollPhysics(),
-                              ),
-                              padding:
-                                  const EdgeInsets.fromLTRB(16, 12, 16, 36),
-                              itemCount: dailyGroups.length,
-                              itemBuilder: (context, i) => RepaintBoundary(
-                                child: Padding(
-                                  padding: const EdgeInsets.only(bottom: 10),
-                                  child: _DailyOmissionCard(
-                                    group: dailyGroups[i],
-                                    prefs: widget.prefs,
-                                    dateFormat: _dateFormat,
-                                    heroPrefix: 'all_${_filter.name}',
+                                physics: const BouncingScrollPhysics(
+                                  parent: AlwaysScrollableScrollPhysics(),
+                                ),
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 12, 16, 36),
+                                itemCount: dailyGroups.length,
+                                itemBuilder: (context, i) => RepaintBoundary(
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: _DailyOmissionCard(
+                                      group: dailyGroups[i],
+                                      prefs: effectivePrefs,
+                                      dateFormat: _dateFormat,
+                                      heroPrefix: 'all_${_filter.name}',
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
-          );
-        },
-      ),
+              ],
+            );
+          },
+        ),
+      );
+    }
+
+    if (scope == null) {
+      return buildScaffold(widget.prefs);
+    }
+    return ListenableBuilder(
+      listenable: scope.settings,
+      builder: (context, _) => buildScaffold(scope.settings.prefs),
     );
   }
 }
@@ -4472,64 +4544,84 @@ class _SettingsAccordionCardState extends State<_SettingsAccordionCard> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final scope = AppProvidersScope.maybeOf(context);
+    final listenables = <Listenable>[
+      if (widget.stateListenable != null) widget.stateListenable!,
+      if (scope != null) scope.settings,
+    ];
 
-    final activePrefs =
-        widget.prefsGetter?.call() ?? widget.prefs ?? const UserProfilePrefs();
-
-    return ChristmasSnowCap(
-      enabled: widget.christmasCap,
-      child: SoftGlassCard(
-        prefs: activePrefs,
-        padding: EdgeInsets.zero,
-        borderRadius: OledTheme.largeRadius,
-        child: TactileBounce(
-          pressedScale: 0.98,
-          onTap: _openSubScreen,
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(14),
+    Widget buildCard(UserProfilePrefs activePrefs) {
+      return ChristmasSnowCap(
+        enabled: activePrefs.christmasModeEnabled,
+        child: SoftGlassCard(
+          prefs: activePrefs,
+          padding: EdgeInsets.zero,
+          borderRadius: OledTheme.largeRadius,
+          child: TactileBounce(
+            pressedScale: 0.98,
+            onTap: _openSubScreen,
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: scheme.primary.withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(widget.icon, size: 20, color: scheme.primary),
                   ),
-                  child: Icon(widget.icon, size: 20, color: scheme.primary),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.title,
-                        style: theme.textTheme.titleSmall
-                            ?.copyWith(fontWeight: FontWeight.w800),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        widget.subtitle,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: scheme.onSurface.withValues(alpha: 0.62),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.title,
+                          style: theme.textTheme.titleSmall
+                              ?.copyWith(fontWeight: FontWeight.w800),
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
+                        const SizedBox(height: 2),
+                        Text(
+                          widget.subtitle,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurface.withValues(alpha: 0.62),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  color: scheme.onSurface.withValues(alpha: 0.72),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: scheme.onSurface.withValues(alpha: 0.72),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
-      ),
+      );
+    }
+
+    if (listenables.isEmpty) {
+      final activePrefs =
+          widget.prefsGetter?.call() ?? widget.prefs ?? const UserProfilePrefs();
+      return buildCard(activePrefs);
+    }
+    return AnimatedBuilder(
+      animation: Listenable.merge(listenables),
+      builder: (context, _) {
+        final activePrefs = scope?.settings.prefs ??
+            widget.prefsGetter?.call() ??
+            widget.prefs ??
+            const UserProfilePrefs();
+        return buildCard(activePrefs);
+      },
     );
   }
 }

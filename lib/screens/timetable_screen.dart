@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -19,10 +20,15 @@ export '../widgets/period_countdown_badge.dart'
     show
         isLessonCancelled,
         isInactivePlaceholderLesson,
+        formatCountdownRemainingLabel,
         PeriodCountdownPhase,
         PeriodCountdownInfo,
         PeriodCountdownRingPainter,
-        PeriodCountdownBadge;
+        PeriodCountdownBadge,
+        LiveCountdownProgressScope,
+        LiveCountdownSnapshot,
+        BreakPerimeterCountdownPainter,
+        BreakCountdownCard;
 
 /// Resolves a continuous [PageView] index into `(weekOffset, dayIndex)` using
 /// floor division so negative offsets (e.g. `499` -> `weekOffset: -1`,
@@ -208,8 +214,8 @@ class _TimetableScreenState extends State<TimetableScreen>
   int _programmaticAnimToken = 0;
   bool _isWeeklyMode = false;
   bool _showFilterPanel = false;
-  bool _initialEntrancePlayed = false;
-  bool _entranceActive = false;
+  late final ValueNotifier<DateTime> _clockNotifier =
+      ValueNotifier<DateTime>(_now());
   bool _isLoading = true;
   bool _isInitialLoadComplete = false;
   final Map<int, List<Lesson>> _weekLessonsCache = {};
@@ -369,16 +375,6 @@ class _TimetableScreenState extends State<TimetableScreen>
     return DateTime(monday.year, monday.month, monday.day + pos.dayIndex);
   }
 
-  void _armInitialEntranceIfNeeded() {
-    if (!_initialEntrancePlayed && widget.isActiveTab && !_isLoading) {
-      _initialEntrancePlayed = true;
-      _entranceActive = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _entranceActive = false;
-      });
-    }
-  }
-
   DateTime _now() => widget.clock?.call() ?? DateTime.now();
 
   @override
@@ -413,11 +409,13 @@ class _TimetableScreenState extends State<TimetableScreen>
     _currentPage = _basePage + initialDayOffset;
     _pageController = PageController(initialPage: _currentPage);
     _ensureWeekLoaded(0, isInitialLoad: true, prefetchNeighbors: true);
-    // Keeps the ongoing highlight and period countdown ring synced second-by-second.
+    // Updates only today's scoped lesson/break clock notifier without rebuilding
+    // the full TimetableScreen tree or re-animating day pages.
     _minuteTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted || !widget.isActiveTab) return;
-      if (_isSameDay(_currentDate, _now())) {
-        setState(() {});
+      final current = _now();
+      if (_isSameDay(_currentDate, current)) {
+        _clockNotifier.value = current;
       }
     });
   }
@@ -426,7 +424,10 @@ class _TimetableScreenState extends State<TimetableScreen>
   void didUpdateWidget(covariant TimetableScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!oldWidget.isActiveTab && widget.isActiveTab) {
-      _armInitialEntranceIfNeeded();
+      final current = _now();
+      if (_isSameDay(_currentDate, current)) {
+        _clockNotifier.value = current;
+      }
     }
     if (oldWidget.isActiveTab && !widget.isActiveTab && _isWeeklyMode) {
       _applyOrientation(weeklyLandscape: false);
@@ -466,6 +467,7 @@ class _TimetableScreenState extends State<TimetableScreen>
   @override
   void dispose() {
     _minuteTicker?.cancel();
+    _clockNotifier.dispose();
     _pageController.dispose();
     SystemChrome.setPreferredOrientations(const [
       DeviceOrientation.portraitUp,
@@ -627,7 +629,6 @@ class _TimetableScreenState extends State<TimetableScreen>
             progPos.dayIndex,
           );
         }
-        _armInitialEntranceIfNeeded();
       });
 
       if (prefetchNeighbors) {
@@ -870,8 +871,7 @@ class _TimetableScreenState extends State<TimetableScreen>
           padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
           child: Column(
             children: [
-              _buildTopControlsCard(theme, scheme, monday, endDay)
-                  .staggeredEntrance(0, enabled: _entranceActive),
+              _buildTopControlsCard(theme, scheme, monday, endDay),
               const SizedBox(height: 6),
               _buildWeekdaySelector(
                 theme,
@@ -881,7 +881,7 @@ class _TimetableScreenState extends State<TimetableScreen>
                 mondayPage,
                 pos.dayIndex,
                 visibleDaysCount,
-              ).staggeredEntrance(1, enabled: _entranceActive),
+              ),
               AnimatedSize(
                 duration: const Duration(milliseconds: 180),
                 curve: Curves.easeOutCubic,
@@ -909,6 +909,7 @@ class _TimetableScreenState extends State<TimetableScreen>
                   : PageView.builder(
                       controller: _pageController,
                       physics: const PageScrollPhysics(),
+                      allowImplicitScrolling: true,
                       itemCount: _totalPageCount,
                       onPageChanged: _onPageSwiped,
                       itemBuilder: (context, pageIdx) {
@@ -931,43 +932,52 @@ class _TimetableScreenState extends State<TimetableScreen>
                             _weekLessonsCache.containsKey(pagePos.weekOffset)
                                 ? null
                                 : _weekErrors[pagePos.weekOffset];
-                        return RefreshIndicator(
-                          displacement: 44,
-                          edgeOffset: 8,
-                          strokeWidth: 2.6,
-                          onRefresh: () => _ensureWeekLoaded(
-                            pagePos.weekOffset,
-                            prefetchNeighbors: true,
-                            forceRefresh: true,
+                        return _KeepAliveDayPage(
+                          key: ValueKey<int>(pageIdx),
+                          child: RefreshIndicator(
+                            displacement: 44,
+                            edgeOffset: 8,
+                            strokeWidth: 2.6,
+                            onRefresh: () => _ensureWeekLoaded(
+                              pagePos.weekOffset,
+                              prefetchNeighbors: true,
+                              forceRefresh: true,
+                            ),
+                            child: pageError != null
+                                ? ListView(
+                                    key: PageStorageKey<int>(pageIdx),
+                                    primary: false,
+                                    physics: const BouncingScrollPhysics(
+                                      parent: AlwaysScrollableScrollPhysics(),
+                                    ),
+                                    padding: const EdgeInsets.fromLTRB(
+                                      16,
+                                      16,
+                                      16,
+                                      100,
+                                    ),
+                                    children: [_buildErrorCard(theme, pageError)],
+                                  )
+                                : ListView(
+                                    key: PageStorageKey<int>(pageIdx),
+                                    primary: false,
+                                    physics: const BouncingScrollPhysics(
+                                      parent: AlwaysScrollableScrollPhysics(),
+                                    ),
+                                    padding: const EdgeInsets.fromLTRB(
+                                      16,
+                                      2,
+                                      16,
+                                      100,
+                                    ),
+                                    children: _buildDailyList(
+                                      theme,
+                                      scheme,
+                                      day,
+                                      pagePos.weekOffset,
+                                    ),
+                                  ),
                           ),
-                          child: pageError != null
-                              ? ListView(
-                                  primary: false,
-                                  physics: const BouncingScrollPhysics(
-                                    parent: AlwaysScrollableScrollPhysics(),
-                                  ),
-                                  padding: const EdgeInsets.fromLTRB(
-                                    16,
-                                    16,
-                                    16,
-                                    100,
-                                  ),
-                                  children: [_buildErrorCard(theme, pageError)],
-                                )
-                              : ListView(
-                                  primary: false,
-                                  physics: const BouncingScrollPhysics(
-                                    parent: AlwaysScrollableScrollPhysics(),
-                                  ),
-                                  padding:
-                                      const EdgeInsets.fromLTRB(16, 2, 16, 100),
-                                  children: _buildDailyList(
-                                    theme,
-                                    scheme,
-                                    day,
-                                    pagePos.weekOffset,
-                                  ),
-                                ),
                         );
                       },
                     ),
@@ -1306,29 +1316,84 @@ class _TimetableScreenState extends State<TimetableScreen>
             : RepaintBoundary(
                 child: _buildEmptyLessonsCard(theme, scheme),
               )
+      else if (_isSameDay(day, _now()))
+        _buildTodayLessonsColumn(theme, day, rawDayLessons, dayLessons)
       else
-        ...() {
-          final now = _now();
-          final countdownInfo = PeriodCountdownInfo.evaluate(
-            rawDayLessons,
-            now,
-            onlyOnDate: day,
+        ...List.generate(dayLessons.length, (idx) {
+          final lesson = dayLessons[idx];
+          return buildOledLessonCard(
+            context,
+            theme,
+            lesson,
+            _timeFormat,
+            prefs: widget.prefs,
+            homework: _resolveHomeworkForLesson(lesson),
           );
-          return List.generate(dayLessons.length, (idx) {
-            final lesson = dayLessons[idx];
-            return buildOledLessonCard(
-              context,
-              theme,
-              lesson,
-              _timeFormat,
-              prefs: widget.prefs,
-              homework: _resolveHomeworkForLesson(lesson),
-              countdownInfo: countdownInfo,
-              nowOverride: now,
-            );
-          });
-        }(),
+        }),
     ];
+  }
+
+  Widget _buildTodayLessonsColumn(
+    ThemeData theme,
+    DateTime day,
+    List<Lesson> rawDayLessons,
+    List<Lesson> dayLessons,
+  ) {
+    final activeDayLessons = dayLessons
+        .where((l) => !isLessonCancelled(l) && !isInactivePlaceholderLesson(l))
+        .toList()
+      ..sort((a, b) => a.start.toLocal().compareTo(b.start.toLocal()));
+
+    final breakPrevByNextUid = <String, Lesson>{};
+    for (int i = 1; i < activeDayLessons.length; i++) {
+      final prev = activeDayLessons[i - 1];
+      final next = activeDayLessons[i];
+      if (prev.end.toLocal().isBefore(next.start.toLocal())) {
+        breakPrevByNextUid[next.uid] = prev;
+      }
+    }
+
+    return ValueListenableBuilder<DateTime>(
+      valueListenable: _clockNotifier,
+      builder: (context, sampledNow, _) {
+        final now = widget.clock?.call() ?? sampledNow;
+        final countdownInfo = PeriodCountdownInfo.evaluate(
+          rawDayLessons,
+          now,
+          onlyOnDate: day,
+        );
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final lesson in dayLessons) ...[
+              if (breakPrevByNextUid.containsKey(lesson.uid))
+                _TimetableBreakSlot(
+                  key: ValueKey<String>(
+                    'break_${breakPrevByNextUid[lesson.uid]!.uid}_${lesson.uid}',
+                  ),
+                  breakStart: breakPrevByNextUid[lesson.uid]!.end.toLocal(),
+                  breakEnd: lesson.start.toLocal(),
+                  clockNotifier: _clockNotifier,
+                  clock: widget.clock,
+                  textTransform: uwu,
+                ),
+              buildOledLessonCard(
+                context,
+                theme,
+                lesson,
+                _timeFormat,
+                prefs: widget.prefs,
+                homework: _resolveHomeworkForLesson(lesson),
+                countdownInfo: countdownInfo,
+                nowOverride: now,
+                clock: widget.clock,
+              ),
+            ],
+          ],
+        );
+      },
+    );
   }
 
   /// Ultra-compact, multi-column weekly grid fitted on-screen without vertical scrolling.
@@ -1594,6 +1659,148 @@ class _TimetableScreenState extends State<TimetableScreen>
   }
 }
 
+class _KeepAliveDayPage extends StatefulWidget {
+  final Widget child;
+  const _KeepAliveDayPage({super.key, required this.child});
+
+  @override
+  State<_KeepAliveDayPage> createState() => _KeepAliveDayPageState();
+}
+
+class _KeepAliveDayPageState extends State<_KeepAliveDayPage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
+  }
+}
+
+/// Manages smooth 320ms Curves.easeOutCubic enter/exit height+fade+scale
+/// transitions ONLY when a break starts or ends live, while mounting already
+/// settled (`value: 1.0`) when swiping onto a day that is already in a break.
+class _TimetableBreakSlot extends StatefulWidget {
+  final DateTime breakStart;
+  final DateTime breakEnd;
+  final ValueListenable<DateTime> clockNotifier;
+  final DateTime Function()? clock;
+  final String Function(String) textTransform;
+
+  const _TimetableBreakSlot({
+    super.key,
+    required this.breakStart,
+    required this.breakEnd,
+    required this.clockNotifier,
+    required this.textTransform,
+    this.clock,
+  });
+
+  @override
+  State<_TimetableBreakSlot> createState() => _TimetableBreakSlotState();
+}
+
+class _TimetableBreakSlotState extends State<_TimetableBreakSlot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _enterCtrl;
+  late final Animation<double> _curved;
+  late final Animation<double> _scaleAnim;
+  late bool _isActive;
+
+  bool _isInBreakAt(DateTime now) {
+    final local = now.toLocal();
+    return !local.isBefore(widget.breakStart) &&
+        local.isBefore(widget.breakEnd);
+  }
+
+  DateTime _sampleNow() => widget.clock?.call() ?? widget.clockNotifier.value;
+
+  @override
+  void initState() {
+    super.initState();
+    _isActive = _isInBreakAt(_sampleNow());
+    _enterCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 320),
+      value: _isActive ? 1.0 : 0.0,
+    );
+    _curved = CurvedAnimation(
+      parent: _enterCtrl,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeOutCubic,
+    );
+    _scaleAnim = Tween<double>(begin: 0.96, end: 1.0).animate(_curved);
+    widget.clockNotifier.addListener(_handleClockTick);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TimetableBreakSlot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.clockNotifier != widget.clockNotifier) {
+      oldWidget.clockNotifier.removeListener(_handleClockTick);
+      widget.clockNotifier.addListener(_handleClockTick);
+    }
+    _syncBreakState();
+  }
+
+  void _handleClockTick() => _syncBreakState();
+
+  void _syncBreakState() {
+    final nextActive = _isInBreakAt(_sampleNow());
+    if (nextActive == _isActive) return;
+    _isActive = nextActive;
+    if (_isActive) {
+      _enterCtrl.forward();
+    } else {
+      _enterCtrl.reverse();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.clockNotifier.removeListener(_handleClockTick);
+    _enterCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _curved,
+      builder: (context, child) {
+        if (_enterCtrl.value <= 0.0 && !_isActive) {
+          return const SizedBox.shrink();
+        }
+        return ClipRect(
+          child: SizeTransition(
+            sizeFactor: _curved,
+            alignment: AlignmentDirectional.topCenter,
+            child: FadeTransition(
+              opacity: _curved,
+              child: ScaleTransition(
+                scale: _scaleAnim,
+                child: child,
+              ),
+            ),
+          ),
+        );
+      },
+      child: ValueListenableBuilder<DateTime>(
+        valueListenable: widget.clockNotifier,
+        builder: (context, sampledNow, _) => BreakCountdownCard(
+          breakStart: widget.breakStart,
+          breakEnd: widget.breakEnd,
+          now: widget.clock?.call() ?? sampledNow,
+          clock: widget.clock,
+          textTransform: widget.textTransform,
+        ),
+      ),
+    );
+  }
+}
+
 /// Compact shared lesson card builder (`Part B #9` & `Part B #16`) so an entire
 /// typical school day fits comfortably on screen without extensive scrolling.
 Widget buildOledLessonCard(
@@ -1606,6 +1813,7 @@ Widget buildOledLessonCard(
   Homework? homework,
   PeriodCountdownInfo? countdownInfo,
   DateTime? nowOverride,
+  DateTime Function()? clock,
 }) {
   final scheme = theme.colorScheme;
   final isPlaceholder = isInactivePlaceholderLesson(lesson);
@@ -1668,6 +1876,7 @@ Widget buildOledLessonCard(
   final showsCountdownRing = !isPlaceholder &&
       !isCancelled &&
       countdownInfo != null &&
+      countdownInfo.phase == PeriodCountdownPhase.ongoing &&
       countdownInfo.targetLesson.uid == lesson.uid;
   final countdownFraction =
       showsCountdownRing ? countdownInfo.remainingFraction : null;
@@ -1728,6 +1937,10 @@ Widget buildOledLessonCard(
                     ),
                     ringColor: ringColor,
                     remainingFraction: countdownFraction,
+                    startTime: showsCountdownRing ? startLocal : null,
+                    endTime: showsCountdownRing ? endLocal : null,
+                    now: showsCountdownRing ? nowLocal : null,
+                    clock: showsCountdownRing ? clock : null,
                     border: Border.all(
                       color: (!isPlaceholder &&
                               !isCancelled &&

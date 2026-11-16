@@ -78,13 +78,30 @@ class ThemeProvider extends ChangeNotifier {
 
   UserProfilePrefs get prefs => _settings.prefs;
 
-  bool get isLight => _snapshot.themeStyle == AppThemeStyle.light;
+  AdaptiveContrastTokens get contrastTokens =>
+      AdaptiveContrastTokens.resolve(_settings.prefs);
+  Color get adaptivePrimaryText => contrastTokens.primaryText;
+  Color get adaptiveSecondaryText => contrastTokens.secondaryText;
+  Color get adaptiveIconColor => contrastTokens.iconColor;
+  Color get adaptiveCardFill => contrastTokens.cardFill;
+  Color get adaptiveCardBorder => contrastTokens.cardBorder;
+
+  bool get isLight {
+    final preset = BackgroundPresetInfo.resolve(_settings.prefs);
+    if (_snapshot.hasCustomBackdrop || preset.id != 'pure_oled') {
+      return contrastTokens.isLightBackdrop;
+    }
+    return _snapshot.themeStyle == AppThemeStyle.light;
+  }
+
   bool get isDark => !isLight;
   bool get isPureOled =>
+      !_snapshot.hasCustomBackdrop &&
       _snapshot.themeStyle == AppThemeStyle.oledPureBlack &&
       _snapshot.backgroundPreset == 'pure_oled';
   bool get liquidGlassEnabled => _snapshot.liquidGlassEnabled;
   bool get hasSoftBlur => liquidGlassEnabled;
+  LiquidGlassMode get liquidGlassMode => _snapshot.liquidGlassMode;
   double get cardOpacity => _snapshot.cardOpacity;
   double get cardBlurSigma => _snapshot.cardBlurSigma;
   String get backgroundPreset => _snapshot.backgroundPreset;
@@ -134,6 +151,11 @@ class _ThemeSnapshot {
   final bool christmasModeEnabled;
   final String backgroundPreset;
   final bool liquidGlassEnabled;
+  final LiquidGlassMode liquidGlassMode;
+  final bool hasCustomBackdrop;
+  final String? customBackdropPath;
+  final double customBackdropDim;
+  final double customBackdropLuminance;
   final double cardOpacity;
   final double cardBlurSigma;
   final Map<int, int> customGradeColors;
@@ -149,6 +171,11 @@ class _ThemeSnapshot {
     required this.christmasModeEnabled,
     required this.backgroundPreset,
     required this.liquidGlassEnabled,
+    required this.liquidGlassMode,
+    required this.hasCustomBackdrop,
+    required this.customBackdropPath,
+    required this.customBackdropDim,
+    required this.customBackdropLuminance,
     required this.cardOpacity,
     required this.cardBlurSigma,
     required this.customGradeColors,
@@ -165,6 +192,11 @@ class _ThemeSnapshot {
         christmasModeEnabled: p.christmasModeEnabled,
         backgroundPreset: p.backgroundPreset,
         liquidGlassEnabled: p.liquidGlassEnabled,
+        liquidGlassMode: p.liquidGlassMode,
+        hasCustomBackdrop: p.hasCustomBackdrop,
+        customBackdropPath: p.customBackdropPath,
+        customBackdropDim: p.customBackdropDim,
+        customBackdropLuminance: p.customBackdropLuminance,
         cardOpacity: p.cardOpacity,
         cardBlurSigma: p.cardBlurSigma,
         customGradeColors: p.customGradeColors,
@@ -184,6 +216,11 @@ class _ThemeSnapshot {
         other.christmasModeEnabled == christmasModeEnabled &&
         other.backgroundPreset == backgroundPreset &&
         other.liquidGlassEnabled == liquidGlassEnabled &&
+        other.liquidGlassMode == liquidGlassMode &&
+        other.hasCustomBackdrop == hasCustomBackdrop &&
+        other.customBackdropPath == customBackdropPath &&
+        other.customBackdropDim == customBackdropDim &&
+        other.customBackdropLuminance == customBackdropLuminance &&
         other.cardOpacity == cardOpacity &&
         other.cardBlurSigma == cardBlurSigma &&
         other.modalCloseMode == modalCloseMode &&
@@ -201,6 +238,11 @@ class _ThemeSnapshot {
         christmasModeEnabled,
         backgroundPreset,
         liquidGlassEnabled,
+        liquidGlassMode,
+        hasCustomBackdrop,
+        customBackdropPath,
+        customBackdropDim,
+        customBackdropLuminance,
         cardOpacity,
         cardBlurSigma,
         modalCloseMode,
@@ -260,13 +302,16 @@ class CommuteProvider extends ChangeNotifier {
         _isLoading = false;
         notifyListeners();
       }
-      await MenetrendService.cancelAlarms();
+      unawaited(MenetrendService.cancelAlarms());
       return;
     }
 
     final epoch = ++_syncEpoch;
-    _isLoading = true;
-    notifyListeners();
+    final hadEval = _evaluation != null;
+    if (!hadEval && !_isLoading) {
+      _isLoading = true;
+      notifyListeners();
+    }
 
     final eval = await _menetrendService.fetchLiveCommuteEvaluation(
       todaysLessons: _todaysLessons,
@@ -275,15 +320,24 @@ class CommuteProvider extends ChangeNotifier {
     );
     if (epoch != _syncEpoch) return;
 
+    final prevEval = _evaluation;
+    final evalChanged = prevEval == null || eval == null
+        ? prevEval != eval
+        : !prevEval.isMeaningfullyEqual(eval);
+    final loadingChanged = _isLoading;
     _evaluation = eval;
     _isLoading = false;
-    notifyListeners();
+    if (evalChanged || loadingChanged) {
+      notifyListeners();
+    }
 
     if (eval != null) {
-      await MenetrendService.syncNotificationsForEvaluation(
-        evaluation: eval,
-        prefs: prefs,
-        allowDelayNotification: allowDelayNotifications,
+      unawaited(
+        MenetrendService.syncNotificationsForEvaluation(
+          evaluation: eval,
+          prefs: prefs,
+          allowDelayNotification: allowDelayNotifications,
+        ),
       );
     }
   }

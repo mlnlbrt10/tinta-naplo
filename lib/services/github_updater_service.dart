@@ -91,20 +91,20 @@ class GitHubUpdaterService {
   static const String repoUrl = 'https://github.com/mlnlbrt10/tinta-naplo';
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest';
-  static const String fallbackAppVersion = '1.1.0';
-  static const String fallbackBuildNumber = '2';
-  static const String defaultApkFileName = 'Tinta-Naplo-v1.1.0.apk';
+  static const String fallbackAppVersion = '1.1.1';
+  static const String fallbackBuildNumber = '13';
+  static const String defaultApkFileName = 'tinta-naplo-v1.1.1.apk';
 
   static bool _hasCheckedOnStartup = false;
 
-  /// Resolves the target APK file name for a given release tag (`Tinta-Naplo-v1.1.0.apk`).
+  /// Resolves the target APK file name for a given release tag (`tinta-naplo-v1.1.1.apk`).
   static String apkFileNameForTag(String tagName) {
     final clean = _stripPrefix(tagName);
     if (clean.isEmpty) return defaultApkFileName;
-    return 'Tinta-Naplo-v$clean.apk';
+    return 'tinta-naplo-v$clean.apk';
   }
 
-  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.1.0`.
+  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.1.1`.
   static Future<String> fetchLatestReleaseTag({http.Client? httpClient}) async {
     final client = httpClient ?? http.Client();
     try {

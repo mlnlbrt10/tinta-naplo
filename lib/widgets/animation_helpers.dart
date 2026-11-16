@@ -7,6 +7,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../providers/app_providers.dart';
+import '../services/token_storage_service.dart';
 
 /// Solid Material 3 tonal indicator pill rendered inside segmented bars and
 /// the bottom navigation dock when Liquid Glass mode is disabled.
@@ -32,21 +33,32 @@ class Material3TonalPillSurface extends StatelessWidget {
 
 class _LiquidPillMotionScope extends InheritedWidget {
   final Offset highlightBias;
+  final LiquidGlassMode mode;
+  final double rippleProgress;
+  final Offset rippleOrigin;
 
   const _LiquidPillMotionScope({
     required this.highlightBias,
+    this.mode = LiquidGlassMode.classicFrost,
+    this.rippleProgress = 0.0,
+    this.rippleOrigin = const Offset(0.5, 0.5),
     required super.child,
   });
 
-  static Offset biasOf(BuildContext context) =>
-      context
-          .dependOnInheritedWidgetOfExactType<_LiquidPillMotionScope>()
-          ?.highlightBias ??
-      Offset.zero;
+  static _LiquidPillMotionScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_LiquidPillMotionScope>();
+
+  static LiquidGlassMode modeOf(BuildContext context) =>
+      maybeOf(context)?.mode ??
+      AppProvidersScope.maybeOf(context)?.settings.prefs.liquidGlassMode ??
+      UserProfilePrefs.activeLiquidGlassMode;
 
   @override
   bool updateShouldNotify(covariant _LiquidPillMotionScope oldWidget) =>
-      oldWidget.highlightBias != highlightBias;
+      oldWidget.highlightBias != highlightBias ||
+      oldWidget.mode != mode ||
+      oldWidget.rippleProgress != rippleProgress ||
+      oldWidget.rippleOrigin != rippleOrigin;
 }
 
 /// Shared underdamped liquid spring parameters (~380–400ms settling) used by
@@ -57,14 +69,19 @@ const SpringDescription kLiquidPillSpring = SpringDescription(
   damping: 17.5,
 );
 
-/// Paints an ultra-thin (`1.0px–1.2px`) stadium-shaped specular glass rim
-/// tracing the outer pill contour using pure white-to-low-alpha white stops only.
+/// Paints an ultra-thin stadium-shaped optical glass rim tracing the outer pill
+/// contour (and optional Ripple Gel concentric touch pulse), tailored to
+/// [mode] (`Classic Frost`, `Hydro Mercury`, `Optical Prism`, `Smoked Obsidian`,
+/// and `Ripple Gel`).
 class LiquidGlassRimPainter extends CustomPainter {
   final BorderRadius borderRadius;
   final double strokeWidth;
   final double pressProgress;
   final Offset highlightBias;
   final bool isDark;
+  final LiquidGlassMode mode;
+  final double rippleProgress;
+  final Offset rippleOrigin;
 
   const LiquidGlassRimPainter({
     required this.borderRadius,
@@ -72,6 +89,9 @@ class LiquidGlassRimPainter extends CustomPainter {
     required this.pressProgress,
     required this.highlightBias,
     required this.isDark,
+    this.mode = LiquidGlassMode.classicFrost,
+    this.rippleProgress = 0.0,
+    this.rippleOrigin = const Offset(0.5, 0.5),
   });
 
   List<Color> buildPerimeterColors() {
@@ -85,24 +105,68 @@ class LiquidGlassRimPainter extends CustomPainter {
     final bottomBoost =
         (1.0 + 0.22 * t + math.max(0.0, by) * 0.85).clamp(0.85, 1.8);
 
-    final topAlpha = ((isDark ? 0.65 : 0.72) * topBoost).clamp(0.0, 0.92);
-    final upperSideAlpha =
-        ((isDark ? 0.30 : 0.36) * (0.9 + 0.2 * t)).clamp(0.0, 0.80);
-    final sideAlpha =
-        ((isDark ? 0.14 : 0.18) * (1.0 + 0.25 * t)).clamp(0.0, 0.60);
-    final lowerSideAlpha =
-        ((isDark ? 0.18 : 0.22) * (1.0 + 0.35 * math.max(0.0, by)))
-            .clamp(0.0, 0.70);
-    final bottomAlpha =
-        ((isDark ? 0.25 : 0.30) * bottomBoost).clamp(0.0, 0.82);
+    switch (mode) {
+      case LiquidGlassMode.hydroMercury:
+        final top = ((isDark ? 0.90 : 0.92) * topBoost).clamp(0.0, 0.98);
+        final metallicSilver = const Color(0xFFDCE4EE);
+        final mid = ((isDark ? 0.22 : 0.28) * (1.0 + 0.2 * t)).clamp(0.0, 0.70);
+        final bottom = ((isDark ? 0.52 : 0.58) * bottomBoost).clamp(0.0, 0.92);
+        return <Color>[
+          Colors.white.withValues(alpha: top),
+          metallicSilver.withValues(alpha: (top * 0.55).clamp(0.0, 0.85)),
+          metallicSilver.withValues(alpha: mid),
+          metallicSilver.withValues(alpha: (bottom * 0.60).clamp(0.0, 0.82)),
+          Colors.white.withValues(alpha: bottom),
+        ];
 
-    return <Color>[
-      Colors.white.withValues(alpha: topAlpha),
-      Colors.white.withValues(alpha: upperSideAlpha),
-      Colors.white.withValues(alpha: sideAlpha),
-      Colors.white.withValues(alpha: lowerSideAlpha),
-      Colors.white.withValues(alpha: bottomAlpha),
-    ];
+      case LiquidGlassMode.opticalPrism:
+        const warmAmber = Color(0xFFFFB86C);
+        const coolIce = Color(0xFF8BE9FD);
+        final bx = highlightBias.dx.clamp(-1.0, 1.0);
+        final warmA = ((isDark ? 0.62 : 0.68) * (1.0 + bx.abs() * 0.25 + 0.2 * t))
+            .clamp(0.0, 0.88);
+        final iceA = ((isDark ? 0.60 : 0.66) * (1.0 + bx.abs() * 0.25 + 0.2 * t))
+            .clamp(0.0, 0.88);
+        return <Color>[
+          (bx >= 0 ? warmAmber : coolIce).withValues(alpha: warmA),
+          Colors.white.withValues(alpha: isDark ? 0.40 : 0.48),
+          Colors.white.withValues(alpha: isDark ? 0.16 : 0.22),
+          Colors.white.withValues(alpha: isDark ? 0.34 : 0.42),
+          (bx >= 0 ? coolIce : warmAmber).withValues(alpha: iceA),
+        ];
+
+      case LiquidGlassMode.smokedObsidian:
+        final topBevel = ((isDark ? 0.46 : 0.54) * topBoost).clamp(0.0, 0.75);
+        final edgeBevel = isDark ? 0.10 : 0.14;
+        return <Color>[
+          Colors.white.withValues(alpha: topBevel),
+          const Color(0xFFD0D5DD).withValues(alpha: topBevel * 0.45),
+          const Color(0xFF98A2B3).withValues(alpha: edgeBevel),
+          const Color(0xFF475467).withValues(alpha: 0.26),
+          const Color(0xFF1D222B).withValues(alpha: isDark ? 0.42 : 0.24),
+        ];
+
+      case LiquidGlassMode.rippleGel:
+      case LiquidGlassMode.classicFrost:
+        final topAlpha = ((isDark ? 0.65 : 0.72) * topBoost).clamp(0.0, 0.92);
+        final upperSideAlpha =
+            ((isDark ? 0.30 : 0.36) * (0.9 + 0.2 * t)).clamp(0.0, 0.80);
+        final sideAlpha =
+            ((isDark ? 0.14 : 0.18) * (1.0 + 0.25 * t)).clamp(0.0, 0.60);
+        final lowerSideAlpha =
+            ((isDark ? 0.18 : 0.22) * (1.0 + 0.35 * math.max(0.0, by)))
+                .clamp(0.0, 0.70);
+        final bottomAlpha =
+            ((isDark ? 0.25 : 0.30) * bottomBoost).clamp(0.0, 0.82);
+
+        return <Color>[
+          Colors.white.withValues(alpha: topAlpha),
+          Colors.white.withValues(alpha: upperSideAlpha),
+          Colors.white.withValues(alpha: sideAlpha),
+          Colors.white.withValues(alpha: lowerSideAlpha),
+          Colors.white.withValues(alpha: bottomAlpha),
+        ];
+    }
   }
 
   @override
@@ -110,20 +174,55 @@ class LiquidGlassRimPainter extends CustomPainter {
     if (size.isEmpty) return;
     final rect = Offset.zero & size;
     final outer = borderRadius.toRRect(rect).scaleRadii();
-    final strokeRRect = outer.deflate(strokeWidth * 0.5);
+    final effectiveStroke =
+        mode == LiquidGlassMode.opticalPrism ? math.max(strokeWidth, 1.5) : strokeWidth;
+    final strokeRRect = outer.deflate(effectiveStroke * 0.5);
     if (strokeRRect.width <= 0 || strokeRRect.height <= 0) return;
 
+    if (mode == LiquidGlassMode.rippleGel &&
+        rippleProgress > 0.001 &&
+        rippleProgress < 0.999) {
+      canvas.save();
+      canvas.clipRRect(outer);
+      final origin = Offset(
+        size.width * rippleOrigin.dx.clamp(0.0, 1.0),
+        size.height * rippleOrigin.dy.clamp(0.0, 1.0),
+      );
+      final maxR = math.max(size.width, size.height) * 0.95;
+      final radius = maxR * Curves.easeOutCubic.transform(rippleProgress);
+      final decay = (1.0 - rippleProgress).clamp(0.0, 1.0);
+      final ripplePaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.0
+        ..color = Colors.white.withValues(alpha: 0.42 * decay);
+      canvas.drawCircle(origin, radius, ripplePaint);
+      if (radius > 8.0) {
+        final innerPaint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.1
+          ..color = Colors.white.withValues(alpha: 0.24 * decay);
+        canvas.drawCircle(origin, radius * 0.62, innerPaint);
+      }
+      canvas.restore();
+    }
+
     final bx = highlightBias.dx.clamp(-1.0, 1.0);
+    final Alignment beginAlign = mode == LiquidGlassMode.opticalPrism
+        ? Alignment(-0.85 + bx * 0.3, -1.0)
+        : Alignment(bx * 0.35, -1.0);
+    final Alignment endAlign = mode == LiquidGlassMode.opticalPrism
+        ? Alignment(0.85 - bx * 0.3, 1.0)
+        : Alignment(-bx * 0.35, 1.0);
     final gradient = LinearGradient(
-      begin: Alignment(bx * 0.35, -1.0),
-      end: Alignment(-bx * 0.35, 1.0),
+      begin: beginAlign,
+      end: endAlign,
       stops: const <double>[0.0, 0.24, 0.50, 0.76, 1.0],
       colors: buildPerimeterColors(),
     );
 
     final paint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
+      ..strokeWidth = effectiveStroke
       ..isAntiAlias = true
       ..shader = gradient.createShader(rect);
 
@@ -136,7 +235,10 @@ class LiquidGlassRimPainter extends CustomPainter {
       oldDelegate.strokeWidth != strokeWidth ||
       oldDelegate.pressProgress != pressProgress ||
       oldDelegate.highlightBias != highlightBias ||
-      oldDelegate.isDark != isDark;
+      oldDelegate.isDark != isDark ||
+      oldDelegate.mode != mode ||
+      oldDelegate.rippleProgress != rippleProgress ||
+      oldDelegate.rippleOrigin != rippleOrigin;
 }
 
 /// Translucent Liquid Glass pill surface with a uniform translucent fill and an
@@ -152,6 +254,7 @@ class LiquidGlassPillSurface extends StatelessWidget {
   final Color? accentColor;
   final bool solidBase;
   final Offset highlightBias;
+  final LiquidGlassMode? mode;
 
   const LiquidGlassPillSurface({
     super.key,
@@ -160,6 +263,7 @@ class LiquidGlassPillSurface extends StatelessWidget {
     this.accentColor,
     this.solidBase = false,
     this.highlightBias = Offset.zero,
+    this.mode,
   });
 
   @override
@@ -167,21 +271,57 @@ class LiquidGlassPillSurface extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final motionScope = _LiquidPillMotionScope.maybeOf(context);
+    final effectiveMode = mode ?? _LiquidPillMotionScope.modeOf(context);
     final baseColor = accentColor ?? scheme.primary;
     final t = pressProgress.clamp(0.0, 1.0);
-    final resolvedBias = highlightBias != Offset.zero
-        ? highlightBias
-        : _LiquidPillMotionScope.biasOf(context);
+    final resolvedBias =
+        highlightBias != Offset.zero ? highlightBias : (motionScope?.highlightBias ?? Offset.zero);
     final bx = resolvedBias.dx.clamp(-1.0, 1.0);
     final by = resolvedBias.dy.clamp(-1.0, 1.0);
 
-    final Color uniformTint = solidBase
-        ? Color.lerp(
+    final Color uniformTint;
+    final double rimStrokeWidth;
+    if (solidBase) {
+      uniformTint = Color.lerp(
+        baseColor,
+        Color.lerp(baseColor, Colors.white, 0.18)!,
+        t,
+      )!;
+      rimStrokeWidth = lerpDouble(1.05, 1.20, t)!;
+    } else {
+      switch (effectiveMode) {
+        case LiquidGlassMode.hydroMercury:
+          uniformTint = Color.lerp(
+            isDark ? const Color(0xFFC8D3E0) : const Color(0xFF94A3B8),
+            Colors.white,
+            isDark ? (0.28 + 0.18 * t) : (0.34 + 0.18 * t),
+          )!.withValues(alpha: isDark ? lerpDouble(0.28, 0.42, t)! : lerpDouble(0.22, 0.34, t)!);
+          rimStrokeWidth = lerpDouble(1.15, 1.35, t)!;
+          break;
+        case LiquidGlassMode.opticalPrism:
+          uniformTint = Color.lerp(
             baseColor,
-            Color.lerp(baseColor, Colors.white, 0.18)!,
-            t,
-          )!
-        : Color.lerp(
+            Colors.white,
+            0.22 + 0.14 * t,
+          )!.withValues(alpha: isDark ? lerpDouble(0.14, 0.24, t)! : lerpDouble(0.12, 0.20, t)!);
+          rimStrokeWidth = 1.5;
+          break;
+        case LiquidGlassMode.smokedObsidian:
+          uniformTint = (isDark ? const Color(0xFF1A1D22) : const Color(0xFFCBD2DC))
+              .withValues(alpha: isDark ? lerpDouble(0.46, 0.56, t)! : lerpDouble(0.36, 0.46, t)!);
+          rimStrokeWidth = 1.0;
+          break;
+        case LiquidGlassMode.rippleGel:
+          uniformTint = Color.lerp(
+            baseColor,
+            Colors.white,
+            isDark ? (0.16 + 0.16 * t) : (0.20 + 0.18 * t),
+          )!.withValues(alpha: isDark ? lerpDouble(0.24, 0.38, t)! : lerpDouble(0.20, 0.32, t)!);
+          rimStrokeWidth = lerpDouble(1.10, 1.28, t)!;
+          break;
+        case LiquidGlassMode.classicFrost:
+          uniformTint = Color.lerp(
             baseColor,
             Colors.white,
             isDark ? (0.10 + 0.14 * t) : (0.14 + 0.18 * t),
@@ -190,8 +330,10 @@ class LiquidGlassPillSurface extends StatelessWidget {
                 ? lerpDouble(0.24, 0.36, t)!
                 : lerpDouble(0.18, 0.28, t)!,
           );
-
-    final rimStrokeWidth = lerpDouble(1.05, 1.20, t)!;
+          rimStrokeWidth = lerpDouble(1.05, 1.20, t)!;
+          break;
+      }
+    }
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -199,7 +341,10 @@ class LiquidGlassPillSurface extends StatelessWidget {
         borderRadius: borderRadius,
         boxShadow: [
           BoxShadow(
-            color: baseColor.withValues(
+            color: (effectiveMode == LiquidGlassMode.smokedObsidian
+                    ? Colors.black
+                    : baseColor)
+                .withValues(
               alpha: lerpDouble(
                 isDark ? 0.16 : 0.10,
                 isDark ? 0.36 : 0.24,
@@ -228,6 +373,9 @@ class LiquidGlassPillSurface extends StatelessWidget {
           pressProgress: t,
           highlightBias: Offset(bx, by),
           isDark: isDark,
+          mode: effectiveMode,
+          rippleProgress: motionScope?.rippleProgress ?? 0.0,
+          rippleOrigin: motionScope?.rippleOrigin ?? const Offset(0.5, 0.5),
         ),
         child: const SizedBox.expand(),
       ),
@@ -246,10 +394,13 @@ class _LiquidInteractivePhysics {
   final VoidCallback onScheduleUpdate;
   late final AnimationController pillAnim;
   late final AnimationController pressAnim;
+  late final AnimationController rippleAnim;
   final ValueNotifier<double> offsetYAnim = ValueNotifier<double>(0.0);
+  Offset rippleOrigin = const Offset(0.5, 0.5);
   late final Listenable listenable = Listenable.merge([
     pillAnim,
     pressAnim,
+    rippleAnim,
     offsetYAnim,
   ]);
 
@@ -292,15 +443,23 @@ class _LiquidInteractivePhysics {
   double dragVelocity = 0.0;
   List<Rect> slotRects = const [];
   bool _liquidGlassEnabled = true;
+  LiquidGlassMode _liquidGlassMode = LiquidGlassMode.classicFrost;
 
   bool get liquidGlassEnabled => _liquidGlassEnabled;
+  LiquidGlassMode get liquidGlassMode => _liquidGlassMode;
+
+  void setLiquidGlassMode(LiquidGlassMode mode) {
+    _liquidGlassMode = mode;
+  }
 
   _LiquidInteractivePhysics({
     required this.vsync,
     required int initialIndex,
     required this.onScheduleUpdate,
     bool liquidGlassEnabled = true,
-  }) : _liquidGlassEnabled = liquidGlassEnabled {
+    LiquidGlassMode liquidGlassMode = LiquidGlassMode.classicFrost,
+  })  : _liquidGlassEnabled = liquidGlassEnabled,
+        _liquidGlassMode = liquidGlassMode {
     pillAnim = AnimationController.unbounded(
       vsync: vsync,
       value: initialIndex.toDouble(),
@@ -311,7 +470,26 @@ class _LiquidInteractivePhysics {
       duration: const Duration(milliseconds: 160),
       reverseDuration: const Duration(milliseconds: 220),
     );
+    rippleAnim = AnimationController(
+      vsync: vsync,
+      duration: const Duration(milliseconds: 360),
+    );
     _hoverIndex = initialIndex;
+  }
+
+  void triggerRippleAtLocalDx(double dx) {
+    if (_disposed ||
+        !_liquidGlassEnabled ||
+        _liquidGlassMode != LiquidGlassMode.rippleGel ||
+        slotRects.isEmpty) {
+      return;
+    }
+    final activeRect = interpolatedPillRect(_renderedPos);
+    final relX = activeRect.width > 0
+        ? ((dx - activeRect.left) / activeRect.width).clamp(0.1, 0.9)
+        : 0.5;
+    rippleOrigin = Offset(relX, 0.5);
+    rippleAnim.forward(from: 0.0);
   }
 
   void _syncRenderedPosIfNotPhysicsTicking() {
@@ -427,11 +605,15 @@ class _LiquidInteractivePhysics {
     final targetX = isInteracting ? _dragTargetPos : _snapTargetPos;
     final targetY = isInteracting ? _dragTargetPosY : 0.0;
     // Active finger drags track through a crisp 2D fluid spring-damper follower;
-    // releases hand off directly to an underdamped jelly oscillation on both axes.
-    final stiffnessX = isInteracting ? 1180.0 : 340.0;
-    final dampingX = isInteracting ? 48.0 : 22.0;
-    final stiffnessY = isInteracting ? 920.0 : 290.0;
-    final dampingY = isInteracting ? 38.0 : 14.5;
+    // releases hand off cleanly to the active physical-optics spring parameters.
+    final stiffnessX = isInteracting
+        ? (_liquidGlassMode == LiquidGlassMode.smokedObsidian ? 820.0 : 1180.0)
+        : _liquidGlassMode.stiffnessX;
+    final dampingX = isInteracting
+        ? (_liquidGlassMode == LiquidGlassMode.smokedObsidian ? 58.0 : 48.0)
+        : _liquidGlassMode.dampingX;
+    final stiffnessY = isInteracting ? 920.0 : _liquidGlassMode.stiffnessY;
+    final dampingY = isInteracting ? 38.0 : _liquidGlassMode.dampingY;
     final steps = (rawDt / 0.004).ceil().clamp(1, 250);
     final h = rawDt / steps;
 
@@ -690,18 +872,25 @@ class _LiquidInteractivePhysics {
     final velYNorm = (_renderedVelY.abs() / 180.0).clamp(0.0, 1.0);
     final motionY = math.max(pullYNorm, velYNorm * 0.75).clamp(0.0, 1.0);
 
-    // Volume-preserving coupled 2D surface tension:
-    // horizontal travel stretches scaleX / squashes scaleY; vertical pull
-    // stretches scaleY / subtly narrows scaleX, blending smoothly on diagonals.
-    final hStretch = 1.0 + (motionX * 0.22) - (motionY * 0.055);
-    final vStretch = 1.0 + (motionY * 0.19) - (motionX * 0.06);
-    final scaleX = hStretch * holdScale;
-    final scaleY = vStretch * holdScale;
+    // Volume-preserving coupled 2D surface tension scaled by physical mode.
+    final stretchMult = _liquidGlassMode.stretchMultiplier;
+    final hStretch = 1.0 + ((motionX * 0.22) - (motionY * 0.055)) * stretchMult;
+    final vStretch = 1.0 + ((motionY * 0.19) - (motionX * 0.06)) * stretchMult;
+    final gelSquishX = _liquidGlassMode == LiquidGlassMode.rippleGel
+        ? (1.0 + 0.06 * pressProgress)
+        : 1.0;
+    final gelSquishY = _liquidGlassMode == LiquidGlassMode.rippleGel
+        ? (1.0 - 0.05 * pressProgress)
+        : 1.0;
+    final scaleX = hStretch * holdScale * gelSquishX;
+    final scaleY = vStretch * holdScale * gelSquishY;
 
     final signedMotion = velX.abs() > 0.25
         ? (velX / 10.0).clamp(-1.0, 1.0)
         : (edgeXPx / _maxOverscrollPx).clamp(-1.0, 1.0);
-    final skewX = signedMotion.abs() < 0.001 ? 0.0 : -signedMotion * 0.055;
+    final skewX = signedMotion.abs() < 0.001
+        ? 0.0
+        : -signedMotion * 0.055 * stretchMult;
 
     return Matrix4.diagonal3Values(scaleX, scaleY, 1.0)
       ..setEntry(0, 1, skewX);
@@ -1019,6 +1208,7 @@ class _LiquidInteractivePhysics {
             (instance) {
               instance.onTapUp = (details) {
                 final targetIdx = indexAtX(details.localPosition.dx);
+                triggerRippleAtLocalDx(details.localPosition.dx);
                 if (isInteracting) {
                   _endInteractionAndSnap(
                     currentSelectedIndex: currentSelectedIndex,
@@ -1135,8 +1325,10 @@ class _LiquidInteractivePhysics {
     _physicsTicker = null;
     if (pillAnim.isAnimating) pillAnim.stop(canceled: true);
     if (pressAnim.isAnimating) pressAnim.stop(canceled: true);
+    if (rippleAnim.isAnimating) rippleAnim.stop(canceled: true);
     pillAnim.dispose();
     pressAnim.dispose();
+    rippleAnim.dispose();
     offsetYAnim.dispose();
   }
 }
@@ -1145,6 +1337,7 @@ mixin _LiquidGlassTrackMixin<T extends StatefulWidget> on State<T> {
   SettingsProvider? _settingsProvider;
 
   bool? get explicitLiquidGlassEnabled;
+  LiquidGlassMode? get explicitLiquidGlassMode => null;
   _LiquidInteractivePhysics get trackPhysics;
 
   bool get resolvedLiquidGlassEnabled =>
@@ -1152,10 +1345,18 @@ mixin _LiquidGlassTrackMixin<T extends StatefulWidget> on State<T> {
       _settingsProvider?.prefs.liquidGlassEnabled ??
       true;
 
+  LiquidGlassMode get resolvedLiquidGlassMode =>
+      explicitLiquidGlassMode ??
+      _settingsProvider?.prefs.liquidGlassMode ??
+      UserProfilePrefs.activeLiquidGlassMode;
+
   void syncLiquidGlassMode({bool notify = false}) {
     final enabled = resolvedLiquidGlassEnabled;
-    final changed = trackPhysics.liquidGlassEnabled != enabled;
+    final mode = resolvedLiquidGlassMode;
+    final changed = trackPhysics.liquidGlassEnabled != enabled ||
+        trackPhysics.liquidGlassMode != mode;
     trackPhysics.setLiquidGlassEnabled(enabled);
+    trackPhysics.setLiquidGlassMode(mode);
     if (changed && notify && mounted) {
       setState(() {});
     }
@@ -1347,6 +1548,9 @@ class _LiquidSpringPillTrackState extends State<LiquidSpringPillTrack>
                           alignment: Alignment.center,
                           child: _LiquidPillMotionScope(
                             highlightBias: highlightBias,
+                            mode: resolvedLiquidGlassMode,
+                            rippleProgress: _physics.rippleAnim.value,
+                            rippleOrigin: _physics.rippleOrigin,
                             child: widget.interactivePillBuilder != null
                                 ? widget.interactivePillBuilder!(
                                     context,
@@ -1607,12 +1811,19 @@ class _LiquidBubbleTabBarState extends State<LiquidBubbleTabBar>
                             child: Transform(
                               transform: dropletTransform,
                               alignment: Alignment.center,
-                              child: liquidGlass
-                                  ? LiquidGlassPillSurface(
-                                      pressProgress: pressT,
-                                      highlightBias: highlightBias,
-                                    )
-                                  : const Material3TonalPillSurface(),
+                              child: _LiquidPillMotionScope(
+                                highlightBias: highlightBias,
+                                mode: resolvedLiquidGlassMode,
+                                rippleProgress: _physics.rippleAnim.value,
+                                rippleOrigin: _physics.rippleOrigin,
+                                child: liquidGlass
+                                    ? LiquidGlassPillSurface(
+                                        pressProgress: pressT,
+                                        highlightBias: highlightBias,
+                                        mode: resolvedLiquidGlassMode,
+                                      )
+                                    : const Material3TonalPillSurface(),
+                              ),
                             ),
                           ),
                         ),

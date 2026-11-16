@@ -249,7 +249,7 @@ void main() {
     }
 
     testWidgets(
-      'renders live second-by-second circular ring on next period during Break (Szünet)',
+      'inserts animated glowing BreakCountdownCard between lessons and shows zero ring on next period during Break (Szünet)',
       (tester) async {
         var fakeNow = DateTime(2026, 11, 13, 8, 52, 30); // Halfway in 15m break
         final lessons = [
@@ -275,55 +275,40 @@ void main() {
           clock: () => fakeNow,
         );
 
-        // Ring is specifically on upcoming period '2.' (not '1.') at 50% remaining
-        expect(findRingPainters(tester).length, 1);
-        final period2Ring = tester.widget<CustomPaint>(
-          find.descendant(
-            of: find.ancestor(
-              of: find.text('2.'),
-              matching: find.byType(PeriodCountdownBadge),
-            ),
-            matching: find.byType(CustomPaint),
-          ),
-        );
-        final initialPainter =
-            period2Ring.painter as PeriodCountdownRingPainter;
-        expect(initialPainter.remainingFraction, closeTo(0.5, 0.001));
+        // NO circular countdown rings on either period 1 or period 2 during break
+        expect(findRingPainters(tester), isEmpty);
 
-        // Period 1 has NO countdown ring anymore
-        expect(
-          find.descendant(
-            of: find.ancestor(
-              of: find.text('1.'),
-              matching: find.byType(PeriodCountdownBadge),
-            ),
-            matching: find.byType(CustomPaint),
-          ),
-          findsNothing,
-        );
+        // BreakCountdownCard renders immediately without replay when mounted mid-break
+        expect(find.byType(BreakCountdownCard), findsOneWidget);
+        expect(find.text('Szünet'), findsOneWidget);
+        expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+        expect(find.text('08:45 – 09:00'), findsOneWidget);
 
-        // Advance clock by 3 minutes (now 4.5m / 15m = 0.30 remaining) & pump 1s ticker
+        Iterable<BreakPerimeterCountdownPainter> findBreakPainters() => tester
+            .widgetList<CustomPaint>(find.byType(CustomPaint))
+            .map((cp) => cp.foregroundPainter)
+            .whereType<BreakPerimeterCountdownPainter>();
+
+        expect(findBreakPainters().length, 1);
+        expect(findBreakPainters().first.progress, closeTo(0.5, 0.01));
+
+        // Advance clock by 3 minutes (4.5m / 15m = 0.30 remaining) & pump 1s ticker
         fakeNow = fakeNow.add(const Duration(minutes: 3));
         await tester.pump(const Duration(seconds: 1));
         await tester.pump(const Duration(milliseconds: 50));
+        expect(findBreakPainters().first.progress, closeTo(0.3, 0.01));
 
-        final updatedPainter = tester
-            .widget<CustomPaint>(
-              find.descendant(
-                of: find.ancestor(
-                  of: find.text('2.'),
-                  matching: find.byType(PeriodCountdownBadge),
-                ),
-                matching: find.byType(CustomPaint),
-              ),
-            )
-            .painter as PeriodCountdownRingPainter;
-        expect(updatedPainter.remainingFraction, closeTo(0.3, 0.001));
+        // Advance to next lesson -> break card collapses & exits cleanly, lesson 2 ring appears
+        fakeNow = DateTime(2026, 11, 13, 9, 5, 0);
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pump(const Duration(milliseconds: 350));
+        expect(findBreakPainters(), isEmpty);
+        expect(findRingPainters(tester).length, 1);
       },
     );
 
     testWidgets(
-      'renders full 1.0 ring >45m before school and depleting ring <=45m before school',
+      'shows zero circular countdown rings and zero BreakCountdownCard before school (Suli előtt)',
       (tester) async {
         var fakeNow = DateTime(2026, 11, 13, 6, 45); // 75m before 08:00
         final lessons = [
@@ -349,36 +334,155 @@ void main() {
           clock: () => fakeNow,
         );
 
-        var ring = tester
-            .widget<CustomPaint>(
-              find.descendant(
-                of: find.ancestor(
-                  of: find.text('1.'),
-                  matching: find.byType(PeriodCountdownBadge),
-                ),
-                matching: find.byType(CustomPaint),
-              ),
-            )
-            .painter as PeriodCountdownRingPainter;
-        expect(ring.remainingFraction, closeTo(1.0, 0.001));
+        expect(findRingPainters(tester), isEmpty);
+        expect(find.byType(BreakCountdownCard), findsNothing);
 
-        // Jump to 22m 30s before first bell (07:37:30 -> 50% of 45m window)
+        // Even inside <=45m pre-school window, zero circular ring before school starts
         fakeNow = DateTime(2026, 11, 13, 7, 37, 30);
         await tester.pump(const Duration(seconds: 1));
         await tester.pump(const Duration(milliseconds: 50));
 
-        ring = tester
-            .widget<CustomPaint>(
-              find.descendant(
-                of: find.ancestor(
-                  of: find.text('1.'),
-                  matching: find.byType(PeriodCountdownBadge),
+        expect(findRingPainters(tester), isEmpty);
+        expect(find.byType(BreakCountdownCard), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'BreakCountdownCard animates in when ongoing lesson transitions live into break',
+      (tester) async {
+        var fakeNow = DateTime(2026, 11, 13, 8, 44, 59);
+        final lessons = [
+          _makeLesson(
+            uid: 'l1',
+            period: 1,
+            subjectName: 'Matematika',
+            start: DateTime(2026, 11, 13, 8, 0),
+            end: DateTime(2026, 11, 13, 8, 45),
+          ),
+          _makeLesson(
+            uid: 'l2',
+            period: 2,
+            subjectName: 'Fizika',
+            start: DateTime(2026, 11, 13, 9, 0),
+            end: DateTime(2026, 11, 13, 9, 45),
+          ),
+        ];
+
+        await pumpTimetableAt(
+          tester,
+          lessons: lessons,
+          clock: () => fakeNow,
+        );
+
+        expect(findRingPainters(tester).length, 1);
+        expect(find.byType(BreakCountdownCard), findsNothing);
+
+        fakeNow = DateTime(2026, 11, 13, 8, 45, 0);
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pump(const Duration(milliseconds: 160));
+        expect(find.byType(BreakCountdownCard), findsOneWidget);
+
+        await tester.pump(const Duration(milliseconds: 220));
+        expect(findRingPainters(tester), isEmpty);
+        expect(find.byType(BreakCountdownCard), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'final-minute <=60s triggers smooth refill animation and seconds label without false refill when mounted mid-minute',
+      (tester) async {
+        final start = DateTime(2026, 11, 13, 8, 0);
+        final end = DateTime(2026, 11, 13, 8, 45);
+        var fakeNow = DateTime(2026, 11, 13, 8, 43, 50); // 70s remaining
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: OledTheme.buildTheme(prefs: const UserProfilePrefs()),
+            home: Scaffold(
+              body: LiveCountdownProgressScope(
+                startTime: start,
+                endTime: end,
+                clock: () => fakeNow,
+                builder: (_, snap) => Row(
+                  children: [
+                    PeriodCountdownBadge(
+                      label: '1.',
+                      backgroundColor: Colors.blue.withValues(alpha: 0.2),
+                      textStyle: const TextStyle(fontSize: 13),
+                      ringColor: Colors.blue,
+                      remainingFraction: snap.progress,
+                    ),
+                    Text(snap.formattedRemaining()),
+                  ],
                 ),
-                matching: find.byType(CustomPaint),
               ),
-            )
-            .painter as PeriodCountdownRingPainter;
-        expect(ring.remainingFraction, closeTo(0.5, 0.001));
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(find.text('2 perc van hátra'), findsOneWidget);
+        expect(findRingPainters(tester).first.remainingFraction,
+            closeTo(70 / 2700, 0.002));
+
+        // Cross into final 60s -> starts 500ms refill + switches label to seconds
+        fakeNow = DateTime(2026, 11, 13, 8, 44, 1); // 59s remaining
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: OledTheme.buildTheme(prefs: const UserProfilePrefs()),
+            home: Scaffold(
+              body: LiveCountdownProgressScope(
+                startTime: start,
+                endTime: end,
+                clock: () => fakeNow,
+                builder: (_, snap) => Row(
+                  children: [
+                    PeriodCountdownBadge(
+                      label: '1.',
+                      backgroundColor: Colors.blue.withValues(alpha: 0.2),
+                      textStyle: const TextStyle(fontSize: 13),
+                      ringColor: Colors.blue,
+                      remainingFraction: snap.progress,
+                    ),
+                    Text(snap.formattedRemaining()),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        expect(find.text('59 mp'), findsOneWidget);
+
+        await tester.pump(const Duration(milliseconds: 250));
+        final midRefill = findRingPainters(tester).first.remainingFraction;
+        expect(midRefill, greaterThan(0.5));
+        expect(midRefill, lessThan(1.0));
+
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(findRingPainters(tester).first.remainingFraction,
+            closeTo(59 / 60, 0.01));
+
+        // Mounted already inside final minute (30s left) -> immediate 0.5 without refill
+        final midMinuteClock = DateTime(2026, 11, 13, 8, 44, 30);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: OledTheme.buildTheme(prefs: const UserProfilePrefs()),
+            home: Scaffold(
+              body: PeriodCountdownBadge(
+                label: '1.',
+                backgroundColor: Colors.blue.withValues(alpha: 0.2),
+                textStyle: const TextStyle(fontSize: 13),
+                ringColor: Colors.blue,
+                startTime: start,
+                endTime: end,
+                clock: () => midMinuteClock,
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(findRingPainters(tester).first.remainingFraction,
+            closeTo(0.5, 0.005));
       },
     );
 
@@ -413,11 +517,11 @@ void main() {
     );
   });
 
-  group('HomeScreen NextLessonHeroCard countdown ring', () {
+  group('HomeScreen NextLessonHeroCard countdown & break state', () {
     testWidgets(
-      'displays circular countdown ring on NextLessonHeroCard during break and removes it once completed',
+      'displays pause icon + Szünet status without ring during break, shows zero ring before school, and clears once completed',
       (tester) async {
-        var fakeNow = DateTime(2026, 11, 13, 8, 52, 30);
+        var fakeNow = DateTime(2026, 11, 13, 7, 30, 0); // Before school
         final lessons = [
           _makeLesson(
             uid: 'l1',
@@ -463,20 +567,45 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
 
-        final heroRing = tester
-            .widget<CustomPaint>(
-              find.descendant(
-                of: find.ancestor(
-                  of: find.text('2.'),
-                  matching: find.byType(PeriodCountdownBadge),
-                ),
-                matching: find.byType(CustomPaint),
-              ),
-            )
-            .painter as PeriodCountdownRingPainter;
-        expect(heroRing.remainingFraction, closeTo(0.5, 0.001));
+        // Before school: NO circular progress ring
+        expect(
+          tester
+              .widgetList<CustomPaint>(find.byType(CustomPaint))
+              .map((cp) => cp.painter)
+              .whereType<PeriodCountdownRingPainter>(),
+          isEmpty,
+        );
 
-        // Fast-forward past all lessons today and tick 1s timer -> no countdown ring
+        // During break (08:52:30): clean pause icon & Szünet status, still zero ring
+        fakeNow = DateTime(2026, 11, 13, 8, 52, 30);
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pump(const Duration(milliseconds: 50));
+
+        expect(find.byIcon(Icons.pause_rounded), findsWidgets);
+        expect(find.text('Szünet'), findsOneWidget);
+        expect(find.text('Szünet • 8 perc van hátra'), findsOneWidget);
+        expect(
+          tester
+              .widgetList<CustomPaint>(find.byType(CustomPaint))
+              .map((cp) => cp.painter)
+              .whereType<PeriodCountdownRingPainter>(),
+          isEmpty,
+        );
+
+        // Ongoing lesson (09:22:30): circular countdown ring renders actively
+        fakeNow = DateTime(2026, 11, 13, 9, 22, 30);
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pump(const Duration(milliseconds: 50));
+
+        final rings = tester
+            .widgetList<CustomPaint>(find.byType(CustomPaint))
+            .map((cp) => cp.painter)
+            .whereType<PeriodCountdownRingPainter>()
+            .toList();
+        expect(rings.length, 1);
+        expect(rings.first.remainingFraction, closeTo(0.5, 0.005));
+
+        // Fast-forward past all lessons today -> no ring and no Szünet status
         fakeNow = DateTime(2026, 11, 13, 10, 0);
         await tester.pump(const Duration(seconds: 1));
         await tester.pump(const Duration(milliseconds: 50));
@@ -488,6 +617,7 @@ void main() {
               .whereType<PeriodCountdownRingPainter>(),
           isEmpty,
         );
+        expect(find.text('Szünet'), findsNothing);
       },
     );
   });

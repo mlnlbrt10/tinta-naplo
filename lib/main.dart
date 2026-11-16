@@ -204,6 +204,7 @@ class _ReKretaAppState extends State<ReKretaApp> {
                 theme: activeTheme,
                 darkTheme: activeTheme,
                 themeMode: isLight ? ThemeMode.light : ThemeMode.dark,
+                themeAnimationDuration: Duration.zero,
                 builder: (context, child) {
                   return Stack(
                     children: [

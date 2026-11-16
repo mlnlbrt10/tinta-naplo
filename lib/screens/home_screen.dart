@@ -50,6 +50,7 @@ class NextLessonStatus {
   final NextLessonPhase phase;
   final Lesson? targetLesson;
   final Lesson? upcomingLesson;
+  final Lesson? previousLesson;
   final String headline;
   final String countdownLabel;
   final int remainingLessonsCount;
@@ -61,6 +62,7 @@ class NextLessonStatus {
     required this.phase,
     required this.targetLesson,
     this.upcomingLesson,
+    this.previousLesson,
     required this.headline,
     required this.countdownLabel,
     required this.remainingLessonsCount,
@@ -128,12 +130,12 @@ class NextLessonStatus {
       );
     }
 
-    // 1. Check if currently between start and end of any lesson (now >= start && now <= end)
+    // 1. Check if currently between start and end of any lesson (start <= now < end)
     for (int i = 0; i < activeLessons.length; i++) {
       final lesson = activeLessons[i];
       final startLocal = lesson.start.toLocal();
       final endLocal = lesson.end.toLocal();
-      if (!localNow.isBefore(startLocal) && !localNow.isAfter(endLocal)) {
+      if (!localNow.isBefore(startLocal) && localNow.isBefore(endLocal)) {
         final rawSubj = lesson.subject?.name ?? lesson.name;
         final subjName = prefs != null
             ? prefs.resolveSubjectName(rawSubj, lesson.subject?.uid)
@@ -198,8 +200,9 @@ class NextLessonStatus {
     return NextLessonStatus(
       phase: NextLessonPhase.betweenLessons,
       targetLesson: nextLesson,
+      previousLesson: countdown?.previousLesson,
       headline: subjName,
-      countdownLabel: 'Még $minsUntilNext perc',
+      countdownLabel: 'Szünet • $minsUntilNext perc múlva kezdődik',
       remainingLessonsCount: remainingCount,
       totalLessonsCount: totalCount,
       remainingFraction: countdown?.remainingFraction ?? 0.0,
@@ -484,7 +487,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _selectedIndex = 0;
   late final PageController _tabPageController =
       PageController(initialPage: _selectedIndex);
@@ -500,15 +503,28 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _error;
   Timer? _countdownTimer;
   final ValueNotifier<int> _countdownTick = ValueNotifier<int>(0);
+  bool? _lastCommuteWindow;
+  DateTime _lastCommuteSyncAt = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _hasInitialCommuteSynced = false;
 
   final DateFormat _timeFormat = DateFormat('HH:mm');
+
+  DateTime _now() => widget.clock?.call() ?? DateTime.now();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _session = widget.initialSession;
     _data = widget.initialCachedData;
     _isLoading = _data == null;
+    if (_data != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_hasInitialCommuteSynced) {
+          _maybeSyncCommuteOnTick(forceWindowCheck: true);
+        }
+      });
+    }
     _loadDashboard(silentIfCached: true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -516,12 +532,42 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     });
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted &&
-          _selectedIndex == 0 &&
-          (_data?.todaysLessons.isNotEmpty ?? false)) {
+      if (!mounted) return;
+      _maybeSyncCommuteOnTick();
+      if (_selectedIndex == 0 && (_data?.todaysLessons.isNotEmpty ?? false)) {
         _countdownTick.value++;
       }
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      _maybeSyncCommuteOnTick(forceWindowCheck: true);
+    }
+  }
+
+  void _maybeSyncCommuteOnTick({bool forceWindowCheck = false}) {
+    final lessons = _data?.todaysLessons;
+    if (lessons == null || lessons.isEmpty) return;
+    final prefs = _activePrefs;
+    if (!prefs.transitCardEnabled || !prefs.transitConfigured) return;
+
+    final now = _now();
+    final currentWindow = MenetrendService.commuteWindowForLessons(
+      now: now,
+      lessons: lessons,
+    );
+    final windowChanged =
+        !_hasInitialCommuteSynced || currentWindow != _lastCommuteWindow;
+    final stalePeriod = now.difference(_lastCommuteSyncAt).abs() >=
+        const Duration(seconds: 60);
+    if (windowChanged || (forceWindowCheck && stalePeriod) || (currentWindow != null && stalePeriod)) {
+      _lastCommuteWindow = currentWindow;
+      _lastCommuteSyncAt = now;
+      _hasInitialCommuteSynced = true;
+      unawaited(_refreshCommute(allowDelayNotifications: windowChanged));
+    }
   }
 
   Widget _maybeHomeEntrance(Widget child, int index, {Key? key}) =>
@@ -604,6 +650,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _countdownTimer?.cancel();
     _countdownTick.dispose();
     _tabPageController.dispose();
@@ -617,15 +664,24 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _refreshCommute({bool allowDelayNotifications = true}) async {
     final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
     final lessons = _data?.todaysLessons ?? const <Lesson>[];
+    final now = _now();
+    _lastCommuteWindow = MenetrendService.commuteWindowForLessons(
+      now: now,
+      lessons: lessons,
+    );
+    _lastCommuteSyncAt = now;
+    _hasInitialCommuteSynced = true;
+
     if (scope != null) {
       await scope.commute.syncLive(
         todaysLessons: lessons,
         allowDelayNotifications: allowDelayNotifications,
+        nowOverride: widget.clock?.call(),
       );
       return;
     }
 
-    final prefs = widget.prefs;
+    final prefs = _activePrefs;
     if (!prefs.transitCardEnabled || !prefs.transitConfigured) {
       if (_commuteEval != null || _commuteLoading) {
         setState(() {
@@ -633,13 +689,16 @@ class _HomeScreenState extends State<HomeScreen> {
           _commuteLoading = false;
         });
       }
-      MenetrendService.cancelAlarms();
+      unawaited(MenetrendService.cancelAlarms());
       return;
     }
-    setState(() => _commuteLoading = true);
+    if (_commuteEval == null && !_commuteLoading) {
+      setState(() => _commuteLoading = true);
+    }
     final eval = await _menetrendService.fetchLiveCommuteEvaluation(
       todaysLessons: lessons,
       prefs: prefs,
+      nowOverride: widget.clock?.call(),
     );
     if (!mounted) return;
     setState(() {
@@ -647,10 +706,12 @@ class _HomeScreenState extends State<HomeScreen> {
       _commuteLoading = false;
     });
     if (eval != null) {
-      MenetrendService.syncNotificationsForEvaluation(
-        evaluation: eval,
-        prefs: prefs,
-        allowDelayNotification: allowDelayNotifications,
+      unawaited(
+        MenetrendService.syncNotificationsForEvaluation(
+          evaluation: eval,
+          prefs: prefs,
+          allowDelayNotification: allowDelayNotifications,
+        ),
       );
     }
   }
@@ -674,6 +735,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _homeEntranceActive = false;
           });
         }
+        unawaited(_refreshCommute(allowDelayNotifications: false));
       }
     }
 
@@ -759,6 +821,7 @@ class _HomeScreenState extends State<HomeScreen> {
     HapticFeedback.lightImpact();
     final currentMessages =
         _messagesOverride ?? _data?.messages ?? const <KretaMessage>[];
+    final currentPrefs = _activePrefs;
     Navigator.of(context).push(
       SmoothSharedAxisRoute(
         page: Scaffold(
@@ -766,7 +829,7 @@ class _HomeScreenState extends State<HomeScreen> {
             title: Text(uwu('Üzenetek')),
           ),
           body: ChristmasAndBackgroundOverlay(
-            prefs: widget.prefs,
+            prefs: currentPrefs,
             child: MoreScreen(
               session: _session,
               student: _data?.student,
@@ -774,7 +837,7 @@ class _HomeScreenState extends State<HomeScreen> {
               dashboardData: _data,
               initialOmissions: _data?.omissions ?? const <Omission>[],
               initialMessages: currentMessages,
-              prefs: widget.prefs,
+              prefs: currentPrefs,
               onPrefsChanged: widget.onPrefsChanged,
               onLogout: widget.onLogout,
               messagesOnly: true,
@@ -893,7 +956,16 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final scope = AppProvidersScope.maybeOf(context);
-    final activePrefs = scope?.settings.prefs ?? widget.prefs;
+    if (scope == null) {
+      return _buildHomeScaffold(context, widget.prefs);
+    }
+    return ListenableBuilder(
+      listenable: scope.settings,
+      builder: (context, _) => _buildHomeScaffold(context, scope.settings.prefs),
+    );
+  }
+
+  Widget _buildHomeScaffold(BuildContext context, UserProfilePrefs activePrefs) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final student = _data?.student;
@@ -959,12 +1031,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   actions: [
                     _buildTopBarMessagesButton(theme, scheme),
                     ProfileTopBarAvatar(
-                      prefs: widget.prefs,
+                      prefs: activePrefs,
                       onTap: _openProfileAndSettingsModal,
                     ),
                   ],
                 ),
-          body: _buildKeepAliveTabStack(theme, scheme, student),
+          body: _buildKeepAliveTabStack(theme, scheme, student, activePrefs),
           bottomNavigationBar: hideChromeForLandscapeTimetable
               ? null
               : _buildMinimalistFloatingDock(theme, scheme),
@@ -977,6 +1049,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ThemeData theme,
     ColorScheme scheme,
     Student? student,
+    UserProfilePrefs activePrefs,
   ) {
     final tabs = <Widget>[
       _KeepAliveTabWrapper(
@@ -986,7 +1059,7 @@ class _HomeScreenState extends State<HomeScreen> {
       GradesScreen(
         key: const PageStorageKey<String>('tab-grades'),
         allGrades: _data?.allGrades ?? const <Grade>[],
-        prefs: widget.prefs,
+        prefs: activePrefs,
         onPrefsChanged: widget.onPrefsChanged,
         onRefresh: _loadDashboard,
         isActiveTab: _selectedIndex == 1,
@@ -998,7 +1071,7 @@ class _HomeScreenState extends State<HomeScreen> {
         kretaClient: widget.kretaClient,
         initialTodaysLessons: _data?.todaysLessons ?? const <Lesson>[],
         homeworks: _data?.homeworks ?? const <Homework>[],
-        prefs: widget.prefs,
+        prefs: activePrefs,
         onPrefsChanged: widget.onPrefsChanged,
         onImmersiveWeeklyModeChanged: (immersive) {
           if (mounted && _isImmersiveWeeklyMode != immersive) {
@@ -1018,7 +1091,7 @@ class _HomeScreenState extends State<HomeScreen> {
         initialOmissions: _data?.omissions ?? const <Omission>[],
         initialMessages:
             _messagesOverride ?? _data?.messages ?? const <KretaMessage>[],
-        prefs: widget.prefs,
+        prefs: activePrefs,
         onPrefsChanged: widget.onPrefsChanged,
         onLogout: widget.onLogout,
         isActiveTab: _selectedIndex == 3,
@@ -1576,14 +1649,16 @@ class _HomeScreenState extends State<HomeScreen> {
     ColorScheme scheme,
     List<Lesson> lessons,
   ) {
+    final activePrefs = _activePrefs;
     final status = NextLessonStatus.evaluate(
       lessons,
-      widget.clock?.call() ?? DateTime.now(),
-      prefs: widget.prefs,
+      _now(),
+      prefs: activePrefs,
     );
     final currentOrNext = status.targetLesson;
     final upcoming = status.upcomingLesson;
     final isOngoing = status.phase == NextLessonPhase.ongoing;
+    final isBreak = status.phase == NextLessonPhase.betweenLessons;
 
     final progressText = NextLessonStatus.formatRemainingLessonsLabel(
       status.remainingLessonsCount,
@@ -1594,29 +1669,43 @@ class _HomeScreenState extends State<HomeScreen> {
 
     Widget buildHeroPeriodBadge() {
       final lesson = currentOrNext!;
-      final baseAccent = widget.prefs.timetablePeriodColor ?? scheme.primary;
-      final readableAccent = widget.prefs.timetablePeriodColor != null
+      final baseAccent = activePrefs.timetablePeriodColor ?? scheme.primary;
+      final readableAccent = activePrefs.timetablePeriodColor != null
           ? OledTheme.readableInlineColor(
-              widget.prefs.timetablePeriodColor!,
+              activePrefs.timetablePeriodColor!,
               theme.brightness,
             )
           : scheme.primary;
+      final periodLabel =
+          lesson.lessonNumber != null ? '${lesson.lessonNumber}.' : '•';
       return Hero(
         tag: heroTag!,
         child: Material(
           type: MaterialType.transparency,
           child: PeriodCountdownBadge(
-            label: lesson.lessonNumber != null ? '${lesson.lessonNumber}.' : '•',
+            label: periodLabel,
+            centerChild: isBreak
+                ? Icon(
+                    Icons.pause_rounded,
+                    size: 24,
+                    color: readableAccent,
+                  )
+                : null,
             backgroundColor: baseAccent.withValues(alpha: 0.2),
             textStyle: theme.textTheme.titleMedium!.copyWith(
               color: readableAccent,
               fontWeight: FontWeight.w900,
             ),
             ringColor: readableAccent,
-            remainingFraction: status.remainingFraction,
+            startTime: isOngoing ? lesson.start.toLocal() : null,
+            endTime: isOngoing ? lesson.end.toLocal() : null,
+            clock: widget.clock,
+            remainingFraction: null,
             outerSize: 58,
             innerSize: 42,
-            strokeWidth: 4.5,
+            idleSize: 46,
+            idleBorderRadius: BorderRadius.circular(isBreak ? 16 : 14),
+            strokeWidth: 4.0,
           ),
         ),
       );
@@ -1626,7 +1715,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ? (currentOrNext.subject?.name ?? currentOrNext.name)
         : '';
     final currentSubjTitle = currentOrNext != null
-        ? widget.prefs.resolveSubjectName(
+        ? activePrefs.resolveSubjectName(
             rawCurrentSubj,
             currentOrNext.subject?.uid,
           )
@@ -1639,7 +1728,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 context,
                 currentOrNext,
                 heroTag: heroTag,
-                prefs: widget.prefs,
+                prefs: activePrefs,
                 homework: KretaClient.findHomeworkForLesson(
                   currentOrNext,
                   _data?.homeworks ?? const <Homework>[],
@@ -1647,9 +1736,9 @@ class _HomeScreenState extends State<HomeScreen> {
               )
           : () => _selectBottomTab(_timetableTabIndex),
       child: ChristmasSnowCap(
-        enabled: widget.prefs.christmasModeEnabled,
+        enabled: activePrefs.christmasModeEnabled,
         child: SoftGlassCard(
-          prefs: widget.prefs,
+          prefs: activePrefs,
           padding: const EdgeInsets.all(20),
           borderRadius: OledTheme.largeRadius,
           border: Border.all(
@@ -1681,7 +1770,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           Icon(
                             isOngoing
                                 ? Icons.sensors_rounded
-                                : Icons.schedule_rounded,
+                                : isBreak
+                                    ? Icons.pause_rounded
+                                    : Icons.schedule_rounded,
                             size: 15,
                             color: scheme.primary,
                           ),
@@ -1690,7 +1781,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             uwu(
                               isOngoing
                                   ? 'Folyamatban lévő óra'
-                                  : 'Következő óra',
+                                  : isBreak
+                                      ? 'Szünet'
+                                      : 'Következő óra',
                             ),
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: scheme.primary,
@@ -1718,21 +1811,35 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: FittedBox(
                             fit: BoxFit.scaleDown,
                             alignment: Alignment.centerRight,
-                            child: Text(
-                              uwu(
-                                isOngoing
-                                    ? '${status.remainingMinutes} perc van hátra'
-                                    : progressText,
-                              ),
-                              maxLines: 1,
-                              softWrap: false,
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: isOngoing
-                                    ? scheme.primary
-                                    : scheme.onSurface.withValues(alpha: 0.78),
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
+                            child: isOngoing && currentOrNext != null
+                                ? LiveCountdownProgressScope(
+                                    startTime: currentOrNext.start.toLocal(),
+                                    endTime: currentOrNext.end.toLocal(),
+                                    clock: widget.clock,
+                                    builder: (_, snap) => Text(
+                                      uwu(snap.formattedRemaining()),
+                                      maxLines: 1,
+                                      softWrap: false,
+                                      style: theme.textTheme.labelSmall?.copyWith(
+                                        color: scheme.primary,
+                                        fontWeight: FontWeight.w800,
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
+                                      ),
+                                    ),
+                                  )
+                                : Text(
+                                    uwu(progressText),
+                                    maxLines: 1,
+                                    softWrap: false,
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: scheme.onSurface.withValues(
+                                        alpha: 0.78,
+                                      ),
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
                           ),
                         ),
                       ),
@@ -1841,19 +1948,30 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                           const SizedBox(height: 3),
-                          Text(
-                            currentOrNext.substituteTeacher != null &&
-                                    currentOrNext.substituteTeacher!
-                                        .trim()
-                                        .isNotEmpty
-                                ? 'Helyettes: ${widget.prefs.resolveTeacherName(currentOrNext.substituteTeacher)} • ${status.remainingMinutes} perc van hátra'
-                                : '${currentOrNext.teacher != null ? '${widget.prefs.resolveTeacherName(currentOrNext.teacher)} • ' : ''}${status.remainingMinutes} perc van hátra',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: scheme.primary,
-                              fontWeight: FontWeight.w800,
-                            ),
+                          LiveCountdownProgressScope(
+                            startTime: currentOrNext.start.toLocal(),
+                            endTime: currentOrNext.end.toLocal(),
+                            clock: widget.clock,
+                            builder: (_, snap) {
+                              final teacherPrefix = currentOrNext.substituteTeacher !=
+                                          null &&
+                                      currentOrNext.substituteTeacher!
+                                          .trim()
+                                          .isNotEmpty
+                                  ? 'Helyettes: ${activePrefs.resolveTeacherName(currentOrNext.substituteTeacher)} • '
+                                  : (currentOrNext.teacher != null
+                                      ? '${activePrefs.resolveTeacherName(currentOrNext.teacher)} • '
+                                      : '');
+                              return Text(
+                                '$teacherPrefix${snap.formattedRemaining()}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: scheme.primary,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              );
+                            },
                           ),
                         ],
                       ),
@@ -1962,8 +2080,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                             currentOrNext.substituteTeacher!
                                                 .trim()
                                                 .isNotEmpty
-                                        ? 'Helyettes: ${widget.prefs.resolveTeacherName(currentOrNext.substituteTeacher)}'
-                                        : widget.prefs.resolveTeacherName(
+                                        ? 'Helyettes: ${activePrefs.resolveTeacherName(currentOrNext.substituteTeacher)}'
+                                        : activePrefs.resolveTeacherName(
                                             currentOrNext.teacher,
                                           ),
                                     maxLines: 1,
@@ -2002,7 +2120,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Row(
                     children: [
                       Icon(
-                        Icons.timer_outlined,
+                        isBreak
+                            ? Icons.pause_circle_outline_rounded
+                            : Icons.timer_outlined,
                         size: 16,
                         color: scheme.primary,
                       ),
@@ -2024,15 +2144,38 @@ class _HomeScreenState extends State<HomeScreen> {
                                   if (mounted) _countdownTick.value++;
                                 },
                               )
-                            : Text(
-                                status.countdownLabel,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.labelMedium?.copyWith(
-                                  color: scheme.primary,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
+                            : isBreak && status.previousLesson != null
+                                ? LiveCountdownProgressScope(
+                                    startTime:
+                                        status.previousLesson!.end.toLocal(),
+                                    endTime: currentOrNext.start.toLocal(),
+                                    clock: widget.clock,
+                                    builder: (_, snap) => Text(
+                                      uwu(
+                                        'Szünet • ${snap.formattedRemaining()}',
+                                      ),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.labelMedium
+                                          ?.copyWith(
+                                        color: scheme.primary,
+                                        fontWeight: FontWeight.w800,
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
+                                      ),
+                                    ),
+                                  )
+                                : Text(
+                                    status.countdownLabel,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        theme.textTheme.labelMedium?.copyWith(
+                                      color: scheme.primary,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
                       ),
                     ],
                   ),

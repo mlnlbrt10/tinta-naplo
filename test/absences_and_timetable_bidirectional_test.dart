@@ -687,6 +687,12 @@ void main() {
           await tester.drag(pageViewFinder, const Offset(-450, 0));
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 450));
+          expect(
+            tester
+                .widget<PageView>(pageViewFinder)
+                .allowImplicitScrolling,
+            isTrue,
+          );
           if (d < 4) {
             expectStaticDayAtZero(d, expectFirstLesson: true);
             expect(find.text('Nap${d}_Ora1'), findsOneWidget);

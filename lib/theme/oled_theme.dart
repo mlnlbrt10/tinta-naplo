@@ -1,7 +1,232 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
 import '../services/token_storage_service.dart';
 import '../widgets/animation_helpers.dart';
+
+/// Architectural studio and vector backdrop presets supported in Tinta Napló.
+class BackgroundPresetInfo {
+  final String id;
+  final String label;
+  final IconData icon;
+  final List<Color> gradientColors;
+  final bool isVectorContour;
+
+  const BackgroundPresetInfo({
+    required this.id,
+    required this.label,
+    required this.icon,
+    required this.gradientColors,
+    this.isVectorContour = false,
+  });
+
+  static const List<BackgroundPresetInfo> presets = [
+    BackgroundPresetInfo(
+      id: 'pure_oled',
+      label: 'OLED Fekete (Pure Black)',
+      icon: Icons.contrast_rounded,
+      gradientColors: [Colors.black, Colors.black],
+    ),
+    BackgroundPresetInfo(
+      id: 'nordic_slate',
+      label: 'Nordic Slate',
+      icon: Icons.layers_rounded,
+      gradientColors: [Color(0xFF0F131A), Color(0xFF181F2A)],
+    ),
+    BackgroundPresetInfo(
+      id: 'warm_alabaster',
+      label: 'Warm Alabaster',
+      icon: Icons.light_mode_outlined,
+      gradientColors: [Color(0xFFF4F1EA), Color(0xFFE8E2D5)],
+    ),
+    BackgroundPresetInfo(
+      id: 'topographic_contour',
+      label: 'Topographic Contour',
+      icon: Icons.terrain_rounded,
+      gradientColors: [Color(0xFF0B0E14), Color(0xFF10151F)],
+      isVectorContour: true,
+    ),
+    BackgroundPresetInfo(
+      id: 'brushed_titanium',
+      label: 'Brushed Titanium',
+      icon: Icons.blur_linear_rounded,
+      gradientColors: [Color(0xFF17191D), Color(0xFF242830)],
+    ),
+    BackgroundPresetInfo(
+      id: 'monolith_mesh',
+      label: 'Monolith Mesh',
+      icon: Icons.grain_rounded,
+      gradientColors: [
+        Color(0xFF0D0F14),
+        Color(0xFF241C18),
+        Color(0xFF16202A),
+      ],
+    ),
+    BackgroundPresetInfo(
+      id: 'solarized_dusk',
+      label: 'Solarized Dusk',
+      icon: Icons.wb_twilight_rounded,
+      gradientColors: [
+        Color(0xFF3A2018),
+        Color(0xFF241620),
+        Color(0xFF14111D),
+      ],
+    ),
+  ];
+
+  static const List<BackgroundPresetInfo> _legacyAliases = [
+    BackgroundPresetInfo(
+      id: 'brand_navy',
+      label: 'Mély Ciánkék',
+      icon: Icons.water_drop_rounded,
+      gradientColors: [Color(0xFF0B1E28), Color(0xFF0B1E28)],
+    ),
+    BackgroundPresetInfo(
+      id: 'midnight_aurora',
+      label: 'Éjszakai Aurora',
+      icon: Icons.auto_awesome_rounded,
+      gradientColors: [Color(0xFF071324), Color(0xFF000000), Color(0xFF091A18)],
+    ),
+    BackgroundPresetInfo(
+      id: 'cyber_violet',
+      label: 'Cyber Ibolya',
+      icon: Icons.blur_on_rounded,
+      gradientColors: [Color(0xFF190A26), Color(0xFF000000), Color(0xFF0B1528)],
+    ),
+    BackgroundPresetInfo(
+      id: 'sunset_ember',
+      label: 'Alkonyati Parázs',
+      icon: Icons.wb_twilight_rounded,
+      gradientColors: [Color(0xFF240E0B), Color(0xFF000000), Color(0xFF180B1E)],
+    ),
+    BackgroundPresetInfo(
+      id: 'winter_frost',
+      label: 'Téli Fagy',
+      icon: Icons.ac_unit_rounded,
+      gradientColors: [Color(0xFF0A1E29), Color(0xFF03080C), Color(0xFF0E2419)],
+    ),
+  ];
+
+  double get perceptualLuminance {
+    if (gradientColors.isEmpty) return 0.0;
+    double sum = 0.0;
+    for (final c in gradientColors) {
+      sum += AdaptiveContrastTokens.computeColorLuminance(c);
+    }
+    return (sum / gradientColors.length).clamp(0.0, 1.0);
+  }
+
+  bool get isLightPreset => perceptualLuminance >= 0.45;
+
+  static BackgroundPresetInfo resolve(UserProfilePrefs prefs) {
+    if (prefs.christmasModeEnabled && prefs.backgroundPreset == 'pure_oled') {
+      return _legacyAliases.firstWhere((p) => p.id == 'winter_frost');
+    }
+    for (final p in presets) {
+      if (p.id == prefs.backgroundPreset) return p;
+    }
+    for (final p in _legacyAliases) {
+      if (p.id == prefs.backgroundPreset) return p;
+    }
+    return presets.first;
+  }
+}
+
+/// Automatic luminance-adaptive typography, icon, and frosted card tokens
+/// ensuring >= 4.5:1 readability over any studio backdrop or user photo.
+class AdaptiveContrastTokens {
+  final double effectiveLuminance;
+  final bool isLightBackdrop;
+  final Color primaryText;
+  final Color secondaryText;
+  final Color iconColor;
+  final Color cardFill;
+  final Color cardBorder;
+
+  const AdaptiveContrastTokens({
+    required this.effectiveLuminance,
+    required this.isLightBackdrop,
+    required this.primaryText,
+    required this.secondaryText,
+    required this.iconColor,
+    required this.cardFill,
+    required this.cardBorder,
+  });
+
+  static double computeColorLuminance(Color c) =>
+      (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b).clamp(0.0, 1.0);
+
+  /// Computes average weighted perceptual luminance (`0.0..1.0`) from an image's
+  /// bytes using a fast `32x32` decoded thumbnail via `dart:ui`.
+  static Future<double> computeImageLuminance(Uint8List bytes) async {
+    final codec = await ui.instantiateImageCodec(
+      bytes,
+      targetWidth: 32,
+      targetHeight: 32,
+    );
+    final frame = await codec.getNextFrame();
+    try {
+      final data = await frame.image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      );
+      if (data == null || data.lengthInBytes < 4) return 0.15;
+      final pixels = data.buffer.asUint8List();
+      double sum = 0.0;
+      int count = 0;
+      for (int i = 0; i + 3 < pixels.length; i += 4) {
+        final r = pixels[i] / 255.0;
+        final g = pixels[i + 1] / 255.0;
+        final b = pixels[i + 2] / 255.0;
+        sum += (0.2126 * r + 0.7152 * g + 0.0722 * b);
+        count++;
+      }
+      return count > 0 ? (sum / count).clamp(0.0, 1.0) : 0.15;
+    } finally {
+      frame.image.dispose();
+      codec.dispose();
+    }
+  }
+
+  static double computeEffectiveLuminance(UserProfilePrefs prefs) {
+    if (prefs.hasCustomBackdrop) {
+      return (prefs.customBackdropLuminance *
+              (1.0 - prefs.customBackdropDim.clamp(0.0, 0.75)))
+          .clamp(0.0, 1.0);
+    }
+    final preset = BackgroundPresetInfo.resolve(prefs);
+    if (preset.id == 'pure_oled') {
+      return prefs.themeStyle == AppThemeStyle.light ? 0.96 : 0.0;
+    }
+    return preset.perceptualLuminance;
+  }
+
+  static AdaptiveContrastTokens resolve(UserProfilePrefs prefs) {
+    final lum = computeEffectiveLuminance(prefs);
+    final isLight = lum >= 0.45;
+    if (isLight) {
+      return AdaptiveContrastTokens(
+        effectiveLuminance: lum,
+        isLightBackdrop: true,
+        primaryText: const Color(0xFF101318),
+        secondaryText: const Color(0xFF475467),
+        iconColor: const Color(0xFF101318),
+        cardFill: Colors.white.withValues(alpha: 0.78),
+        cardBorder: Colors.black.withValues(alpha: 0.08),
+      );
+    }
+    return AdaptiveContrastTokens(
+      effectiveLuminance: lum,
+      isLightBackdrop: false,
+      primaryText: const Color(0xFFF5F7FA),
+      secondaryText: const Color(0xFFB8C0CC),
+      iconColor: const Color(0xFFF5F7FA),
+      cardFill: const Color(0xFF141820).withValues(alpha: 0.72),
+      cardBorder: Colors.white.withValues(alpha: 0.12),
+    );
+  }
+}
 
 /// Theme constants, multi-theme builder (OLED Pure Black, Standard Dark, Light),
 /// Material 3 seed color presets, and grade badge colors.
@@ -135,8 +360,14 @@ class OledTheme {
     UserProfilePrefs prefs = const UserProfilePrefs(),
     ColorScheme? dynamicScheme,
   }) {
-    final isLight = prefs.themeStyle == AppThemeStyle.light;
-    final isOled = prefs.themeStyle == AppThemeStyle.oledPureBlack;
+    final activePreset = BackgroundPresetInfo.resolve(prefs);
+    final hasStudioOrCustomBackdrop =
+        prefs.hasCustomBackdrop || activePreset.id != 'pure_oled';
+    final contrast = AdaptiveContrastTokens.resolve(prefs);
+    final isLight = hasStudioOrCustomBackdrop
+        ? contrast.isLightBackdrop
+        : (prefs.themeStyle == AppThemeStyle.light);
+    final isOled = !isLight && prefs.themeStyle == AppThemeStyle.oledPureBlack;
     final brightness = isLight ? Brightness.light : Brightness.dark;
     final seedColor =
         prefs.uwuModeEnabled ? uwuPastelPink : Color(prefs.seedColorValue);
@@ -160,7 +391,30 @@ class OledTheme {
     final Color borderColor;
 
     final isNavy = isOled && prefs.backgroundPreset == 'brand_navy';
-    if (isOled) {
+    if (hasStudioOrCustomBackdrop && !isNavy) {
+      scaffoldBg = activePreset.gradientColors.first;
+      cardBg = contrast.cardFill.withValues(alpha: 1.0);
+      elevatedBg = isLight
+          ? const Color(0xFFEAECE8)
+          : const Color(0xFF1C212C);
+      borderColor = contrast.cardBorder;
+      baseScheme = baseScheme.copyWith(
+        surface: scaffoldBg,
+        onSurface: contrast.primaryText,
+        onSurfaceVariant: contrast.secondaryText,
+        outlineVariant: contrast.cardBorder,
+        primary: prefs.uwuModeEnabled
+            ? (isLight ? const Color(0xFFD81B60) : uwuPastelPink)
+            : baseScheme.primary,
+        secondary:
+            prefs.uwuModeEnabled ? uwuPastelLavender : baseScheme.secondary,
+        surfaceContainerLowest: scaffoldBg,
+        surfaceContainerLow: cardBg,
+        surfaceContainer: cardBg,
+        surfaceContainerHigh: elevatedBg,
+        surfaceContainerHighest: elevatedBg,
+      );
+    } else if (isOled) {
       scaffoldBg = isNavy ? const Color(0xFF0B1E28) : pureBlack;
       cardBg = prefs.uwuModeEnabled
           ? const Color(0xFF19121B)
