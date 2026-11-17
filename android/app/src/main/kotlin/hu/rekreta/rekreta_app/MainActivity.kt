@@ -21,9 +21,11 @@ import java.net.URLConnection
 import java.util.TimeZone
 import java.util.concurrent.Executors
 import android.os.Build
+import android.os.Bundle
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import hu.rekreta.rekreta_app.shared.KretaSharedConfig
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -36,7 +38,10 @@ open class MainActivity : FlutterActivity() {
         private const val TRANSIT_CHANNEL_NAME = "hu.rekreta.rekreta_app/transit"
         private const val UPDATER_CHANNEL_NAME = "hu.rekreta.rekreta_app/updater"
         private const val CALENDAR_CHANNEL_NAME = "tinta_naplo/calendar_sync"
+        private const val WEAR_SYNC_CHANNEL_NAME = "hu.rekreta.rekreta_app/wear_sync"
         private const val CALENDAR_PERMISSION_REQUEST_CODE = 4208
+
+        const val EXTRA_WEAR_AUTH_REQUEST = "extra_wear_auth_request"
 
         const val TRANSIT_NOTIFICATION_CHANNEL_ID = "rekreta_menetrendgo_alerts"
         const val TRANSIT_NOTIFICATION_CHANNEL_NAME = "MenetrendGO Indulási & Késési riasztások"
@@ -198,6 +203,37 @@ open class MainActivity : FlutterActivity() {
         }
     }
 
+    private var wearSyncChannel: MethodChannel? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        inspectAndConsumeWearAuthIntent(intent)
+        super.onCreate(savedInstanceState)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        inspectAndConsumeWearAuthIntent(intent)
+        super.onNewIntent(intent)
+    }
+
+    private fun inspectAndConsumeWearAuthIntent(incoming: Intent?) {
+        if (incoming == null) return
+        val data = incoming.data
+        val isWearDeepLink = data != null &&
+            data.scheme == KretaSharedConfig.WEAR_DEEP_LINK_SCHEME &&
+            data.host == KretaSharedConfig.WEAR_DEEP_LINK_HOST
+        val isWearExtra = incoming.getBooleanExtra(EXTRA_WEAR_AUTH_REQUEST, false)
+        if (!isWearDeepLink && !isWearExtra) return
+
+        if (isWearDeepLink) {
+            // Strip deep-link URI before FlutterActivity processes it as a Navigator route.
+            incoming.data = null
+            incoming.action = Intent.ACTION_MAIN
+        }
+        incoming.removeExtra(EXTRA_WEAR_AUTH_REQUEST)
+        WearSessionBridge.markPendingWatchAuthRequest()
+        WearSessionBridge.notifyActiveFlutterAuthRequest()
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         ensureNotificationChannel(applicationContext)
@@ -246,6 +282,57 @@ open class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 handleCalendarMethodCall(call, result)
             }
+
+        val wearChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            WEAR_SYNC_CHANNEL_NAME,
+        )
+        wearSyncChannel = wearChannel
+        wearChannel.setMethodCallHandler { call, result ->
+            handleWearSyncMethodCall(call, result)
+        }
+        WearSessionBridge.registerAuthRequestListener {
+            wearSyncChannel?.invokeMethod("onWatchAuthRequested", null)
+        }
+    }
+
+    private fun handleWearSyncMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "consumePendingWatchAuthRequest" -> {
+                result.success(WearSessionBridge.consumePendingWatchAuthRequest())
+            }
+            "cacheSessionForWear" -> {
+                val args = call.arguments as? Map<*, *>
+                val snapshot = args?.let { PhoneWearSessionSnapshot.fromMethodArgs(it) }
+                if (snapshot == null) {
+                    result.success(false)
+                } else {
+                    WearSessionBridge.cacheSession(applicationContext, snapshot)
+                    result.success(true)
+                }
+            }
+            "pushSessionToWatch" -> {
+                val args = call.arguments as? Map<*, *>
+                val snapshot = args?.let { PhoneWearSessionSnapshot.fromMethodArgs(it) }
+                if (snapshot == null) {
+                    result.success(false)
+                } else {
+                    WearSessionBridge.pushSessionToWatch(applicationContext, snapshot) { ok ->
+                        runOnUiThread { result.success(ok) }
+                    }
+                }
+            }
+            "clearWearSession" -> {
+                WearSessionBridge.clearSession(applicationContext)
+                result.success(true)
+            }
+            "getWearConnectionStatus" -> {
+                WearSessionBridge.getConnectionStatus(applicationContext) { status ->
+                    runOnUiThread { result.success(status) }
+                }
+            }
+            else -> result.notImplemented()
+        }
     }
 
     private fun installApk(filePath: String, result: MethodChannel.Result) {
@@ -550,6 +637,9 @@ open class MainActivity : FlutterActivity() {
     private var pendingCalendarPermissionResult: MethodChannel.Result? = null
 
     override fun onDestroy() {
+        WearSessionBridge.registerAuthRequestListener(null)
+        wearSyncChannel?.setMethodCallHandler(null)
+        wearSyncChannel = null
         calendarExecutor.shutdownNow()
         super.onDestroy()
     }

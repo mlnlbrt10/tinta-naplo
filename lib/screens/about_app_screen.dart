@@ -150,6 +150,7 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
       if (!mounted) return;
       _updatePrefs(
         _currentPrefs.copyWith(
+          animatedBackdropPreset: AnimatedBackdropPreset.off,
           customBackdropPath: targetFile.path,
           customBackdropLuminance: lum,
         ),
@@ -542,73 +543,79 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
             ],
           ),
           const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-            decoration: BoxDecoration(
-              color: OledTheme.uwuPastelPink.withValues(alpha: 0.14),
+          Material(
+            color: OledTheme.uwuPastelPink.withValues(alpha: 0.14),
+            shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(22),
-              border: Border.all(
+              side: BorderSide(
                 color: OledTheme.uwuPastelPink.withValues(alpha: 0.45),
               ),
             ),
-            child: SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              activeThumbColor: OledTheme.uwuPastelPink,
-              title: const Text(
-                'UwU mód',
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 15,
+            clipBehavior: Clip.antiAlias,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              child: SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                activeThumbColor: OledTheme.uwuPastelPink,
+                title: const Text(
+                  'UwU mód',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                  ),
                 ),
+                subtitle: Text(
+                  uwu(
+                    'Cuki fonetikus átalakítás (r/l -> w, :3, uwu, >w<) és pasztell rózsaszín/levendula árnyalatok az egész appban!',
+                  ),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurface.withValues(alpha: 0.75),
+                  ),
+                ),
+                value: isUwu,
+                onChanged: (val) {
+                  HapticFeedback.mediumImpact();
+                  _updatePrefs(_currentPrefs.copyWith(uwuModeEnabled: val));
+                },
               ),
-              subtitle: Text(
-                uwu(
-                  'Cuki fonetikus átalakítás (r/l -> w, :3, uwu, >w<) és pasztell rózsaszín/levendula árnyalatok az egész appban!',
-                ),
-                style: TextStyle(
-                  fontSize: 12,
-                  color: scheme.onSurface.withValues(alpha: 0.75),
-                ),
-              ),
-              value: isUwu,
-              onChanged: (val) {
-                HapticFeedback.mediumImpact();
-                _updatePrefs(_currentPrefs.copyWith(uwuModeEnabled: val));
-              },
             ),
           ),
           const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFF7043).withValues(alpha: 0.14),
+          Material(
+            color: const Color(0xFFFF7043).withValues(alpha: 0.14),
+            shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(22),
-              border: Border.all(
+              side: BorderSide(
                 color: const Color(0xFFFF7043).withValues(alpha: 0.45),
               ),
             ),
-            child: SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              activeThumbColor: const Color(0xFFFF7043),
-              title: const Text(
-                'Tsundere mód',
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 15,
+            clipBehavior: Clip.antiAlias,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              child: SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                activeThumbColor: const Color(0xFFFF7043),
+                title: const Text(
+                  'Tsundere mód',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                  ),
                 ),
-              ),
-              subtitle: Text(
-                'Csípős tsundere beszólások és köszöntések („N-nem mintha érdekelne a házi feladatod, b-baka~!”, „M-megint egy hármas? Nem mintha figyeltem volna rád, h-hülye...~”)',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: scheme.onSurface.withValues(alpha: 0.75),
+                subtitle: Text(
+                  'Csípős tsundere beszólások és köszöntések („N-nem mintha érdekelne a házi feladatod, b-baka~!”, „M-megint egy hármas? Nem mintha figyeltem volna rád, h-hülye...~”)',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurface.withValues(alpha: 0.75),
+                  ),
                 ),
+                value: isTsundere,
+                onChanged: (val) {
+                  HapticFeedback.mediumImpact();
+                  _updatePrefs(_currentPrefs.copyWith(tsundereModeEnabled: val));
+                },
               ),
-              value: isTsundere,
-              onChanged: (val) {
-                HapticFeedback.mediumImpact();
-                _updatePrefs(_currentPrefs.copyWith(tsundereModeEnabled: val));
-              },
             ),
           ),
           const SizedBox(height: 16),
@@ -679,7 +686,8 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
             spacing: 8,
             runSpacing: 8,
             children: BackgroundPresetInfo.presets.map((bg) {
-              final selected = !_currentPrefs.hasCustomBackdrop &&
+              final selected = !_currentPrefs.hasAnimatedBackdrop &&
+                  !_currentPrefs.hasCustomBackdrop &&
                   _currentPrefs.backgroundPreset == bg.id;
               return ChoiceChip(
                 avatar: Icon(
@@ -699,6 +707,7 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
                   HapticFeedback.selectionClick();
                   _updatePrefs(
                     _currentPrefs.copyWith(
+                      animatedBackdropPreset: AnimatedBackdropPreset.off,
                       backgroundPreset: bg.id,
                       clearCustomBackdropPath: true,
                     ),
@@ -761,6 +770,82 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
             ),
           ),
           const SizedBox(height: 10),
+          const Divider(height: 1),
+          const SizedBox(height: 14),
+          Text(
+            uwu('Animált hátterek (kísérleti)'),
+            style: theme.textTheme.labelLarge?.copyWith(
+              fontWeight: FontWeight.w900,
+              color: scheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            uwu(
+              '120Hz-barát optikai árnyékolás egyetlen RepaintBoundary rétegen — háttérbe lépéskor automatikusan szünetel.',
+            ),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: scheme.onSurface.withValues(alpha: 0.72),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: AnimatedBackdropPreset.values.map((preset) {
+              final selected = _currentPrefs.animatedBackdropPreset == preset;
+              final IconData icon = switch (preset) {
+                AnimatedBackdropPreset.off => Icons.layers_clear_outlined,
+                AnimatedBackdropPreset.gyroLiquidHorizon =>
+                  Icons.sensors_rounded,
+                AnimatedBackdropPreset.causticWater => Icons.water_outlined,
+                AnimatedBackdropPreset.ferrofluidDrift =>
+                  Icons.blur_on_rounded,
+                AnimatedBackdropPreset.sunbeamDust =>
+                  Icons.wb_sunny_outlined,
+                AnimatedBackdropPreset.topographicPulse =>
+                  Icons.terrain_outlined,
+                AnimatedBackdropPreset.analogFilmLight =>
+                  Icons.camera_roll_outlined,
+              };
+              return ChoiceChip(
+                avatar: Icon(
+                  selected ? Icons.check_circle_rounded : icon,
+                  size: 16,
+                  color: selected ? scheme.primary : null,
+                ),
+                label: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      preset.label,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight:
+                            selected ? FontWeight.w900 : FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      preset.subtitle,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: scheme.onSurface.withValues(alpha: 0.65),
+                      ),
+                    ),
+                  ],
+                ),
+                selected: selected,
+                onSelected: (_) {
+                  HapticFeedback.selectionClick();
+                  _updatePrefs(
+                    _currentPrefs.copyWith(animatedBackdropPreset: preset),
+                  );
+                },
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 14),
           TactileBounce(
             onTap: () {
               GitHubUpdaterService.showFrostedUpdateDialog(

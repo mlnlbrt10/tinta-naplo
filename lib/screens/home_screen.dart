@@ -11,6 +11,7 @@ import '../services/github_updater_service.dart';
 import '../services/kreta_client.dart';
 import '../services/menetrend_service.dart';
 import '../services/token_storage_service.dart';
+import '../services/wear_sync_service.dart';
 import '../theme/oled_theme.dart';
 import '../utils/greeting_utils.dart';
 import '../utils/uwu_helper.dart';
@@ -503,9 +504,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String? _error;
   Timer? _countdownTimer;
   final ValueNotifier<int> _countdownTick = ValueNotifier<int>(0);
+  final ValueNotifier<int> _commuteTick = ValueNotifier<int>(0);
   bool? _lastCommuteWindow;
+  bool? _lastTickedCommuteWindow;
+  int? _lastCommuteMinuteBucket;
   DateTime _lastCommuteSyncAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _hasInitialCommuteSynced = false;
+  bool _hasPushedWearProfileMetadata = false;
+  Set<String> _fallbackCompletedHomeworkIds = <String>{};
 
   final DateFormat _timeFormat = DateFormat('HH:mm');
 
@@ -518,6 +524,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _session = widget.initialSession;
     _data = widget.initialCachedData;
     _isLoading = _data == null;
+    _hydrateFallbackCompletedHomeworkIds();
     if (_data != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && !_hasInitialCommuteSynced) {
@@ -548,21 +555,62 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _maybeSyncCommuteOnTick({bool forceWindowCheck = false}) {
-    final lessons = _data?.todaysLessons;
-    if (lessons == null || lessons.isEmpty) return;
+    final data = _data;
+    if (data == null) return;
+    final lessons = data.todaysLessons;
     final prefs = _activePrefs;
-    if (!prefs.transitCardEnabled || !prefs.transitConfigured) return;
-
+    final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
     final now = _now();
+
+    if (!prefs.transitCardEnabled || !prefs.transitConfigured) {
+      if (scope != null) {
+        scope.commute.revalidateForNow(now, todaysLessons: lessons);
+      } else if (_commuteEval != null || _commuteLoading) {
+        setState(() {
+          _commuteEval = null;
+          _commuteLoading = false;
+        });
+      }
+      return;
+    }
+
     final currentWindow = MenetrendService.commuteWindowForLessons(
       now: now,
       lessons: lessons,
     );
+    if (scope != null) {
+      scope.commute.revalidateForNow(now, todaysLessons: lessons);
+    } else if (_commuteEval != null) {
+      final nextEval = MenetrendService.filterVisibleEvaluation(
+        evaluation: _commuteEval,
+        todaysLessons: lessons,
+        prefs: prefs,
+        now: now,
+      );
+      final changed = nextEval == null ||
+          !_commuteEval!.isMeaningfullyEqual(nextEval) ||
+          _commuteEval!.minutesUntilDeparture != nextEval.minutesUntilDeparture ||
+          _commuteEval!.minutesUntilWalkStart != nextEval.minutesUntilWalkStart;
+      if (changed) {
+        setState(() => _commuteEval = nextEval);
+      }
+    }
+
+    final minuteBucket = now.millisecondsSinceEpoch ~/ 60000;
+    if (minuteBucket != _lastCommuteMinuteBucket ||
+        currentWindow != _lastTickedCommuteWindow) {
+      _lastCommuteMinuteBucket = minuteBucket;
+      _lastTickedCommuteWindow = currentWindow;
+      _commuteTick.value++;
+    }
+
     final windowChanged =
         !_hasInitialCommuteSynced || currentWindow != _lastCommuteWindow;
     final stalePeriod = now.difference(_lastCommuteSyncAt).abs() >=
         const Duration(seconds: 60);
-    if (windowChanged || (forceWindowCheck && stalePeriod) || (currentWindow != null && stalePeriod)) {
+    if (windowChanged ||
+        (forceWindowCheck && stalePeriod) ||
+        (currentWindow != null && stalePeriod)) {
       _lastCommuteWindow = currentWindow;
       _lastCommuteSyncAt = now;
       _hasInitialCommuteSynced = true;
@@ -580,6 +628,62 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   UserProfilePrefs get _activePrefs {
     final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
     return scope?.settings.prefs ?? widget.prefs;
+  }
+
+  Future<void> _hydrateFallbackCompletedHomeworkIds() async {
+    final ids = await SettingsProvider.loadCompletedHomeworkIdsFromPrefs();
+    if (!mounted || ids.isEmpty) return;
+    if (context.getInheritedWidgetOfExactType<AppProvidersScope>() != null) {
+      return;
+    }
+    setState(() => _fallbackCompletedHomeworkIds = ids);
+  }
+
+  bool _isHomeworkCompleted(Homework homework) {
+    final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
+    if (scope != null) {
+      return scope.settings.isHomeworkCompleted(homework);
+    }
+    return _fallbackCompletedHomeworkIds
+        .contains(SettingsProvider.homeworkCompletionKey(homework));
+  }
+
+  void _setHomeworkCompletionState(Homework homework, bool completed) {
+    final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
+    if (scope != null) {
+      unawaited(scope.settings.setHomeworkCompleted(homework, completed));
+      return;
+    }
+    final key = SettingsProvider.homeworkCompletionKey(homework);
+    final next = Set<String>.from(_fallbackCompletedHomeworkIds);
+    final changed = completed ? next.add(key) : next.remove(key);
+    if (!changed) return;
+    setState(() => _fallbackCompletedHomeworkIds = next);
+    unawaited(SettingsProvider.saveCompletedHomeworkIdsToPrefs(next));
+  }
+
+  void _toggleHomeworkCompletion(Homework homework, String subjectTitle) {
+    HapticFeedback.selectionClick();
+    final nextCompleted = !_isHomeworkCompleted(homework);
+    _setHomeworkCompletionState(homework, nextCompleted);
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    if (nextCompleted) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(uwu('Kész: $subjectTitle házi feladat')),
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: uwu('Visszavonás'),
+            onPressed: () {
+              if (!mounted) return;
+              _setHomeworkCompletionState(homework, false);
+            },
+          ),
+        ),
+      );
+    }
   }
 
   @override
@@ -634,12 +738,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if ((localCommuteOnlyChanged || transitEnabledOrConfiguredChanged) &&
         _commuteEval != null) {
       final recalculated = _commuteEval!.recalculateForPrefs(newP);
-      setState(() => _commuteEval = recalculated);
-      MenetrendService.syncNotificationsForEvaluation(
+      final filtered = MenetrendService.filterVisibleEvaluation(
         evaluation: recalculated,
+        todaysLessons: _data?.todaysLessons,
         prefs: newP,
-        allowDelayNotification: false,
+        now: _now(),
       );
+      setState(() => _commuteEval = filtered);
+      if (filtered != null) {
+        MenetrendService.syncNotificationsForEvaluation(
+          evaluation: filtered,
+          prefs: newP,
+          allowDelayNotification: false,
+        );
+      } else {
+        MenetrendService.cancelAlarms();
+      }
     }
 
     if (transitEnabledOrConfiguredChanged ||
@@ -653,6 +767,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _countdownTimer?.cancel();
     _countdownTick.dispose();
+    _commuteTick.dispose();
     _tabPageController.dispose();
     super.dispose();
   }
@@ -665,10 +780,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
     final lessons = _data?.todaysLessons ?? const <Lesson>[];
     final now = _now();
-    _lastCommuteWindow = MenetrendService.commuteWindowForLessons(
+    final window = MenetrendService.commuteWindowForLessons(
       now: now,
       lessons: lessons,
     );
+    _lastCommuteWindow = window;
     _lastCommuteSyncAt = now;
     _hasInitialCommuteSynced = true;
 
@@ -682,7 +798,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     final prefs = _activePrefs;
-    if (!prefs.transitCardEnabled || !prefs.transitConfigured) {
+    if (!prefs.transitCardEnabled || !prefs.transitConfigured || window == null) {
       if (_commuteEval != null || _commuteLoading) {
         setState(() {
           _commuteEval = null;
@@ -691,6 +807,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
       unawaited(MenetrendService.cancelAlarms());
       return;
+    }
+    if (_commuteEval != null && _commuteEval!.isMorningMode != window) {
+      setState(() => _commuteEval = null);
     }
     if (_commuteEval == null && !_commuteLoading) {
       setState(() => _commuteLoading = true);
@@ -768,6 +887,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
       _refreshCommute();
       unawaited(
+        WearSyncService.instance.cacheSessionSnapshot(
+          session: result.activeSession,
+          student: result.student,
+          nickname: _activePrefs.nickname,
+        ),
+      );
+      if (result.student != null && !_hasPushedWearProfileMetadata) {
+        _hasPushedWearProfileMetadata = true;
+        unawaited(_syncWearStudentMetadataIfConnected(result));
+      }
+      unawaited(
         CalendarSyncService.instance.syncFromDashboardIfEnabled(
           result,
           prefs: _activePrefs,
@@ -788,6 +918,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         }
       });
     }
+  }
+
+  Future<void> _syncWearStudentMetadataIfConnected(DashboardData data) async {
+    final status = await WearSyncService.instance.getConnectionStatus();
+    if (!status.isConnected) return;
+    await WearSyncService.instance.syncSessionToWatch(
+      session: data.activeSession,
+      student: data.student,
+      nickname: _activePrefs.nickname,
+      forceSync: false,
+    );
   }
 
   static const int _timetableTabIndex = 2;
@@ -933,6 +1074,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       context: context,
       student: _data?.student,
       session: _session,
+      kretaClient: widget.kretaClient,
       prefs: currentPrefs,
       onPrefsChanged: widget.onPrefsChanged,
       onOpenFullSettings: () {
@@ -1291,6 +1433,46 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   ) =>
       groupHomeActivityItemsByDay(items, today);
 
+  Widget _buildHomeTransitCard({
+    required UserProfilePrefs prefs,
+    required CommuteEvaluation? rawEval,
+    required bool isLoading,
+    required List<Lesson> lessons,
+  }) {
+    final now = _now();
+    final eval = MenetrendService.filterVisibleEvaluation(
+      evaluation: rawEval,
+      todaysLessons: lessons,
+      prefs: prefs,
+      now: now,
+    );
+    if (eval == null) {
+      return const SizedBox.shrink();
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _maybeHomeEntrance(
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: MenetrendHomeCard(
+              evaluation: eval,
+              isLoading: isLoading,
+              prefs: prefs,
+              todaysLessons: lessons,
+              now: now,
+              onOpenSettings: _openProfileAndSettingsModal,
+              onRetry: () => _refreshCommute(),
+            ),
+          ),
+          0,
+          key: const ValueKey('home-transit'),
+        ),
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+
   Widget _buildHomeTab(ThemeData theme, ColorScheme scheme) {
     final Widget tabChild;
     if (_isLoading && _data == null) {
@@ -1303,12 +1485,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final allFeedItems = _buildAllFeedItems();
       final today = DateUtils.dateOnly(DateTime.now());
       final allDayGroups = _groupFeedItemsByDay(allFeedItems, today);
+      bool isFeedItemVisible(HomeActivityItem item) {
+        if (!item.matchesFilter(_feedFilter)) return false;
+        // On Főoldal ('Összes'), automatically hide completed homeworks so only
+        // active/unfinished tasks appear in the upcoming section; keep them
+        // visible in the dedicated 'Házik' view for inspection and undo.
+        if (_feedFilter == ActivityFeedFilter.all && item.homework != null) {
+          return !_isHomeworkCompleted(item.homework!);
+        }
+        return true;
+      }
+
       final feedRows = <_HomeFeedRow>[];
       int visibleGroupOrdinal = 0;
       for (int gIdx = 0; gIdx < allDayGroups.length; gIdx++) {
         final group = allDayGroups[gIdx];
-        final matchingCount =
-            group.items.where((it) => it.matchesFilter(_feedFilter)).length;
+        final matchingCount = group.items.where(isFeedItemVisible).length;
         final headerVisible = matchingCount > 0;
         final isFirstVisibleGroup = headerVisible && visibleGroupOrdinal == 0;
         feedRows.add(
@@ -1323,7 +1515,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         int visibleItemIdx = 0;
         for (int i = 0; i < group.items.length; i++) {
           final item = group.items[i];
-          final itemVisible = item.matchesFilter(_feedFilter);
+          final itemVisible = isFeedItemVisible(item);
           feedRows.add(
             _HomeFeedItemRow(
               item: item,
@@ -1363,72 +1555,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                     const SizedBox(height: 16),
                   ],
-                  Builder(
-                    builder: (context) {
+                  ValueListenableBuilder<int>(
+                    valueListenable: _commuteTick,
+                    builder: (context, _, _) {
                       final scope = AppProvidersScope.maybeOf(context);
                       final activePrefs = scope?.settings.prefs ?? widget.prefs;
                       if (scope != null) {
                         return ListenableBuilder(
-                          listenable: Listenable.merge([scope.settings, scope.commute]),
-                          builder: (context, _) {
-                            final p = scope.settings.prefs;
-                            final eval = scope.commute.evaluation ?? _commuteEval;
-                            if (!p.transitCardEnabled ||
-                                !p.transitConfigured ||
-                                eval == null) {
-                              return const SizedBox.shrink();
-                            }
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                _maybeHomeEntrance(
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                    ),
-                                    child: MenetrendHomeCard(
-                                      evaluation: eval,
-                                      isLoading: scope.commute.isLoading,
-                                      prefs: p,
-                                      onOpenSettings: _openProfileAndSettingsModal,
-                                      onRetry: () => _refreshCommute(),
-                                    ),
-                                  ),
-                                  0,
-                                  key: const ValueKey('home-transit'),
-                                ),
-                                const SizedBox(height: 16),
-                              ],
-                            );
-                          },
+                          listenable:
+                              Listenable.merge([scope.settings, scope.commute]),
+                          builder: (context, _) => _buildHomeTransitCard(
+                            prefs: scope.settings.prefs,
+                            rawEval: scope.commute.evaluation ?? _commuteEval,
+                            isLoading: scope.commute.isLoading,
+                            lessons: lessons,
+                          ),
                         );
                       }
-                      if (!activePrefs.transitCardEnabled ||
-                          !activePrefs.transitConfigured ||
-                          _commuteEval == null) {
-                        return const SizedBox.shrink();
-                      }
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _maybeHomeEntrance(
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                              ),
-                              child: MenetrendHomeCard(
-                                evaluation: _commuteEval,
-                                isLoading: _commuteLoading,
-                                prefs: activePrefs,
-                                onOpenSettings: _openProfileAndSettingsModal,
-                                onRetry: () => _refreshCommute(),
-                              ),
-                            ),
-                            0,
-                            key: const ValueKey('home-transit'),
-                          ),
-                          const SizedBox(height: 16),
-                        ],
+                      return _buildHomeTransitCard(
+                        prefs: activePrefs,
+                        rawEval: _commuteEval,
+                        isLoading: _commuteLoading,
+                        lessons: lessons,
                       );
                     },
                   ),
@@ -2364,13 +2512,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onTap: () => showGradeInspectionModal(
           context,
           grade,
-          prefs: widget.prefs,
+          prefs: _activePrefs,
           heroTag: heroTag,
         ),
         child: ChristmasSnowCap(
           enabled: widget.prefs.christmasModeEnabled,
           child: SoftGlassCard(
-            prefs: widget.prefs,
+            prefs: _activePrefs,
             padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
             borderRadius: BorderRadius.circular(18),
             child: Row(
@@ -2466,6 +2614,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         widget.prefs.resolveTeacherName(homework.teacherName);
     final cleanText = Homework.stripHtmlTags(homework.description);
     final heroTag = 'home_hw_${homework.uid}';
+    final isCompleted = _isHomeworkCompleted(homework);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -2474,85 +2623,137 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onTap: () => showHomeworkInspectionModal(
           context,
           homework,
-          prefs: widget.prefs,
+          prefs: _activePrefs,
           heroTag: heroTag,
+          isCompletedOverride: isCompleted,
         ),
         child: ChristmasSnowCap(
           enabled: widget.prefs.christmasModeEnabled,
           child: SoftGlassCard(
-            prefs: widget.prefs,
+            prefs: _activePrefs,
             padding: const EdgeInsets.all(14),
             borderRadius: BorderRadius.circular(16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Hero(
-                  tag: heroTag,
-                  child: Material(
-                    type: MaterialType.transparency,
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: hwColor.withValues(alpha: 0.2),
-                        borderRadius: OledTheme.badgeRadius,
-                        border: Border.all(color: hwColor),
-                      ),
-                      child: const Icon(
-                        Icons.menu_book_rounded,
-                        color: hwColor,
-                        size: 22,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic,
+              opacity: isCompleted ? 0.58 : 1.0,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Hero(
+                    tag: heroTag,
+                    child: Material(
+                      type: MaterialType.transparency,
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: hwColor.withValues(
+                            alpha: isCompleted ? 0.12 : 0.2,
+                          ),
+                          borderRadius: OledTheme.badgeRadius,
+                          border: Border.all(
+                            color: hwColor.withValues(
+                              alpha: isCompleted ? 0.45 : 1.0,
+                            ),
+                          ),
+                        ),
+                        child: Icon(
+                          isCompleted
+                              ? Icons.task_alt_rounded
+                              : Icons.menu_book_rounded,
+                          color: hwColor,
+                          size: 22,
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              subjectTitle,
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w800,
-                                color: scheme.onSurface,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                subjectTitle,
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  color: scheme.onSurface,
+                                  decoration: isCompleted
+                                      ? TextDecoration.lineThrough
+                                      : null,
+                                  decorationThickness:
+                                      isCompleted ? 1.8 : null,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Határidő: ${_formatFeedCardDate(homework.dueDate)}',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: hwColor,
-                              fontWeight: FontWeight.w700,
+                            const SizedBox(width: 8),
+                            Text(
+                              'Határidő: ${_formatFeedCardDate(homework.dueDate)}',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: hwColor,
+                                fontWeight: FontWeight.w700,
+                                decoration: isCompleted
+                                    ? TextDecoration.lineThrough
+                                    : null,
+                              ),
                             ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          cleanText,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurface.withValues(alpha: 0.78),
+                            decoration: isCompleted
+                                ? TextDecoration.lineThrough
+                                : null,
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        cleanText,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurface.withValues(alpha: 0.78),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        teacherDisplay,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: scheme.onSurface.withValues(alpha: 0.54),
+                        const SizedBox(height: 3),
+                        Text(
+                          teacherDisplay,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurface.withValues(alpha: 0.54),
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 6),
+                  Tooltip(
+                    message: isCompleted
+                        ? uwu('Visszavonás (aktívvá tétel)')
+                        : uwu('Megjelölés készként'),
+                    child: InkResponse(
+                      radius: 22,
+                      onTap: () =>
+                          _toggleHomeworkCompletion(homework, subjectTitle),
+                      child: Padding(
+                        padding: const EdgeInsets.all(6),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 180),
+                          child: Icon(
+                            isCompleted
+                                ? Icons.check_circle_rounded
+                                : Icons.radio_button_unchecked_rounded,
+                            key: ValueKey<bool>(isCompleted),
+                            size: 24,
+                            color: isCompleted
+                                ? hwColor
+                                : scheme.onSurface.withValues(alpha: 0.45),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -2595,13 +2796,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onTap: () => showTestInspectionModal(
           context,
           test,
-          prefs: widget.prefs,
+          prefs: _activePrefs,
           heroTag: heroTag,
         ),
         child: ChristmasSnowCap(
           enabled: widget.prefs.christmasModeEnabled,
           child: SoftGlassCard(
-            prefs: widget.prefs,
+            prefs: _activePrefs,
             padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
             borderRadius: BorderRadius.circular(18),
             child: Row(
@@ -2710,7 +2911,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required String message,
   }) {
     return SoftGlassCard(
-      prefs: widget.prefs,
+      prefs: _activePrefs,
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
       borderRadius: OledTheme.cardRadius,
       child: Row(
@@ -2751,15 +2952,18 @@ class _CollapsibleFeedItem extends StatelessWidget {
         final clamped = t.clamp(0.0, 1.0);
         return IgnorePointer(
           ignoring: !visible,
-          child: ClipRect(
-            child: Align(
-              alignment: Alignment.topCenter,
-              heightFactor: clamped,
-              child: Opacity(
-                opacity: clamped,
-                child: Transform.translate(
-                  offset: Offset(0, (1.0 - clamped) * -8.0),
-                  child: builtChild,
+          child: ExcludeSemantics(
+            excluding: clamped <= 0.001 && !visible,
+            child: ClipRect(
+              child: Align(
+                alignment: Alignment.topCenter,
+                heightFactor: clamped,
+                child: Opacity(
+                  opacity: clamped,
+                  child: Transform.translate(
+                    offset: Offset(0, (1.0 - clamped) * -8.0),
+                    child: builtChild,
+                  ),
                 ),
               ),
             ),

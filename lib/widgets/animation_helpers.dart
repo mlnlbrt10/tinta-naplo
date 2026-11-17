@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -8,6 +9,7 @@ import 'package:flutter/services.dart';
 
 import '../providers/app_providers.dart';
 import '../services/token_storage_service.dart';
+import 'animated_backdrops.dart';
 
 /// Solid Material 3 tonal indicator pill rendered inside segmented bars and
 /// the bottom navigation dock when Liquid Glass mode is disabled.
@@ -82,6 +84,7 @@ class LiquidGlassRimPainter extends CustomPainter {
   final LiquidGlassMode mode;
   final double rippleProgress;
   final Offset rippleOrigin;
+  final ValueListenable<Offset>? lightBiasListenable;
 
   const LiquidGlassRimPainter({
     required this.borderRadius,
@@ -92,11 +95,21 @@ class LiquidGlassRimPainter extends CustomPainter {
     this.mode = LiquidGlassMode.classicFrost,
     this.rippleProgress = 0.0,
     this.rippleOrigin = const Offset(0.5, 0.5),
-  });
+    this.lightBiasListenable,
+  }) : super(repaint: lightBiasListenable);
+
+  Offset get _effectiveBias {
+    final ambient = lightBiasListenable?.value ?? Offset.zero;
+    if (ambient == Offset.zero) return highlightBias;
+    return Offset(
+      (highlightBias.dx + ambient.dx * 0.55).clamp(-1.0, 1.0),
+      (highlightBias.dy + ambient.dy * 0.45).clamp(-1.0, 1.0),
+    );
+  }
 
   List<Color> buildPerimeterColors() {
     final t = pressProgress.clamp(0.0, 1.0);
-    final by = highlightBias.dy.clamp(-1.0, 1.0);
+    final by = _effectiveBias.dy.clamp(-1.0, 1.0);
     final topBoost = (1.0 +
             0.18 * t -
             math.max(0.0, by) * 0.25 +
@@ -122,7 +135,7 @@ class LiquidGlassRimPainter extends CustomPainter {
       case LiquidGlassMode.opticalPrism:
         const warmAmber = Color(0xFFFFB86C);
         const coolIce = Color(0xFF8BE9FD);
-        final bx = highlightBias.dx.clamp(-1.0, 1.0);
+        final bx = _effectiveBias.dx.clamp(-1.0, 1.0);
         final warmA = ((isDark ? 0.62 : 0.68) * (1.0 + bx.abs() * 0.25 + 0.2 * t))
             .clamp(0.0, 0.88);
         final iceA = ((isDark ? 0.60 : 0.66) * (1.0 + bx.abs() * 0.25 + 0.2 * t))
@@ -206,7 +219,7 @@ class LiquidGlassRimPainter extends CustomPainter {
       canvas.restore();
     }
 
-    final bx = highlightBias.dx.clamp(-1.0, 1.0);
+    final bx = _effectiveBias.dx.clamp(-1.0, 1.0);
     final Alignment beginAlign = mode == LiquidGlassMode.opticalPrism
         ? Alignment(-0.85 + bx * 0.3, -1.0)
         : Alignment(bx * 0.35, -1.0);
@@ -238,7 +251,8 @@ class LiquidGlassRimPainter extends CustomPainter {
       oldDelegate.isDark != isDark ||
       oldDelegate.mode != mode ||
       oldDelegate.rippleProgress != rippleProgress ||
-      oldDelegate.rippleOrigin != rippleOrigin;
+      oldDelegate.rippleOrigin != rippleOrigin ||
+      oldDelegate.lightBiasListenable != lightBiasListenable;
 }
 
 /// Translucent Liquid Glass pill surface with a uniform translucent fill and an
@@ -376,6 +390,8 @@ class LiquidGlassPillSurface extends StatelessWidget {
           mode: effectiveMode,
           rippleProgress: motionScope?.rippleProgress ?? 0.0,
           rippleOrigin: motionScope?.rippleOrigin ?? const Offset(0.5, 0.5),
+          lightBiasListenable:
+              solidBase ? null : BackdropMotionCoordinator.lightBiasNotifier,
         ),
         child: const SizedBox.expand(),
       ),

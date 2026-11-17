@@ -2075,6 +2075,7 @@ class _ScholarshipAndBreakdownDialogState
 
     return LiquidGlassSurface(
       prefs: _prefs,
+      highContrastExpanded: true,
       contentOpacityAnimation: ModalRoute.of(context)?.animation,
       borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
       child: DraggableScrollableSheet(
@@ -4336,6 +4337,7 @@ class _SubjectCustomizationSheetState
         padding: EdgeInsets.only(bottom: bottomInset),
         child: LiquidGlassSurface(
           prefs: widget.prefs,
+          highContrastExpanded: true,
           contentOpacityAnimation: ModalRoute.of(context)?.animation,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
           child: SingleChildScrollView(

@@ -1,0 +1,65 @@
+Flutter crash report.
+Please report a bug at https://github.com/flutter/flutter/issues.
+
+## command
+
+flutter run --profile
+
+## exception
+
+String: failed to connect to http://127.0.0.1:44785/7R-xuABBv84=/ DartDevelopmentServiceException: WebSocketChannelException: SocketException: Connection refused (OS Error: Connection refused, errno = 111), address = 127.0.0.1, port = 41318
+
+```
+```
+
+## flutter doctor
+
+```
+[32m[✓][39m Flutter (Channel stable, 3.47.9, on CachyOS 7.3.1-1-cachyos, locale en_US.UTF-8) [57ms]
+    [32m•[39m Flutter version 3.47.9 on channel stable at /home/milu/.cache/flutter_sdk
+    [32m•[39m Upstream repository https://github.com/flutter/flutter.git
+    [32m•[39m Framework revision c197ca5199 (3 weeks ago), 2026-10-29 10:10:20 -0400
+    [32m•[39m Engine revision 89c39edfdf
+    [32m•[39m Dart version 3.13.7
+    [32m•[39m DevTools version 2.60.0
+    [32m•[39m Feature flags: enable-web, enable-linux-desktop, enable-macos-desktop, enable-windows-desktop, enable-android, enable-ios, cli-animations, enable-native-assets,
+      enable-record-use, enable-swift-package-manager, omit-legacy-version-file, enable-lldb-debugging, enable-uiscene-migration
+
+[32m[✓][39m Android toolchain - develop for Android devices (Android SDK version 37.0.0) [141ms]
+    [32m•[39m Android SDK at /opt/android-sdk
+    [32m•[39m Emulator version unknown
+    [32m•[39m Platform android-37.0, build-tools 37.0.0
+    [33m![39m Multiple adb binaries found. This can cause conflicts and device detection issues:
+        - /opt/android-sdk/platform-tools/adb
+        - /usr/bin/adb
+    [32m•[39m Java binary at: /usr/bin/java
+      This JDK was found in the system PATH.
+      To manually set the JDK path, use: `flutter config --jdk-dir="path/to/jdk"`.
+    [32m•[39m Java version OpenJDK Runtime Environment (build 21.0.12.1+1)
+    [32m•[39m All Android licenses accepted.
+
+[31m[✗][39m Chrome - develop for the web (Cannot find Chrome executable at google-chrome) [7ms]
+    [33m![39m Cannot find Chrome. Try setting CHROME_EXECUTABLE to a Chrome executable.
+
+[32m[✓][39m Linux toolchain - develop for Linux desktop [851ms]
+    [32m•[39m clang version 23.1.4
+    [32m•[39m cmake version 4.4.5
+    [32m•[39m ninja version 1.13.2
+    [32m•[39m pkg-config version 3.0.10
+    [32m•[39m OpenGL core renderer: NVIDIA GeForce RTX 2060/PCIe/SSE2
+    [32m•[39m OpenGL core version: 4.6.0 NVIDIA 580.196.07
+    [32m•[39m OpenGL core shading language version: 4.60 NVIDIA
+    [32m•[39m OpenGL ES renderer: NVIDIA GeForce RTX 2060/PCIe/SSE2
+    [32m•[39m OpenGL ES version: OpenGL ES 3.2 NVIDIA 580.196.07
+    [32m•[39m OpenGL ES shading language version: OpenGL ES GLSL ES 3.20
+    [32m•[39m GL_EXT_framebuffer_blit: yes
+    [32m•[39m GL_EXT_texture_format_BGRA8888: yes
+
+[32m[✓][39m Connected device (1 available) [132ms]
+    [32m•[39m Linux (desktop) • linux • linux-x64 • CachyOS 7.3.1-1-cachyos
+
+[32m[✓][39m Network resources [596ms]
+    [32m•[39m All expected network resources are available.
+
+[33m![39m Doctor found issues in 1 category.
+```

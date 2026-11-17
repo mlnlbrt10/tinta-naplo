@@ -430,6 +430,7 @@ class _FrostedUpdateDialogContent extends StatefulWidget {
 class _FrostedUpdateDialogContentState
     extends State<_FrostedUpdateDialogContent> {
   bool _isDownloading = false;
+  bool _downloadFailed = false;
   double? _downloadProgress;
   String? _statusMessage;
 
@@ -445,7 +446,8 @@ class _FrostedUpdateDialogContentState
 
     setState(() {
       _isDownloading = true;
-      _downloadProgress = 0.0;
+      _downloadFailed = false;
+      _downloadProgress = null;
       _statusMessage = uwu('$targetApkFileName letöltése...');
     });
 
@@ -472,16 +474,28 @@ class _FrostedUpdateDialogContentState
       final sink = file.openWrite();
       var received = 0;
       var lastPct = -1;
+      var lastMbTick = -1;
       await for (final chunk in response) {
         sink.add(chunk);
         received += chunk.length;
-        if (total > 0 && mounted) {
+        if (!mounted) continue;
+        if (total > 0) {
           final pct = (received * 100 / total).floor();
           if (pct != lastPct) {
             lastPct = pct;
             setState(() {
               _downloadProgress = (pct / 100.0).clamp(0.0, 1.0);
               _statusMessage = uwu('Letöltés folyamatban: $pct%');
+            });
+          }
+        } else {
+          final mbTenths = (received * 10 / (1024 * 1024)).floor();
+          if (mbTenths != lastMbTick) {
+            lastMbTick = mbTenths;
+            final mbText = (received / (1024 * 1024)).toStringAsFixed(1);
+            setState(() {
+              _downloadProgress = null;
+              _statusMessage = uwu('Letöltés folyamatban: $mbText MB');
             });
           }
         }
@@ -499,6 +513,7 @@ class _FrostedUpdateDialogContentState
       if (!mounted) return;
       setState(() {
         _isDownloading = false;
+        _downloadFailed = res == 'permission_required';
         _downloadProgress = null;
         _statusMessage = res == 'permission_required'
             ? uwu('Engedélyezd az ismeretlen források telepítését, majd próbáld újra.')
@@ -516,8 +531,9 @@ class _FrostedUpdateDialogContentState
     _errorShown = true;
     setState(() {
       _isDownloading = false;
+      _downloadFailed = true;
       _downloadProgress = null;
-      _statusMessage = null;
+      _statusMessage = uwu('A letöltés sikertelen. Próbáld újra.');
     });
     final openBrowser = await showSoftBlurDialog<bool>(
       context: context,
@@ -598,6 +614,7 @@ class _FrostedUpdateDialogContentState
                 padding: const EdgeInsets.all(22),
                 borderRadius: OledTheme.largeRadius,
                 solidColor: cardBg,
+                highContrastExpanded: true,
                 contentOpacityAnimation: widget.contentOpacityAnimation,
                 boxShadow: [
                   BoxShadow(
@@ -703,22 +720,25 @@ class _FrostedUpdateDialogContentState
                         value: _downloadProgress,
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      if (_statusMessage != null) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          _statusMessage!,
-                          textAlign: TextAlign.center,
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            color: scheme.primary,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
                     ],
-                    const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        if (!_isDownloading) ...[
+                    if (_statusMessage != null &&
+                        (_isDownloading || _downloadFailed)) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        _statusMessage!,
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: _downloadFailed && !_isDownloading
+                              ? scheme.error
+                              : scheme.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                    if (!_isDownloading) ...[
+                      const SizedBox(height: 18),
+                      Row(
+                        children: [
                           Expanded(
                             child: OutlinedButton(
                               style: OutlinedButton.styleFrom(
@@ -733,41 +753,48 @@ class _FrostedUpdateDialogContentState
                             ),
                           ),
                           const SizedBox(width: 10),
-                        ],
-                        Expanded(
-                          flex: 2,
-                          child: TactileBounce(
-                            onTap: _isDownloading ? null : _startOtaUpdate,
-                            child: Container(
-                              alignment: Alignment.center,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              decoration: BoxDecoration(
-                                color: scheme.primary,
-                                borderRadius: BorderRadius.circular(22),
-                              ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.download_rounded,
-                                    size: 18,
-                                    color: scheme.onPrimary,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    uwu('Frissítés most'),
-                                    style: TextStyle(
+                          Expanded(
+                            flex: 2,
+                            child: TactileBounce(
+                              onTap: _startOtaUpdate,
+                              child: Container(
+                                alignment: Alignment.center,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                                decoration: BoxDecoration(
+                                  color: scheme.primary,
+                                  borderRadius: BorderRadius.circular(22),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      _downloadFailed
+                                          ? Icons.refresh_rounded
+                                          : Icons.download_rounded,
+                                      size: 18,
                                       color: scheme.onPrimary,
-                                      fontWeight: FontWeight.w900,
                                     ),
-                                  ),
-                                ],
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      uwu(
+                                        _downloadFailed
+                                            ? 'Újrapróbálás'
+                                            : 'Frissítés most',
+                                      ),
+                                      style: TextStyle(
+                                        color: scheme.onPrimary,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),

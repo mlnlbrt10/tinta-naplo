@@ -53,6 +53,11 @@ class LiquidGlassSurface extends StatelessWidget {
   final List<BoxShadow>? boxShadow;
   final bool isDockStyle;
 
+  /// When true, renders a crisp high-contrast solid surface without
+  /// `BackdropFilter` even when Liquid Glass is active, preventing double-blur
+  /// stacking on expanded modal/detail sheets above already-blurred cards.
+  final bool highContrastExpanded;
+
   /// Optional animation that fades the interior content (and, in solid mode,
   /// the surface) WITHOUT wrapping `BackdropFilter` in an ancestor `Opacity`
   /// layer, ensuring frosted blur is active from frame 0 of route transitions.
@@ -69,6 +74,7 @@ class LiquidGlassSurface extends StatelessWidget {
     this.border,
     this.boxShadow,
     this.isDockStyle = false,
+    this.highContrastExpanded = false,
     this.contentOpacityAnimation,
   });
 
@@ -80,8 +86,12 @@ class LiquidGlassSurface extends StatelessWidget {
     final effectivePrefs =
         prefs ?? AppProvidersScope.maybeOf(context)?.settings.prefs;
     final liquidGlassEnabled = resolveLiquidGlassEnabled(effectivePrefs);
-    final resolvedSolidColor =
-        (solidColor ?? scheme.surfaceContainerHigh).withValues(alpha: 1.0);
+    final resolvedSolidColor = highContrastExpanded && liquidGlassEnabled
+        ? (solidColor ??
+            (isDark
+                ? const Color(0xF5141820)
+                : Colors.white.withValues(alpha: 0.97)))
+        : (solidColor ?? scheme.surfaceContainerHigh).withValues(alpha: 1.0);
     final rawContent = Material(
       type: MaterialType.transparency,
       child: child,
@@ -93,14 +103,20 @@ class LiquidGlassSurface extends StatelessWidget {
           )
         : rawContent;
 
-    if (!liquidGlassEnabled) {
+    if (!liquidGlassEnabled || (highContrastExpanded && !isDockStyle)) {
+      final resolvedBorder = border ??
+          Border.all(
+            color: liquidGlassEnabled
+                ? Colors.white.withValues(alpha: isDark ? 0.14 : 0.24)
+                : scheme.outlineVariant,
+            width: 1.0,
+          );
       final solidBox = Container(
         padding: padding,
         decoration: BoxDecoration(
           color: resolvedSolidColor,
           borderRadius: borderRadius,
-          border: border ??
-              Border.all(color: scheme.outlineVariant, width: 1.0),
+          border: resolvedBorder,
           boxShadow: boxShadow,
         ),
         child: rawContent,
@@ -365,6 +381,7 @@ Future<T?> showSoftBlurDialog<T>({
                 prefs: prefs,
                 borderRadius: borderRadius,
                 padding: contentPadding,
+                highContrastExpanded: true,
                 contentOpacityAnimation: fadeCurved,
                 boxShadow: [
                   BoxShadow(
@@ -383,9 +400,10 @@ Future<T?> showSoftBlurDialog<T>({
   );
 }
 
-/// Card container that optionally renders as a 120fps hardware-accelerated
-/// semi-transparent frosted glass surface (`Kártyák soft blur & áttetszőség`)
-/// without per-item `BackdropFilter` shader overhead inside scrolling lists.
+/// Card container rendering a frosted `BackdropFilter(sigmaX: 14, sigmaY: 14)`
+/// surface clipped to [borderRadius] for collapsed cards when Liquid Glass is
+/// active, high-contrast solid fills when [isExpanded] is true (avoiding
+/// double-blur stacking), and zero-blur Material surfaces when OFF.
 class SoftGlassCard extends StatelessWidget {
   final UserProfilePrefs prefs;
   final Widget child;
@@ -394,6 +412,7 @@ class SoftGlassCard extends StatelessWidget {
   final Color? color;
   final BoxBorder? border;
   final Color? borderColor;
+  final bool isExpanded;
 
   const SoftGlassCard({
     super.key,
@@ -404,6 +423,7 @@ class SoftGlassCard extends StatelessWidget {
     this.color,
     this.border,
     this.borderColor,
+    this.isExpanded = false,
   });
 
   @override
@@ -413,14 +433,16 @@ class SoftGlassCard extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final activePreset = BackgroundPresetInfo.resolve(activePrefs);
-    final hasStudioOrCustomBackdrop =
-        activePrefs.hasCustomBackdrop || activePreset.id != 'pure_oled';
+    final hasStudioOrCustomBackdrop = activePrefs.hasAnimatedBackdrop ||
+        activePrefs.hasCustomBackdrop ||
+        activePreset.id != 'pure_oled';
     final contrast = AdaptiveContrastTokens.resolve(activePrefs);
     final resolvedBorderColor = borderColor ??
         (hasStudioOrCustomBackdrop
             ? contrast.cardBorder
             : scheme.outlineVariant);
-    final borderSide = border ?? Border.all(color: resolvedBorderColor, width: 1.0);
+    final borderSide =
+        border ?? Border.all(color: resolvedBorderColor, width: 1.0);
     final Widget themedChild = hasStudioOrCustomBackdrop
         ? DefaultTextStyle.merge(
             style: TextStyle(color: contrast.primaryText),
@@ -437,7 +459,7 @@ class SoftGlassCard extends StatelessWidget {
 
     if (!activePrefs.liquidGlassEnabled) {
       final baseSolid = hasStudioOrCustomBackdrop
-          ? (color ?? contrast.cardFill.withValues(alpha: 1.0))
+          ? (color ?? contrast.cardFill.withValues(alpha: 0.94))
           : (color ?? scheme.surfaceContainer).withValues(alpha: 1.0);
       return RepaintBoundary(
         child: Container(
@@ -452,18 +474,7 @@ class SoftGlassCard extends StatelessWidget {
       );
     }
 
-    final surfaceColor =
-        color ?? theme.cardTheme.color ?? scheme.surface;
     final isDark = theme.brightness == Brightness.dark;
-    final clearTint = hasStudioOrCustomBackdrop
-        ? (color ?? contrast.cardFill)
-        : (isDark
-            ? Colors.black.withValues(
-                alpha: (activePrefs.cardOpacity * 0.42).clamp(0.14, 0.44),
-              )
-            : surfaceColor.withValues(
-                alpha: (activePrefs.cardOpacity * 0.45).clamp(0.20, 0.42),
-              ));
     final glassBorder = border ??
         Border.all(
           color: borderColor ??
@@ -473,15 +484,53 @@ class SoftGlassCard extends StatelessWidget {
           width: 1.0,
         );
 
-    return RepaintBoundary(
-      child: Container(
-        padding: padding,
-        decoration: BoxDecoration(
-          color: clearTint,
-          borderRadius: borderRadius,
-          border: glassBorder,
+    if (isExpanded) {
+      final expandedFill = hasStudioOrCustomBackdrop
+          ? (color ?? contrast.cardFill.withValues(alpha: 0.95))
+          : (color ?? scheme.surfaceContainerHigh).withValues(alpha: 0.96);
+      return RepaintBoundary(
+        child: Container(
+          padding: padding,
+          decoration: BoxDecoration(
+            color: expandedFill,
+            borderRadius: borderRadius,
+            border: glassBorder,
+          ),
+          child: contentChild,
         ),
-        child: contentChild,
+      );
+    }
+
+    final surfaceColor =
+        color ?? theme.cardTheme.color ?? scheme.surface;
+    final clearTint = hasStudioOrCustomBackdrop
+        ? (color ??
+            (contrast.isLightBackdrop
+                ? Colors.white.withValues(alpha: 0.56)
+                : const Color(0xFF141820).withValues(alpha: 0.54)))
+        : (isDark
+            ? Colors.black.withValues(
+                alpha: (activePrefs.cardOpacity * 0.42).clamp(0.18, 0.48),
+              )
+            : surfaceColor.withValues(
+                alpha: (activePrefs.cardOpacity * 0.48).clamp(0.24, 0.46),
+              ));
+
+    return RepaintBoundary(
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 14.0, sigmaY: 14.0),
+          child: Container(
+            padding: padding,
+            decoration: BoxDecoration(
+              color: clearTint,
+              borderRadius: borderRadius,
+              border: glassBorder,
+            ),
+            child: contentChild,
+          ),
+        ),
       ),
     );
   }

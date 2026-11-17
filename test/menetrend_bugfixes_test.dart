@@ -22,6 +22,7 @@ Lesson _lesson({
   required DateTime start,
   required DateTime end,
   String subject = 'Matematika',
+  bool cancelled = false,
 }) {
   return Lesson(
     uid: 'lesson-$number',
@@ -34,11 +35,17 @@ Lesson _lesson({
     roomName: '101',
     teacher: 'Teszt Tanár',
     type: NameUidDesc(uid: 'tanora', name: 'Tanora', description: 'Tanóra'),
-    state: NameUidDesc(
-      uid: 'megtartott',
-      name: 'Megtartott',
-      description: 'Megtartott',
-    ),
+    state: cancelled
+        ? NameUidDesc(
+            uid: 'elmaradt',
+            name: 'Elmaradt',
+            description: 'Elmaradt',
+          )
+        : NameUidDesc(
+            uid: 'megtartott',
+            name: 'Megtartott',
+            description: 'Megtartott',
+          ),
     canStudentEditHomework: false,
     isHomeworkComplete: false,
     attachments: const [],
@@ -1144,6 +1151,493 @@ void main() {
         expect(find.byType(MenetrendHomeCard), findsOneWidget);
       },
     );
+  });
+
+  group('Smart visibility & on-time arrival filtering', () {
+    test('Morning buildEvaluation strictly filters out late arrivals (including walk to school) and hides when none remain or now >= firstLessonStart', () {
+      final day = DateTime(2026, 11, 13);
+      final firstLesson = _lesson(
+        number: 2,
+        start: DateTime(2026, 11, 13, 8, 55),
+        end: DateTime(2026, 11, 13, 9, 40),
+      );
+      final lastLesson = _lesson(
+        number: 5,
+        start: DateTime(2026, 11, 13, 13, 10),
+        end: DateTime(2026, 11, 13, 13, 55),
+      );
+      const prefs = UserProfilePrefs(
+        transitCardEnabled: true,
+        transitHomeStation: 'Bodajk',
+        transitSchoolStation: 'Székesfehérvár',
+        favoriteRoute1stPeriod: '08:30',
+      );
+
+      MenetrendTripOption makeTrip(
+        int depH,
+        int depM,
+        int arrH,
+        int arrM, {
+        int walkToDest = 5,
+        bool favorite = false,
+      }) =>
+          MenetrendTripOption(
+            routeShortName: 'S150',
+            routeLongName: 'Személyvonat',
+            mode: MenetrendTransportMode.rail,
+            departureStation: 'Bodajk',
+            arrivalStation: 'Székesfehérvár',
+            scheduledDeparture: DateTime(day.year, day.month, day.day, depH, depM),
+            scheduledArrival: DateTime(day.year, day.month, day.day, arrH, arrM),
+            walkToStationMinutes: 5,
+            walkToDestinationMinutes: walkToDest,
+            isFavorite: favorite,
+          );
+
+      // 07:30 -> 08:40+5=08:45 (on time)
+      // 08:05 -> 08:50+5=08:55 (exact boundary on time)
+      // 08:15 -> 08:52+5=08:57 (late by 2 min after walk)
+      // 08:30 -> 09:05+5=09:10 (late favorite, must NOT be eligible or recommended)
+      final onTimeEarly = makeTrip(7, 30, 8, 40);
+      final onTimeExact = makeTrip(8, 5, 8, 50);
+      final lateAfterWalk = makeTrip(8, 15, 8, 52);
+      final lateFavorite = makeTrip(8, 30, 9, 5, favorite: true);
+
+      final eval = MenetrendService.buildEvaluation(
+        trips: [onTimeEarly, onTimeExact, lateAfterWalk, lateFavorite],
+        isMorning: true,
+        firstLesson: firstLesson,
+        lastLesson: lastLesson,
+        prefs: prefs,
+        effectiveWalk: 5,
+        now: DateTime(2026, 11, 13, 7, 15),
+      );
+
+      expect(eval, isNotNull);
+      expect(eval!.recommendedTrip.departureTimeFormatted, '08:05');
+      expect(
+        eval.alternatives.map((t) => t.departureTimeFormatted).toList(),
+        ['07:30', '08:05'],
+      );
+
+      // At 08:01, both 07:30 and 08:05 are past mustLeaveBy (08:00), leaving only
+      // late departures -> evaluation MUST be null so card hides.
+      final noneOnTimeLeft = MenetrendService.buildEvaluation(
+        trips: [onTimeEarly, onTimeExact, lateAfterWalk, lateFavorite],
+        isMorning: true,
+        firstLesson: firstLesson,
+        lastLesson: lastLesson,
+        prefs: prefs,
+        effectiveWalk: 5,
+        now: DateTime(2026, 11, 13, 8, 1),
+      );
+      expect(noneOnTimeLeft, isNull);
+
+      // At exact firstLessonStart (08:55), morning evaluation MUST be null even if
+      // a hypothetical trip existed.
+      final atLessonStart = MenetrendService.buildEvaluation(
+        trips: [makeTrip(8, 55, 8, 55, walkToDest: 0)],
+        isMorning: true,
+        firstLesson: firstLesson,
+        lastLesson: lastLesson,
+        prefs: prefs,
+        effectiveWalk: 0,
+        now: DateTime(2026, 11, 13, 8, 55),
+      );
+      expect(atLessonStart, isNull);
+    });
+
+    test('commuteWindowForLessons skips cancelled first/last lessons and enforces strict [lastEnd - 30m, lastEnd + 1h] afternoon window', () {
+      final lessons = [
+        _lesson(
+          number: 1,
+          start: DateTime(2026, 11, 13, 8, 0),
+          end: DateTime(2026, 11, 13, 8, 45),
+          cancelled: true,
+        ),
+        _lesson(
+          number: 2,
+          start: DateTime(2026, 11, 13, 8, 55),
+          end: DateTime(2026, 11, 13, 9, 40),
+        ),
+        _lesson(
+          number: 5,
+          start: DateTime(2026, 11, 13, 13, 10),
+          end: DateTime(2026, 11, 13, 13, 55),
+        ),
+        _lesson(
+          number: 6,
+          start: DateTime(2026, 11, 13, 14, 5),
+          end: DateTime(2026, 11, 13, 14, 50),
+          cancelled: true,
+        ),
+      ];
+
+      // Morning uses 2nd lesson (08:55) since 1st is cancelled
+      expect(
+        MenetrendService.commuteWindowForLessons(
+          now: DateTime(2026, 11, 13, 8, 54, 59),
+          lessons: lessons,
+        ),
+        isTrue,
+      );
+      // Hidden immediately when now >= firstLessonStart (08:55)
+      expect(
+        MenetrendService.commuteWindowForLessons(
+          now: DateTime(2026, 11, 13, 8, 55),
+          lessons: lessons,
+        ),
+        isNull,
+      );
+      // Hidden mid-day (11:30) and at 13:24:59 (30m01s before 13:55)
+      expect(
+        MenetrendService.commuteWindowForLessons(
+          now: DateTime(2026, 11, 13, 11, 30),
+          lessons: lessons,
+        ),
+        isNull,
+      );
+      expect(
+        MenetrendService.commuteWindowForLessons(
+          now: DateTime(2026, 11, 13, 13, 24, 59),
+          lessons: lessons,
+        ),
+        isNull,
+      );
+      // Afternoon visible strictly in [13:25:00, 14:55:00] based on last non-cancelled lesson (13:55)
+      expect(
+        MenetrendService.commuteWindowForLessons(
+          now: DateTime(2026, 11, 13, 13, 25),
+          lessons: lessons,
+        ),
+        isFalse,
+      );
+      expect(
+        MenetrendService.commuteWindowForLessons(
+          now: DateTime(2026, 11, 13, 14, 55),
+          lessons: lessons,
+        ),
+        isFalse,
+      );
+      // Hidden at 14:55:01 (> lastEnd + 1h), ignoring cancelled lesson ending at 14:50
+      expect(
+        MenetrendService.commuteWindowForLessons(
+          now: DateTime(2026, 11, 13, 14, 55, 1),
+          lessons: lessons,
+        ),
+        isNull,
+      );
+      // Days with no lessons or all cancelled lessons always return null
+      expect(
+        MenetrendService.commuteWindowForLessons(
+          now: DateTime(2026, 11, 13, 7, 30),
+          lessons: const [],
+        ),
+        isNull,
+      );
+      expect(
+        MenetrendService.commuteWindowForLessons(
+          now: DateTime(2026, 11, 13, 7, 30),
+          lessons: [lessons.first, lessons.last],
+        ),
+        isNull,
+      );
+    });
+
+    testWidgets('HomeScreen auto-hides morning/afternoon MenetrendHomeCard across window transitions on timer ticks', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      FlutterSecureStorage.setMockInitialValues({});
+
+      final lessons = [
+        _lesson(
+          number: 1,
+          start: DateTime(2026, 11, 13, 8, 0),
+          end: DateTime(2026, 11, 13, 8, 45),
+          cancelled: true,
+        ),
+        _lesson(
+          number: 2,
+          start: DateTime(2026, 11, 13, 8, 55),
+          end: DateTime(2026, 11, 13, 9, 40),
+        ),
+        _lesson(
+          number: 5,
+          start: DateTime(2026, 11, 13, 13, 10),
+          end: DateTime(2026, 11, 13, 13, 55),
+        ),
+        _lesson(
+          number: 6,
+          start: DateTime(2026, 11, 13, 14, 5),
+          end: DateTime(2026, 11, 13, 14, 50),
+          cancelled: true,
+        ),
+      ];
+
+      Map<String, dynamic> buildItin(DateTime dep, DateTime arr, String code) => {
+            'startTime': dep.millisecondsSinceEpoch,
+            'endTime': arr.millisecondsSinceEpoch,
+            'legs': [
+              {
+                'mode': 'RAIL',
+                'startTime': dep.millisecondsSinceEpoch,
+                'endTime': arr.millisecondsSinceEpoch,
+                'departureDelay': 0,
+                'arrivalDelay': 0,
+                'realTime': true,
+                'from': {'name': 'Bodajk'},
+                'to': {'name': 'Székesfehérvár'},
+                'route': {'shortName': code, 'longName': 'Személy'},
+                'trip': {'gtfsId': 'MAV:$code', 'tripShortName': code},
+                'intermediateStops': const [],
+              },
+            ],
+          };
+
+      final mockHttp = MockClient((req) async {
+        final body = jsonDecode(req.body) as Map<String, dynamic>;
+        final q = (body['query'] ?? '').toString();
+        final isMorningQuery = q.contains('arriveBy: true') || q.contains('time: "07:');
+        final itins = isMorningQuery
+            ? [
+                // On-time for 08:55 (arrives 08:30 + 15m walk = 08:45 <= 08:55)
+                buildItin(
+                  DateTime(2026, 11, 13, 8, 0),
+                  DateTime(2026, 11, 13, 8, 30),
+                  'S150',
+                ),
+                // Too late for 08:55 (arrives 08:50 + 15m walk = 09:05 > 08:55)
+                buildItin(
+                  DateTime(2026, 11, 13, 8, 25),
+                  DateTime(2026, 11, 13, 8, 50),
+                  'S152',
+                ),
+              ]
+            : [
+                buildItin(
+                  DateTime(2026, 11, 13, 14, 15),
+                  DateTime(2026, 11, 13, 14, 43),
+                  'S151',
+                ),
+              ];
+        return http.Response(
+          jsonEncode({'data': {'plan': {'itineraries': itins}}}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      const prefs = UserProfilePrefs(
+        transitCardEnabled: true,
+        transitHomeStation: 'Bodajk',
+        transitSchoolStation: 'Székesfehérvár',
+        extras: {
+          'homeTrainStation': 'Bodajk',
+          'homeTrainLat': 47.32,
+          'homeTrainLon': 18.23,
+          'schoolTrainStation': 'Székesfehérvár',
+          'schoolTrainLat': 47.18,
+          'schoolTrainLon': 18.42,
+        },
+      );
+      final settings = SettingsProvider(initialPrefs: prefs);
+      addTearDown(settings.dispose);
+      final theme = ThemeProvider(settings);
+      addTearDown(theme.dispose);
+      final commute = CommuteProvider(
+        settings,
+        menetrendService: MenetrendService(httpClient: mockHttp),
+      );
+      addTearDown(commute.dispose);
+
+      final session = StoredSession(
+        accessToken: 'acc',
+        refreshToken: 'ref',
+        idToken: 'id',
+        instituteCode: 'klik001',
+        expiresAt: DateTime.now().add(const Duration(hours: 2)),
+      );
+      final data = DashboardData(
+        student: null,
+        todaysLessons: lessons,
+        allGrades: const [],
+        latestGrades: const [],
+        homeworks: const [],
+        tests: const [],
+        omissions: const [],
+        messages: const [],
+        activeSession: session,
+      );
+
+      var fakeNow = DateTime(2026, 11, 13, 7, 30);
+      await tester.pumpWidget(
+        AppProvidersScope(
+          settings: settings,
+          theme: theme,
+          commute: commute,
+          child: MaterialApp(
+            theme: OledTheme.buildTheme(prefs: prefs),
+            home: HomeScreen(
+              initialSession: session,
+              initialCachedData: data,
+              kretaClient: _FakeCommuteDashboardClient(data),
+              prefs: prefs,
+              onPrefsChanged: (_) {},
+              onLogout: () {},
+              clock: () => fakeNow,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Morning card visible; late S152 route filtered out
+      expect(find.byType(MenetrendHomeCard), findsOneWidget);
+      expect(commute.evaluation, isNotNull);
+      expect(commute.evaluation!.isMorningMode, isTrue);
+      expect(commute.evaluation!.recommendedTrip.routeShortName, 'S150');
+      expect(commute.evaluation!.alternatives.length, 1);
+
+      // At 07:50 (> 08:00 - 15m walk = 07:45), no remaining on-time departures exist -> auto-hides
+      fakeNow = DateTime(2026, 11, 13, 7, 50);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(commute.evaluation, isNull);
+      expect(find.byType(MenetrendHomeCard), findsNothing);
+
+      // Mid-day (11:30) and 13:20 (>30m before 13:55) -> stays hidden
+      fakeNow = DateTime(2026, 11, 13, 13, 20);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(MenetrendHomeCard), findsNothing);
+
+      // Enter afternoon window (13:25 = 13:55 - 30m) -> afternoon card appears automatically
+      fakeNow = DateTime(2026, 11, 13, 13, 25);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(commute.evaluation, isNotNull);
+      expect(commute.evaluation!.isMorningMode, isFalse);
+      expect(find.byType(MenetrendHomeCard), findsOneWidget);
+
+      // Leave afternoon window (14:56 > 13:55 + 1h) -> auto-hides automatically
+      fakeNow = DateTime(2026, 11, 13, 14, 56);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(commute.evaluation, isNull);
+      expect(find.byType(MenetrendHomeCard), findsNothing);
+    });
+
+    testWidgets('MenetrendHomeCard shrinks outside window and detail modal hides late morning alternatives', (tester) async {
+      final firstLesson = _lesson(
+        number: 1,
+        start: DateTime(2026, 11, 13, 8, 0),
+        end: DateTime(2026, 11, 13, 8, 45),
+      );
+      final onTimeTrip = MenetrendTripOption(
+        routeShortName: 'S150',
+        routeLongName: 'Személyvonat',
+        mode: MenetrendTransportMode.rail,
+        departureStation: 'Bodajk',
+        arrivalStation: 'Székesfehérvár',
+        scheduledDeparture: DateTime(2026, 11, 13, 7, 14),
+        scheduledArrival: DateTime(2026, 11, 13, 7, 45),
+        walkToStationMinutes: 5,
+        walkToDestinationMinutes: 5,
+      );
+      final lateTrip = MenetrendTripOption(
+        routeShortName: 'S152',
+        routeLongName: 'Személyvonat',
+        mode: MenetrendTransportMode.rail,
+        departureStation: 'Bodajk',
+        arrivalStation: 'Székesfehérvár',
+        scheduledDeparture: DateTime(2026, 11, 13, 7, 40),
+        scheduledArrival: DateTime(2026, 11, 13, 8, 5),
+        walkToStationMinutes: 5,
+        walkToDestinationMinutes: 5,
+      );
+      final morningEval = CommuteEvaluation(
+        isMorningMode: true,
+        targetLesson: firstLesson,
+        targetPeriodNumber: 1,
+        recommendedTrip: onTimeTrip,
+        alternatives: [onTimeTrip, lateTrip],
+        effectiveWalkMinutes: 5,
+        alertBufferMinutes: 5,
+        now: DateTime(2026, 11, 13, 6, 40),
+      );
+      const prefs = UserProfilePrefs(
+        transitCardEnabled: true,
+        transitHomeStation: 'Bodajk',
+        transitSchoolStation: 'Székesfehérvár',
+        cardBlurEnabled: false,
+      );
+
+      // Inside window -> MenetrendHeroCard renders and modal filters out late S152 chip
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: OledTheme.buildTheme(prefs: prefs),
+          home: Scaffold(
+            body: MenetrendHomeCard(
+              evaluation: morningEval,
+              isLoading: false,
+              prefs: prefs,
+              todaysLessons: [firstLesson],
+              now: DateTime(2026, 11, 13, 6, 40),
+              onOpenSettings: () {},
+              onRetry: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(MenetrendHeroCard), findsOneWidget);
+
+      await tester.tap(find.byType(MenetrendHeroCard));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('S152'), findsNothing);
+      await tester.ensureVisible(find.text('Bezárás'));
+      await tester.tap(find.text('Bezárás'));
+      await tester.pumpAndSettle();
+
+      // At firstLessonStart (08:00) or on a day with no lessons -> MenetrendHeroCard hidden (SizedBox.shrink)
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: OledTheme.buildTheme(prefs: prefs),
+          home: Scaffold(
+            body: MenetrendHomeCard(
+              evaluation: morningEval,
+              isLoading: false,
+              prefs: prefs,
+              todaysLessons: [firstLesson],
+              now: DateTime(2026, 11, 13, 8, 0),
+              onOpenSettings: () {},
+              onRetry: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(MenetrendHeroCard), findsNothing);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: OledTheme.buildTheme(prefs: prefs),
+          home: Scaffold(
+            body: MenetrendHomeCard(
+              evaluation: morningEval,
+              isLoading: false,
+              prefs: prefs,
+              todaysLessons: const [],
+              now: DateTime(2026, 11, 13, 6, 40),
+              onOpenSettings: () {},
+              onRetry: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(MenetrendHeroCard), findsNothing);
+    });
   });
 }
 

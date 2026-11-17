@@ -669,8 +669,56 @@ class MenetrendService {
     return cleanLong.isNotEmpty ? cleanLong : 'Járat';
   }
 
+  static const Duration morningWindowLookahead = Duration(hours: 3);
+  static const Duration afternoonWindowBeforeEnd = Duration(minutes: 30);
+  static const Duration afternoonWindowAfterEnd = Duration(hours: 1);
+
+  /// Returns non-cancelled, non-placeholder lessons on [now]'s local calendar
+  /// date, sorted chronologically by start time.
+  static List<Lesson> activeLessonsForDate(
+    List<Lesson> lessons,
+    DateTime now,
+  ) {
+    final localNow = now.toLocal();
+    final active = lessons.where((l) {
+      if (isLessonCancelledStatic(l)) return false;
+      if (l.uid.startsWith('inactive_period_')) return false;
+      final startLocal = l.start.toLocal();
+      return startLocal.year == localNow.year &&
+          startLocal.month == localNow.month &&
+          startLocal.day == localNow.day;
+    }).toList()
+      ..sort((a, b) => a.start.toLocal().compareTo(b.start.toLocal()));
+    return active;
+  }
+
+  /// Extracts `(first, last)` from today's non-cancelled lessons, choosing the
+  /// earliest-starting lesson as `first` and the latest-ending lesson as `last`.
+  /// Returns `null` when today has no active lessons.
+  static ({Lesson first, Lesson last})? lessonBoundsForDate(
+    List<Lesson> lessons,
+    DateTime now,
+  ) {
+    final active = activeLessonsForDate(lessons, now);
+    if (active.isEmpty) return null;
+    final first = active.first;
+    final last = active.reduce(
+      (a, b) => a.end.toLocal().isAfter(b.end.toLocal()) ? a : b,
+    );
+    return (first: first, last: last);
+  }
+
+  /// Returns `true` when a morning [trip]'s scheduled arrival at school is on
+  /// or before [firstLessonStart].
+  static bool arrivesOnTimeForFirstLesson(
+    MenetrendTripOption trip,
+    DateTime firstLessonStart,
+  ) =>
+      !trip.scheduledDestinationArrival.isAfter(firstLessonStart.toLocal());
+
   /// Builds a [CommuteEvaluation] from real [trips] returned by the transit
-  /// service. Returns `null` when no trip is available.
+  /// service. Returns `null` when no eligible trip is available or [now] is
+  /// outside the active lesson-bounded commute window.
   static CommuteEvaluation? buildEvaluation({
     required List<MenetrendTripOption> trips,
     required bool isMorning,
@@ -679,96 +727,222 @@ class MenetrendService {
     required UserProfilePrefs prefs,
     required int effectiveWalk,
     required DateTime now,
+    bool filterUnCatchable = true,
   }) {
     if (trips.isEmpty) return null;
-    final allTrips = [...trips]
-      ..sort((a, b) => a.scheduledDeparture.compareTo(b.scheduledDeparture));
+    final localNow = now.toLocal();
     final firstStartLocal = firstLesson?.start.toLocal();
+    final lastEndLocal = lastLesson?.end.toLocal();
 
+    if (isMorning) {
+      if (firstStartLocal == null || !localNow.isBefore(firstStartLocal)) {
+        return null;
+      }
+    } else {
+      if (lastEndLocal == null ||
+          localNow.isBefore(lastEndLocal.subtract(afternoonWindowBeforeEnd)) ||
+          localNow.isAfter(lastEndLocal.add(afternoonWindowAfterEnd))) {
+        return null;
+      }
+    }
+
+    final catchableTrips = (filterUnCatchable
+            ? trips.where((t) => isTripCatchable(t, localNow))
+            : trips.where((t) => !t.isCancelled))
+        .toList()
+      ..sort((a, b) => a.scheduledDeparture.compareTo(b.scheduledDeparture));
+    if (catchableTrips.isEmpty) return null;
+
+    final List<MenetrendTripOption> eligibleTrips;
     MenetrendTripOption selectedTrip;
     if (isMorning) {
-      final targetArrival = firstStartLocal;
-      final arrivingOnTime = targetArrival == null
-          ? <MenetrendTripOption>[]
-          : allTrips
-              .where((t) => !t.effectiveDestinationArrival.isAfter(targetArrival))
-              .toList();
-      selectedTrip =
-          arrivingOnTime.isNotEmpty ? arrivingOnTime.last : allTrips.first;
+      // Strictly keep only morning options scheduled to reach school on or
+      // before the first non-cancelled lesson starts.
+      eligibleTrips = catchableTrips
+          .where((t) => arrivesOnTimeForFirstLesson(t, firstStartLocal!))
+          .toList();
+      if (eligibleTrips.isEmpty) return null;
+
+      final arrivingOnTimeLive = eligibleTrips
+          .where((t) => !t.effectiveDestinationArrival.isAfter(firstStartLocal!))
+          .toList();
+      selectedTrip = arrivingOnTimeLive.isNotEmpty
+          ? arrivingOnTimeLive.last
+          : eligibleTrips.last;
+
+      final favorite = eligibleTrips.where((t) => t.isFavorite).toList();
+      if (favorite.isNotEmpty &&
+          !favorite.any((t) => t.isMeaningfullyEqual(selectedTrip))) {
+        final favOnTimeLive = favorite
+            .where((t) => !t.effectiveDestinationArrival.isAfter(firstStartLocal!))
+            .toList();
+        selectedTrip =
+            favOnTimeLive.isNotEmpty ? favOnTimeLive.last : favorite.last;
+      }
     } else {
-      final earliestLeaveTime =
-          lastLesson != null ? lastLesson.end.toLocal() : now;
+      eligibleTrips = catchableTrips;
       final referenceTime =
-          now.isAfter(earliestLeaveTime) ? now : earliestLeaveTime;
-      final departingAfter = allTrips.where((t) {
+          localNow.isAfter(lastEndLocal!) ? localNow : lastEndLocal;
+      final departingAfter = eligibleTrips.where((t) {
         final walkLeave = t.scheduledDeparture
             .subtract(Duration(minutes: t.walkToStationMinutes));
         return !walkLeave
             .isBefore(referenceTime.subtract(const Duration(minutes: 5)));
       }).toList();
       selectedTrip =
-          departingAfter.isNotEmpty ? departingAfter.first : allTrips.last;
-    }
+          departingAfter.isNotEmpty ? departingAfter.first : eligibleTrips.last;
 
-    final favorite = allTrips.where((t) => t.isFavorite).toList();
-    if (favorite.isNotEmpty && !favorite.contains(selectedTrip)) {
-      if (isMorning && firstStartLocal != null) {
-        final onTime = favorite
-            .where((t) => !t.effectiveDestinationArrival.isAfter(firstStartLocal))
-            .toList();
-        if (onTime.isNotEmpty) selectedTrip = onTime.last;
-      } else if (!isMorning) {
-        selectedTrip = favorite.first;
+      final favInWindow = departingAfter.where((t) => t.isFavorite).toList();
+      if (favInWindow.isNotEmpty) {
+        selectedTrip = favInWindow.first;
+      } else {
+        final favorite = eligibleTrips.where((t) => t.isFavorite).toList();
+        if (favorite.isNotEmpty &&
+            !favorite.any((t) => t.isMeaningfullyEqual(selectedTrip))) {
+          selectedTrip = favorite.first;
+        }
       }
     }
 
     return CommuteEvaluation(
       isMorningMode: isMorning,
       targetLesson: isMorning ? firstLesson : lastLesson,
-      targetPeriodNumber: firstLesson?.lessonNumber ?? 1,
+      targetPeriodNumber: isMorning
+          ? (firstLesson?.lessonNumber ?? 1)
+          : (lastLesson?.lessonNumber ?? 1),
       recommendedTrip: selectedTrip,
-      alternatives: allTrips,
+      alternatives: eligibleTrips,
       effectiveWalkMinutes: selectedTrip.walkToStationMinutes,
       alertBufferMinutes: prefs.transitAlertBufferMinutes,
-      now: now,
+      now: localNow,
+    );
+  }
+
+  /// Validates and filters an existing [evaluation] against [now], [prefs],
+  /// and optional [todaysLessons]. Returns `null` when the card must be hidden
+  /// (outside the morning/afternoon window, on days with no active lessons, or
+  /// when zero eligible departures remain).
+  static CommuteEvaluation? filterVisibleEvaluation({
+    required CommuteEvaluation? evaluation,
+    required UserProfilePrefs prefs,
+    required DateTime now,
+    List<Lesson>? todaysLessons,
+  }) {
+    if (evaluation == null) return null;
+    if (!prefs.transitCardEnabled || !prefs.transitConfigured) return null;
+
+    final localNow = now.toLocal();
+    Lesson? firstLesson;
+    Lesson? lastLesson;
+
+    if (todaysLessons != null) {
+      final bounds = lessonBoundsForDate(todaysLessons, localNow);
+      if (bounds == null) return null;
+      firstLesson = bounds.first;
+      lastLesson = bounds.last;
+      final window = commuteWindow(
+        now: localNow,
+        firstStart: firstLesson.start.toLocal(),
+        lastEnd: lastLesson.end.toLocal(),
+      );
+      if (window == null || window != evaluation.isMorningMode) {
+        return null;
+      }
+    } else if (evaluation.targetLesson != null) {
+      final target = evaluation.targetLesson!;
+      if (evaluation.isMorningMode) {
+        firstLesson = target;
+        final start = target.start.toLocal();
+        if (localNow.isBefore(start.subtract(morningWindowLookahead)) ||
+            !localNow.isBefore(start)) {
+          return null;
+        }
+      } else {
+        lastLesson = target;
+        final end = target.end.toLocal();
+        if (localNow.isBefore(end.subtract(afternoonWindowBeforeEnd)) ||
+            localNow.isAfter(end.add(afternoonWindowAfterEnd))) {
+          return null;
+        }
+      }
+    }
+
+    final candidateTrips = evaluation.alternatives.isNotEmpty
+        ? evaluation.alternatives
+        : <MenetrendTripOption>[evaluation.recommendedTrip];
+
+    if (firstLesson == null && lastLesson == null) {
+      final catchable = candidateTrips
+          .where((t) => isTripCatchable(t, localNow))
+          .toList()
+        ..sort((a, b) => a.scheduledDeparture.compareTo(b.scheduledDeparture));
+      if (catchable.isEmpty) return null;
+      final selected = catchable.firstWhere(
+        (t) => t.isMeaningfullyEqual(evaluation.recommendedTrip),
+        orElse: () =>
+            evaluation.isMorningMode ? catchable.last : catchable.first,
+      );
+      return CommuteEvaluation(
+        isMorningMode: evaluation.isMorningMode,
+        targetLesson: null,
+        targetPeriodNumber: evaluation.targetPeriodNumber,
+        recommendedTrip: selected,
+        alternatives: catchable,
+        effectiveWalkMinutes: selected.walkToStationMinutes,
+        alertBufferMinutes: prefs.transitAlertBufferMinutes,
+        now: localNow,
+      );
+    }
+
+    return buildEvaluation(
+      trips: candidateTrips,
+      isMorning: evaluation.isMorningMode,
+      firstLesson: firstLesson,
+      lastLesson: lastLesson,
+      prefs: prefs,
+      effectiveWalk: evaluation.effectiveWalkMinutes,
+      now: localNow,
     );
   }
 
   /// Smart visibility window:
-  /// * morning: from 2 h before the first lesson until it starts;
-  /// * afternoon: from 30 min before the last lesson ends until 1 h after.
+  /// * morning: up to 3 h before the first non-cancelled lesson until it starts (`now < firstStart`);
+  /// * afternoon: strictly from 30 min before the last non-cancelled lesson ends
+  ///   until 1 h after (`lastEnd - 30 min <= now <= lastEnd + 1 h`).
   /// Returns `true` (morning), `false` (afternoon) or `null` when hidden.
   static bool? commuteWindow({
     required DateTime now,
     required DateTime? firstStart,
     required DateTime? lastEnd,
   }) {
-    if (firstStart != null &&
-        !now.isBefore(firstStart.subtract(const Duration(hours: 3))) &&
-        now.isBefore(firstStart)) {
+    final localNow = now.toLocal();
+    final localFirstStart = firstStart?.toLocal();
+    final localLastEnd = lastEnd?.toLocal();
+    if (localFirstStart != null &&
+        !localNow.isBefore(localFirstStart.subtract(morningWindowLookahead)) &&
+        localNow.isBefore(localFirstStart)) {
       return true;
     }
-    if (lastEnd != null &&
-        !now.isBefore(lastEnd.subtract(const Duration(minutes: 45))) &&
-        !now.isAfter(lastEnd.add(const Duration(hours: 2)))) {
+    if (localLastEnd != null &&
+        !localNow.isBefore(localLastEnd.subtract(afternoonWindowBeforeEnd)) &&
+        !localNow.isAfter(localLastEnd.add(afternoonWindowAfterEnd))) {
       return false;
     }
     return null;
   }
 
-  /// Evaluates [commuteWindow] from raw [lessons], sorting and filtering out
-  /// cancelled lessons automatically.
+  /// Evaluates [commuteWindow] from raw [lessons] for [now]'s calendar day,
+  /// sorting and filtering out cancelled lessons automatically.
   static bool? commuteWindowForLessons({
     required DateTime now,
     required List<Lesson> lessons,
   }) {
-    final active = lessons.where((l) => !isLessonCancelledStatic(l)).toList()
-      ..sort((a, b) => a.start.toLocal().compareTo(b.start.toLocal()));
-    if (active.isEmpty) return null;
+    final bounds = lessonBoundsForDate(lessons, now);
+    if (bounds == null) return null;
     return commuteWindow(
       now: now,
-      firstStart: active.first.start.toLocal(),
-      lastEnd: active.last.end.toLocal(),
+      firstStart: bounds.first.start.toLocal(),
+      lastEnd: bounds.last.end.toLocal(),
     );
   }
 
@@ -929,11 +1103,13 @@ class MenetrendService {
   }
 
   static bool isLessonCancelledStatic(Lesson lesson) {
-    final stateName = lesson.state.name.toLowerCase();
-    final stateDesc = lesson.state.description.toLowerCase();
-    return stateName.contains('elmaradt') ||
-        stateDesc.contains('elmaradt') ||
-        stateName.contains('cancelled');
+    final stateName = lesson.state.name.toLowerCase().trim();
+    final stateDesc = lesson.state.description.toLowerCase().trim();
+    return stateName == 'elmaradt' ||
+        stateName.contains('elmarad') ||
+        stateDesc.contains('elmarad') ||
+        stateName.contains('cancelled') ||
+        stateDesc.contains('cancelled');
   }
 
   static final Map<String, ({double lat, double lon})> _coordCache = {};
@@ -1083,20 +1259,18 @@ class MenetrendService {
     DateTime? nowOverride,
   }) async {
     if (!prefs.transitConfigured) return null;
-    final now = nowOverride ?? DateTime.now();
-    final activeLessons = todaysLessons
-        .where((l) => !isLessonCancelledStatic(l))
-        .toList()
-      ..sort((a, b) => a.start.toLocal().compareTo(b.start.toLocal()));
-    final firstLesson = activeLessons.isNotEmpty ? activeLessons.first : null;
-    final lastLesson = activeLessons.isNotEmpty ? activeLessons.last : null;
-    final firstStartLocal = firstLesson?.start.toLocal();
+    final now = (nowOverride ?? DateTime.now()).toLocal();
+    final bounds = lessonBoundsForDate(todaysLessons, now);
+    if (bounds == null) return null;
+    final firstLesson = bounds.first;
+    final lastLesson = bounds.last;
+    final firstStartLocal = firstLesson.start.toLocal();
 
     // Smart visibility window: outside of it the card stays hidden.
     final window = commuteWindow(
       now: now,
       firstStart: firstStartLocal,
-      lastEnd: lastLesson?.end.toLocal(),
+      lastEnd: lastLesson.end.toLocal(),
     );
     if (window == null) return null;
     final isMorning = window;
@@ -1220,17 +1394,17 @@ class MenetrendService {
       final DateTime refTime;
       final bool arriveBy;
       if (isMorning) {
-        arriveBy = firstStartLocal != null;
-        refTime = firstStartLocal ?? now;
+        arriveBy = true;
+        refTime = firstStartLocal;
       } else {
         arriveBy = false;
-        final lastEnd = lastLesson?.end.toLocal() ?? now;
+        final lastEnd = lastLesson.end.toLocal();
         refTime = now.isAfter(lastEnd) ? now : lastEnd;
       }
 
       final primaryItins = await queryPlan(refTime, arriveBy);
       final primaryEval = primaryItins != null ? evalFrom(primaryItins) : null;
-      if (primaryEval != null || !isMorning || firstStartLocal == null) {
+      if (primaryEval != null || !isMorning) {
         return primaryEval;
       }
 
@@ -1540,19 +1714,17 @@ class MenetrendService {
       );
     }
 
-    final usable = filterUnCatchable
-        ? trips.where((t) => isTripCatchable(t, now)).toList()
-        : trips;
-    if (usable.isEmpty) return null;
+    if (trips.isEmpty) return null;
 
     return buildEvaluation(
-      trips: usable,
+      trips: trips,
       isMorning: isMorning,
       firstLesson: firstLesson,
       lastLesson: lastLesson,
       prefs: prefs,
       effectiveWalk: effectiveWalk,
       now: now,
+      filterUnCatchable: filterUnCatchable,
     );
   }
 

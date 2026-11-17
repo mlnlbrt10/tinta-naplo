@@ -89,6 +89,7 @@ class _HomeSkeletonFeedState extends State<HomeSkeletonFeed>
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: SoftGlassCard(
                   prefs: widget.prefs,
+                  isExpanded: true,
                   padding: const EdgeInsets.all(20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -218,6 +219,7 @@ class _HomeSkeletonFeedState extends State<HomeSkeletonFeed>
                         padding: const EdgeInsets.only(bottom: 8),
                         child: SoftGlassCard(
                           prefs: widget.prefs,
+                          isExpanded: true,
                           padding: const EdgeInsets.symmetric(
                             horizontal: 13,
                             vertical: 10,

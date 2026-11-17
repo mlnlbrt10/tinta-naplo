@@ -5,8 +5,14 @@ import 'package:flutter/material.dart';
 
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
+import 'animated_backdrops.dart';
 
 export '../theme/oled_theme.dart' show BackgroundPresetInfo, AdaptiveContrastTokens;
+export 'animated_backdrops.dart'
+    show
+        TopographicContourPainter,
+        AnimatedBackdropLayer,
+        BackdropMotionCoordinator;
 
 /// Visual App Icon theme presets selectable in Personalization.
 class AppIconPresetInfo {
@@ -119,79 +125,6 @@ class AppIconPresetInfo {
   }
 }
 
-/// CustomPainter drawing crisp architectural topographic elevation contours at
-/// ultra-subtle alpha over deep midnight charcoal (`#0B0E14`). Zero bitmap overhead.
-class TopographicContourPainter extends CustomPainter {
-  final Color lineColor;
-
-  const TopographicContourPainter({
-    this.lineColor = const Color(0x0EFFFFFF),
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (size.isEmpty) return;
-    final paint = Paint()
-      ..color = lineColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0
-      ..isAntiAlias = true;
-
-    const ringCount = 11;
-    final center1 = Offset(size.width * 0.24, size.height * 0.22);
-    final center2 = Offset(size.width * 0.82, size.height * 0.74);
-
-    for (int i = 1; i <= ringCount; i++) {
-      final frac = i / ringCount;
-      final rx1 = size.width * (0.14 + frac * 0.95);
-      final ry1 = size.height * (0.08 + frac * 0.56);
-      final p1 = Path();
-      const steps = 40;
-      for (int s = 0; s <= steps; s++) {
-        final theta = (s / steps) * 2 * pi;
-        final wobble = 1.0 +
-            0.09 * sin(theta * 3.0 + i * 0.55) +
-            0.05 * cos(theta * 5.0 - i * 0.35);
-        final x = center1.dx + rx1 * wobble * cos(theta);
-        final y = center1.dy + ry1 * wobble * sin(theta);
-        if (s == 0) {
-          p1.moveTo(x, y);
-        } else {
-          p1.lineTo(x, y);
-        }
-      }
-      p1.close();
-      canvas.drawPath(p1, paint);
-
-      if (i <= 8) {
-        final f2 = i / 8.0;
-        final rx2 = size.width * (0.12 + f2 * 0.72);
-        final ry2 = size.height * (0.09 + f2 * 0.45);
-        final p2 = Path();
-        for (int s = 0; s <= steps; s++) {
-          final theta = (s / steps) * 2 * pi;
-          final wobble = 1.0 +
-              0.08 * cos(theta * 3.0 - i * 0.45) +
-              0.04 * sin(theta * 4.0 + i * 0.65);
-          final x = center2.dx + rx2 * wobble * cos(theta);
-          final y = center2.dy + ry2 * wobble * sin(theta);
-          if (s == 0) {
-            p2.moveTo(x, y);
-          } else {
-            p2.lineTo(x, y);
-          }
-        }
-        p2.close();
-        canvas.drawPath(p2, paint);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant TopographicContourPainter oldDelegate) =>
-      oldDelegate.lineColor != lineColor;
-}
-
 /// Renders the customized or festive Christmas App Brand Icon Badge.
 class AppBrandIconBadge extends StatelessWidget {
   final UserProfilePrefs prefs;
@@ -287,6 +220,7 @@ class ChristmasAndBackgroundOverlay extends StatefulWidget {
     BuildContext context,
     UserProfilePrefs prefs,
   ) {
+    if (prefs.hasAnimatedBackdrop) return true;
     if (prefs.hasCustomBackdrop) return true;
     final bgPreset = BackgroundPresetInfo.resolve(prefs);
     if (bgPreset.id != 'pure_oled') return true;
@@ -371,6 +305,12 @@ class _ChristmasAndBackgroundOverlayState
     final secondary = theme.colorScheme.secondary;
     final baseBg = theme.scaffoldBackgroundColor;
     final isLight = theme.brightness == Brightness.light;
+
+    if (activePrefs.hasAnimatedBackdrop) {
+      return AnimatedBackdropLayer(
+        preset: activePrefs.animatedBackdropPreset,
+      );
+    }
 
     if (activePrefs.hasCustomBackdrop) {
       final path = activePrefs.customBackdropPath!.trim();
@@ -606,9 +546,11 @@ class _ChristmasAndBackgroundOverlayState
       context,
       activePrefs,
     );
+    final isGyroHorizon = activePrefs.animatedBackdropPreset ==
+        AnimatedBackdropPreset.gyroLiquidHorizon;
 
-    // Keep widget.child inside a stable Stack slot across all backdrop/glass
-    // toggles so pushed routes and open sub-screens never unmount mid-toggle.
+    // Keep widget.child inside a stable Stack slot and Listener wrapper across
+    // all backdrop/glass toggles so pushed routes never unmount mid-toggle.
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -616,7 +558,32 @@ class _ChristmasAndBackgroundOverlayState
           Positioned.fill(
             child: _buildBackdropLayers(context, activePrefs, bgPreset, theme),
           ),
-        widget.child,
+        Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: isGyroHorizon
+              ? (event) {
+                  final box = context.findRenderObject() as RenderBox?;
+                  final size = box?.size ?? MediaQuery.sizeOf(context);
+                  BackdropMotionCoordinator.addTouchWave(
+                    event.localPosition,
+                    size,
+                  );
+                }
+              : null,
+          onPointerMove: isGyroHorizon
+              ? (event) {
+                  final box = context.findRenderObject() as RenderBox?;
+                  final size = box?.size ?? MediaQuery.sizeOf(context);
+                  BackdropMotionCoordinator.addTouchWave(
+                    event.localPosition,
+                    size,
+                    isMove: true,
+                    strength: 0.72,
+                  );
+                }
+              : null,
+          child: widget.child,
+        ),
         if (activePrefs.christmasModeEnabled)
           Positioned.fill(
             child: RepaintBoundary(

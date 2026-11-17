@@ -7,6 +7,10 @@ import 'package:flutter/scheduler.dart';
 import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
+import '../providers/app_providers.dart';
+import '../services/token_storage_service.dart';
+import 'glass_card.dart';
+
 /// Returns true if [lesson] is marked as cancelled (`Allapot.Nev == "elmaradt"`).
 bool isLessonCancelled(Lesson lesson) {
   final stateName = lesson.state.name.toLowerCase().trim();
@@ -698,14 +702,15 @@ class BreakPerimeterCountdownPainter extends CustomPainter {
 }
 
 /// Dedicated glowing full-perimeter Break (`Szünet`) card rendered between
-/// consecutive lessons during an active break. Uses zero `BackdropFilter` so
-/// Timetable horizontal swiping and vertical scrolling stay locked at 120fps.
+/// consecutive lessons during an active break. Applies a clipped `14px` frosted
+/// `BackdropFilter` when Liquid Glass mode is enabled and omits blur in Material mode.
 class BreakCountdownCard extends StatelessWidget {
   final DateTime breakStart;
   final DateTime breakEnd;
   final DateTime? now;
   final DateTime Function()? clock;
   final String Function(String)? textTransform;
+  final UserProfilePrefs? prefs;
 
   const BreakCountdownCard({
     super.key,
@@ -714,6 +719,7 @@ class BreakCountdownCard extends StatelessWidget {
     this.now,
     this.clock,
     this.textTransform,
+    this.prefs,
   });
 
   @override
@@ -724,7 +730,14 @@ class BreakCountdownCard extends StatelessWidget {
     final transform = textTransform ?? (s) => s;
     final timeFormat = DateFormat('HH:mm');
     final accent = scheme.primary;
-    final fill = scheme.surfaceContainerHigh.withValues(alpha: isDark ? 0.90 : 0.96);
+    final effectivePrefs =
+        prefs ?? AppProvidersScope.maybeOf(context)?.settings.prefs;
+    final liquidGlass = resolveLiquidGlassEnabled(effectivePrefs);
+    final fill = liquidGlass
+        ? (isDark
+            ? Colors.black.withValues(alpha: 0.46)
+            : scheme.surfaceContainerHigh.withValues(alpha: 0.62))
+        : scheme.surfaceContainerHigh.withValues(alpha: isDark ? 0.92 : 0.98);
 
     return RepaintBoundary(
       child: LiveCountdownProgressScope(
@@ -739,10 +752,96 @@ class BreakCountdownCard extends StatelessWidget {
               minuteSuffix: ' perc van hátra',
             ),
           );
+          final Widget body = Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            color: fill,
+            child: Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: Icon(
+                    Icons.pause_rounded,
+                    color: accent,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        transform('Szünet'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w900,
+                          color: scheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        '${timeFormat.format(breakStart)} – ${timeFormat.format(breakEnd)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurface.withValues(alpha: 0.68),
+                          fontWeight: FontWeight.w700,
+                          fontFeatures: const [
+                            ui.FontFeature.tabularFigures(),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Text(
+                    remainingLabel,
+                    maxLines: 1,
+                    softWrap: false,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: accent,
+                      fontWeight: FontWeight.w900,
+                      fontFeatures: const [
+                        ui.FontFeature.tabularFigures(),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+
+          final Widget clippedSurface = ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: liquidGlass
+                ? BackdropFilter(
+                    filter: ui.ImageFilter.blur(sigmaX: 14.0, sigmaY: 14.0),
+                    child: body,
+                  )
+                : body,
+          );
+
           return Container(
             margin: const EdgeInsets.only(bottom: 8),
             decoration: BoxDecoration(
-              color: fill,
               borderRadius: BorderRadius.circular(20),
               boxShadow: [
                 BoxShadow(
@@ -761,82 +860,7 @@ class BreakCountdownCard extends StatelessWidget {
                 strokeWidth: 2.2,
                 glowSigma: 6.0,
               ),
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 34,
-                      height: 34,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: accent.withValues(alpha: 0.16),
-                        borderRadius: BorderRadius.circular(11),
-                      ),
-                      child: Icon(
-                        Icons.pause_rounded,
-                        color: accent,
-                        size: 20,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            transform('Szünet'),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w900,
-                              color: scheme.onSurface,
-                            ),
-                          ),
-                          const SizedBox(height: 1),
-                          Text(
-                            '${timeFormat.format(breakStart)} – ${timeFormat.format(breakEnd)}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: scheme.onSurface.withValues(alpha: 0.68),
-                              fontWeight: FontWeight.w700,
-                              fontFeatures: const [
-                                ui.FontFeature.tabularFigures(),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: accent.withValues(alpha: 0.16),
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: Text(
-                        remainingLabel,
-                        maxLines: 1,
-                        softWrap: false,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: accent,
-                          fontWeight: FontWeight.w900,
-                          fontFeatures: const [
-                            ui.FontFeature.tabularFigures(),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              child: clippedSurface,
             ),
           );
         },

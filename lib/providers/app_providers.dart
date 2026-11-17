@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:kreta_api/kreta_api.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/menetrend_service.dart';
 import '../services/token_storage_service.dart';
@@ -13,29 +14,106 @@ import '../theme/oled_theme.dart';
 /// notification and immediate `SharedPreferences` + serialized secure storage
 /// persistence.
 class SettingsProvider extends ChangeNotifier {
+  static const String completedHomeworkPrefsKey = 'completed_homework_ids_v1';
+
   final TokenStorageService _storage;
   UserProfilePrefs _prefs;
+  Set<String> _completedHomeworkIds;
   Future<void> _saveQueue = Future<void>.value();
 
   SettingsProvider({
     UserProfilePrefs initialPrefs = const UserProfilePrefs(),
+    Set<String> initialCompletedHomeworkIds = const <String>{},
     TokenStorageService? storage,
   })  : _prefs = initialPrefs,
+        _completedHomeworkIds = Set<String>.from(initialCompletedHomeworkIds),
         _storage = storage ?? const TokenStorageService() {
     UserProfilePrefs.syncActiveGlobals(_prefs);
   }
 
   UserProfilePrefs get prefs => _prefs;
+  Set<String> get completedHomeworkIds =>
+      Set<String>.unmodifiable(_completedHomeworkIds);
+
+  static String homeworkCompletionKey(Homework homework) {
+    final uid = homework.uid.trim();
+    if (uid.isNotEmpty) return uid;
+    return '${homework.subject.uid}_${homework.dueDate.toUtc().toIso8601String()}_${homework.description.hashCode}';
+  }
+
+  static Future<Set<String>> loadCompletedHomeworkIdsFromPrefs() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final list = sp.getStringList(completedHomeworkPrefsKey);
+      if (list == null) return <String>{};
+      return list.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
+    } catch (_) {
+      return <String>{};
+    }
+  }
+
+  static Future<void> saveCompletedHomeworkIdsToPrefs(Set<String> ids) async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final sorted = ids.toList()..sort();
+      await sp.setStringList(completedHomeworkPrefsKey, sorted);
+    } catch (_) {}
+  }
+
+  bool isHomeworkCompleted(Homework homework) =>
+      _completedHomeworkIds.contains(homeworkCompletionKey(homework));
+
+  bool isHomeworkKeyCompleted(String rawKey) {
+    final key = rawKey.trim();
+    return key.isNotEmpty && _completedHomeworkIds.contains(key);
+  }
 
   /// Loads persisted preferences from [TokenStorageService] (`SharedPreferences`
   /// primary mirror with `FlutterSecureStorage` migration fallback).
   Future<UserProfilePrefs> load() async {
     final loaded = await _storage.loadProfilePrefs();
+    final completed = await loadCompletedHomeworkIdsFromPrefs();
     _prefs = loaded;
+    if (completed.isNotEmpty) {
+      _completedHomeworkIds = completed;
+    }
     UserProfilePrefs.syncActiveGlobals(loaded);
     notifyListeners();
     return loaded;
   }
+
+  /// Synchronously toggles a homework completion key, notifies listeners
+  /// right away, and persists `completedHomeworkIds` to `SharedPreferences`.
+  Future<void> setHomeworkKeyCompleted(String rawKey, bool completed) {
+    final key = rawKey.trim();
+    if (key.isEmpty) return Future<void>.value();
+    final next = Set<String>.from(_completedHomeworkIds);
+    final changed = completed ? next.add(key) : next.remove(key);
+    if (!changed) return Future<void>.value();
+
+    _completedHomeworkIds = next;
+    notifyListeners();
+
+    final queued = _saveQueue.then((_) async {
+      await saveCompletedHomeworkIdsToPrefs(next);
+    }).catchError((_) {});
+    _saveQueue = queued;
+    return queued;
+  }
+
+  Future<bool> toggleHomeworkKeyCompleted(String rawKey) async {
+    final key = rawKey.trim();
+    if (key.isEmpty) return false;
+    final nextState = !_completedHomeworkIds.contains(key);
+    await setHomeworkKeyCompleted(key, nextState);
+    return nextState;
+  }
+
+  Future<void> setHomeworkCompleted(Homework homework, bool completed) =>
+      setHomeworkKeyCompleted(homeworkCompletionKey(homework), completed);
+
+  Future<bool> toggleHomeworkCompleted(Homework homework) =>
+      toggleHomeworkKeyCompleted(homeworkCompletionKey(homework));
 
   /// Synchronously updates in-memory state, notifies all listeners immediately,
   /// writes to `SharedPreferences` right away, and serializes full persistence.
@@ -88,7 +166,9 @@ class ThemeProvider extends ChangeNotifier {
 
   bool get isLight {
     final preset = BackgroundPresetInfo.resolve(_settings.prefs);
-    if (_snapshot.hasCustomBackdrop || preset.id != 'pure_oled') {
+    if (_snapshot.hasAnimatedBackdrop ||
+        _snapshot.hasCustomBackdrop ||
+        preset.id != 'pure_oled') {
       return contrastTokens.isLightBackdrop;
     }
     return _snapshot.themeStyle == AppThemeStyle.light;
@@ -96,12 +176,15 @@ class ThemeProvider extends ChangeNotifier {
 
   bool get isDark => !isLight;
   bool get isPureOled =>
+      !_snapshot.hasAnimatedBackdrop &&
       !_snapshot.hasCustomBackdrop &&
       _snapshot.themeStyle == AppThemeStyle.oledPureBlack &&
       _snapshot.backgroundPreset == 'pure_oled';
   bool get liquidGlassEnabled => _snapshot.liquidGlassEnabled;
   bool get hasSoftBlur => liquidGlassEnabled;
   LiquidGlassMode get liquidGlassMode => _snapshot.liquidGlassMode;
+  AnimatedBackdropPreset get animatedBackdropPreset =>
+      _snapshot.animatedBackdropPreset;
   double get cardOpacity => _snapshot.cardOpacity;
   double get cardBlurSigma => _snapshot.cardBlurSigma;
   String get backgroundPreset => _snapshot.backgroundPreset;
@@ -156,7 +239,11 @@ class _ThemeSnapshot {
   final String? customBackdropPath;
   final double customBackdropDim;
   final double customBackdropLuminance;
+  final AnimatedBackdropPreset animatedBackdropPreset;
   final double cardOpacity;
+
+  bool get hasAnimatedBackdrop =>
+      animatedBackdropPreset != AnimatedBackdropPreset.off;
   final double cardBlurSigma;
   final Map<int, int> customGradeColors;
   final ModalCloseButtonMode modalCloseMode;
@@ -176,6 +263,7 @@ class _ThemeSnapshot {
     required this.customBackdropPath,
     required this.customBackdropDim,
     required this.customBackdropLuminance,
+    required this.animatedBackdropPreset,
     required this.cardOpacity,
     required this.cardBlurSigma,
     required this.customGradeColors,
@@ -197,6 +285,7 @@ class _ThemeSnapshot {
         customBackdropPath: p.customBackdropPath,
         customBackdropDim: p.customBackdropDim,
         customBackdropLuminance: p.customBackdropLuminance,
+        animatedBackdropPreset: p.animatedBackdropPreset,
         cardOpacity: p.cardOpacity,
         cardBlurSigma: p.cardBlurSigma,
         customGradeColors: p.customGradeColors,
@@ -221,6 +310,7 @@ class _ThemeSnapshot {
         other.customBackdropPath == customBackdropPath &&
         other.customBackdropDim == customBackdropDim &&
         other.customBackdropLuminance == customBackdropLuminance &&
+        other.animatedBackdropPreset == animatedBackdropPreset &&
         other.cardOpacity == cardOpacity &&
         other.cardBlurSigma == cardBlurSigma &&
         other.modalCloseMode == modalCloseMode &&
@@ -243,6 +333,7 @@ class _ThemeSnapshot {
         customBackdropPath,
         customBackdropDim,
         customBackdropLuminance,
+        animatedBackdropPreset,
         cardOpacity,
         cardBlurSigma,
         modalCloseMode,
@@ -263,6 +354,7 @@ class CommuteProvider extends ChangeNotifier {
   CommuteEvaluation? _evaluation;
   bool _isLoading = false;
   List<Lesson> _todaysLessons = const <Lesson>[];
+  bool _hasLessons = false;
   _CommuteSettingsSnapshot _lastSnapshot;
   int _syncEpoch = 0;
 
@@ -276,15 +368,68 @@ class CommuteProvider extends ChangeNotifier {
 
   CommuteEvaluation? get evaluation => _evaluation;
   bool get isLoading => _isLoading;
+  List<Lesson> get todaysLessons => _todaysLessons;
+  bool get hasLessons => _hasLessons;
 
-  void setLessons(List<Lesson> lessons) {
+  static bool _hasEvaluationChanged(
+    CommuteEvaluation? prev,
+    CommuteEvaluation? next,
+  ) {
+    if (prev == null || next == null) return prev != next;
+    return !prev.isMeaningfullyEqual(next) ||
+        prev.minutesUntilDeparture != next.minutesUntilDeparture ||
+        prev.minutesUntilWalkStart != next.minutesUntilWalkStart;
+  }
+
+  void setLessons(List<Lesson> lessons, {DateTime? nowOverride}) {
     _todaysLessons = lessons;
+    _hasLessons = true;
+    if (_evaluation != null) {
+      revalidateForNow(
+        nowOverride ?? _evaluation!.now,
+        todaysLessons: lessons,
+      );
+    }
   }
 
   /// Directly seeds an evaluation (useful in tests or SSR hydration) and notifies listeners.
   void setEvaluationForTesting(CommuteEvaluation? evaluation) {
     _evaluation = evaluation;
     notifyListeners();
+  }
+
+  /// Synchronously re-evaluates in-memory commute visibility and trip
+  /// eligibility at [now] without requiring a manual pull-to-refresh.
+  void revalidateForNow(
+    DateTime now, {
+    List<Lesson>? todaysLessons,
+  }) {
+    if (todaysLessons != null) {
+      _todaysLessons = todaysLessons;
+      _hasLessons = true;
+    }
+    final current = _evaluation;
+    if (current == null) return;
+
+    final next = MenetrendService.filterVisibleEvaluation(
+      evaluation: current,
+      todaysLessons: _hasLessons ? _todaysLessons : null,
+      prefs: _settings.prefs,
+      now: now,
+    );
+
+    if (next == null) {
+      _evaluation = null;
+      _isLoading = false;
+      notifyListeners();
+      unawaited(MenetrendService.cancelAlarms());
+      return;
+    }
+
+    if (_hasEvaluationChanged(current, next)) {
+      _evaluation = next;
+      notifyListeners();
+    }
   }
 
   Future<void> syncLive({
@@ -294,9 +439,27 @@ class CommuteProvider extends ChangeNotifier {
   }) async {
     if (todaysLessons != null) {
       _todaysLessons = todaysLessons;
+      _hasLessons = true;
     }
     final prefs = _settings.prefs;
     if (!prefs.transitCardEnabled || !prefs.transitConfigured) {
+      ++_syncEpoch;
+      if (_evaluation != null || _isLoading) {
+        _evaluation = null;
+        _isLoading = false;
+        notifyListeners();
+      }
+      unawaited(MenetrendService.cancelAlarms());
+      return;
+    }
+
+    final effectiveNow = (nowOverride ?? DateTime.now()).toLocal();
+    final window = MenetrendService.commuteWindowForLessons(
+      now: effectiveNow,
+      lessons: _todaysLessons,
+    );
+    if (window == null) {
+      ++_syncEpoch;
       if (_evaluation != null || _isLoading) {
         _evaluation = null;
         _isLoading = false;
@@ -307,6 +470,9 @@ class CommuteProvider extends ChangeNotifier {
     }
 
     final epoch = ++_syncEpoch;
+    if (_evaluation != null && _evaluation!.isMorningMode != window) {
+      _evaluation = null;
+    }
     final hadEval = _evaluation != null;
     if (!hadEval && !_isLoading) {
       _isLoading = true;
@@ -321,9 +487,7 @@ class CommuteProvider extends ChangeNotifier {
     if (epoch != _syncEpoch) return;
 
     final prevEval = _evaluation;
-    final evalChanged = prevEval == null || eval == null
-        ? prevEval != eval
-        : !prevEval.isMeaningfullyEqual(eval);
+    final evalChanged = _hasEvaluationChanged(prevEval, eval);
     final loadingChanged = _isLoading;
     _evaluation = eval;
     _isLoading = false;
@@ -350,6 +514,7 @@ class CommuteProvider extends ChangeNotifier {
     _lastSnapshot = next;
 
     if (!nextPrefs.transitCardEnabled || !nextPrefs.transitConfigured) {
+      ++_syncEpoch;
       if (_evaluation != null || _isLoading) {
         _evaluation = null;
         _isLoading = false;
@@ -363,14 +528,25 @@ class CommuteProvider extends ChangeNotifier {
         prev.requiresNetworkRefresh(next);
 
     if (_evaluation != null) {
-      _evaluation = _evaluation!.recalculateForPrefs(nextPrefs);
-      notifyListeners();
-      // Update morning departure alarm without firing delay notification spam.
-      MenetrendService.syncNotificationsForEvaluation(
-        evaluation: _evaluation!,
+      final recalculated = _evaluation!.recalculateForPrefs(nextPrefs);
+      final filtered = MenetrendService.filterVisibleEvaluation(
+        evaluation: recalculated,
+        todaysLessons: _hasLessons ? _todaysLessons : null,
         prefs: nextPrefs,
-        allowDelayNotification: false,
+        now: recalculated.now,
       );
+      _evaluation = filtered;
+      notifyListeners();
+      if (filtered != null) {
+        // Update morning departure alarm without firing delay notification spam.
+        MenetrendService.syncNotificationsForEvaluation(
+          evaluation: filtered,
+          prefs: nextPrefs,
+          allowDelayNotification: false,
+        );
+      } else {
+        MenetrendService.cancelAlarms();
+      }
     }
 
     if (needsLiveFetch) {

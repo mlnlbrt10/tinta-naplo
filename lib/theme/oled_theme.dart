@@ -190,6 +190,9 @@ class AdaptiveContrastTokens {
   }
 
   static double computeEffectiveLuminance(UserProfilePrefs prefs) {
+    if (prefs.hasAnimatedBackdrop) {
+      return prefs.animatedBackdropPreset.luminance;
+    }
     if (prefs.hasCustomBackdrop) {
       return (prefs.customBackdropLuminance *
               (1.0 - prefs.customBackdropDim.clamp(0.0, 0.75)))
@@ -361,8 +364,9 @@ class OledTheme {
     ColorScheme? dynamicScheme,
   }) {
     final activePreset = BackgroundPresetInfo.resolve(prefs);
+    final hasAnimated = prefs.hasAnimatedBackdrop;
     final hasStudioOrCustomBackdrop =
-        prefs.hasCustomBackdrop || activePreset.id != 'pure_oled';
+        hasAnimated || prefs.hasCustomBackdrop || activePreset.id != 'pure_oled';
     final contrast = AdaptiveContrastTokens.resolve(prefs);
     final isLight = hasStudioOrCustomBackdrop
         ? contrast.isLightBackdrop
@@ -390,9 +394,11 @@ class OledTheme {
     final Color elevatedBg;
     final Color borderColor;
 
-    final isNavy = isOled && prefs.backgroundPreset == 'brand_navy';
+    final isNavy = !hasAnimated && isOled && prefs.backgroundPreset == 'brand_navy';
     if (hasStudioOrCustomBackdrop && !isNavy) {
-      scaffoldBg = activePreset.gradientColors.first;
+      scaffoldBg = hasAnimated
+          ? prefs.animatedBackdropPreset.baseColor
+          : activePreset.gradientColors.first;
       cardBg = contrast.cardFill.withValues(alpha: 1.0);
       elevatedBg = isLight
           ? const Color(0xFFEAECE8)

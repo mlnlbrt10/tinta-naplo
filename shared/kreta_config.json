@@ -1,0 +1,27 @@
+{
+  "idpBaseUrl": "https://idp.e-kreta.hu",
+  "authorizeEndpoint": "https://idp.e-kreta.hu/connect/authorize",
+  "loginEndpoint": "https://idp.e-kreta.hu/Account/Login",
+  "tokenEndpoint": "https://idp.e-kreta.hu/connect/token",
+  "instituteSelectorPath": "/instituteSelector/{query}?showOnlyLive=true",
+  "clientIdIos": "kreta-ellenorzo-student-mobile-ios",
+  "clientIdAndroid": "kreta-ellenorzo-student-mobile-android",
+  "redirectUri": "https://mobil.e-kreta.hu/ellenorzo-student/prod/oauthredirect",
+  "scopes": "openid email offline_access kreta-ellenorzo-webapi.public kreta-eugyintezes-webapi.public kreta-fileservice-webapi.public kreta-mobile-global-webapi.public kreta-dkt-webapi.public kreta-ier-webapi.public",
+  "userAgent": "eKretaStudent/264745 CFNetwork/1494.0.7 Darwin/23.4.0",
+  "apiKey": "21ff6c25-d1da-4a68-a811-c881a6057463",
+  "kretaBaseDomain": "e-kreta.hu",
+  "endpoints": {
+    "timetable": "/ellenorzo/v3/sajat/OrarendElemek",
+    "grades": "/ellenorzo/v3/sajat/Ertekelesek",
+    "homeworks": "/ellenorzo/v3/sajat/HaziFeladatok",
+    "student": "/ellenorzo/v3/sajat/TanuloAdatlap"
+  },
+  "wearRelay": {
+    "deepLinkScheme": "tintanaplo",
+    "deepLinkHost": "wear-auth",
+    "deepLinkUri": "tintanaplo://wear-auth",
+    "messagePathRequestAuth": "/tinta/request_auth",
+    "dataPathAuthSession": "/tinta/auth_session"
+  }
+}

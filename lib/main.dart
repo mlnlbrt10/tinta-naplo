@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart';
+import 'package:kreta_api/kreta_api.dart';
 
 import 'providers/app_providers.dart';
 import 'screens/home_screen.dart';
@@ -7,6 +10,7 @@ import 'screens/webview_login_screen.dart';
 import 'services/dynamic_icon_service.dart';
 import 'services/kreta_client.dart';
 import 'services/token_storage_service.dart';
+import 'services/wear_sync_service.dart';
 import 'theme/oled_theme.dart';
 import 'widgets/christmas_snowfall_overlay.dart';
 import 'widgets/tinta_splash_overlay.dart';
@@ -52,6 +56,13 @@ class _ReKretaAppState extends State<ReKretaApp> {
 
   final TextEditingController _instituteController = TextEditingController();
   final TextEditingController _usernameController = TextEditingController();
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
+      GlobalKey<ScaffoldMessengerState>();
+  bool _isLoginWebViewOpen = false;
+  bool _isHandlingWatchAuth = false;
+  bool _pendingWatchAuthDuringRestore = false;
+  DateTime? _lastWatchSyncFeedbackAt;
 
   /// Bumped on every state change so routes created via named navigation
   /// (e.g. `/login`) always render the up-to-date root content.
@@ -71,6 +82,11 @@ class _ReKretaAppState extends State<ReKretaApp> {
   void initState() {
     super.initState();
     _settingsProvider.addListener(_onProviderPrefsChanged);
+    WearSyncService.instance.initialize(
+      onWatchAuthRequested: () {
+        unawaited(_handleWatchAuthRequested());
+      },
+    );
     _restoreSavedSessionAndPrefs();
   }
 
@@ -90,6 +106,7 @@ class _ReKretaAppState extends State<ReKretaApp> {
 
   @override
   void dispose() {
+    WearSyncService.instance.disposeListener();
     _settingsProvider.removeListener(_onProviderPrefsChanged);
     _commuteProvider.dispose();
     _themeProvider.dispose();
@@ -113,6 +130,13 @@ class _ReKretaAppState extends State<ReKretaApp> {
       if (restoredSession != null) {
         restoredCache =
             await _kretaClient.loadCachedDashboard(restoredSession);
+        unawaited(
+          WearSyncService.instance.cacheSessionSnapshot(
+            session: restoredSession,
+            student: restoredCache?.student,
+            nickname: restoredPrefs.nickname,
+          ),
+        );
       }
       if (!mounted) return;
       UserProfilePrefs.syncActiveGlobals(restoredPrefs);
@@ -128,14 +152,109 @@ class _ReKretaAppState extends State<ReKretaApp> {
       if (!mounted) return;
       _set(() => _isRestoringSession = false);
     }
+
     // Dismiss the splash overlay right after the first real screen frame builds
     // and paints underneath so the 450ms easeOutCubic dissolve stays smooth.
     if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _isSplashLoading) {
+      if (!mounted) return;
+      if (_isSplashLoading) {
         _set(() => _isSplashLoading = false);
       }
+      unawaited(_checkPendingWatchAuthOnStartup());
     });
+  }
+
+  Future<void> _checkPendingWatchAuthOnStartup() async {
+    final pendingWatchAuth = _pendingWatchAuthDuringRestore ||
+        await WearSyncService.instance.consumePendingWatchAuthRequest();
+    _pendingWatchAuthDuringRestore = false;
+    if (pendingWatchAuth && mounted) {
+      await _handleWatchAuthRequested();
+    }
+  }
+
+  void _showWatchSyncFeedback(String message) {
+    final now = DateTime.now();
+    if (_lastWatchSyncFeedbackAt != null &&
+        now.difference(_lastWatchSyncFeedbackAt!).inMilliseconds < 2000) {
+      return;
+    }
+    _lastWatchSyncFeedbackAt = now;
+    final messenger = _scaffoldMessengerKey.currentState;
+    if (messenger == null) return;
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  Future<void> _handleWatchAuthRequested() async {
+    if (!mounted) return;
+    if (_isRestoringSession) {
+      _pendingWatchAuthDuringRestore = true;
+      return;
+    }
+    if (_isHandlingWatchAuth) return;
+    _isHandlingWatchAuth = true;
+    await WearSyncService.instance.consumePendingWatchAuthRequest();
+    if (!mounted) {
+      _isHandlingWatchAuth = false;
+      return;
+    }
+    try {
+      final currentSession = _session;
+      if (currentSession != null) {
+        StoredSession active = currentSession;
+        if (active.isExpired) {
+          try {
+            active = await _kretaClient.ensureValidSession(active);
+            if (mounted) {
+              _set(() => _session = active);
+            }
+          } on TokenExpiredException {
+            await _handleLogout();
+            if (mounted) await _openWatchRequestedLogin();
+            return;
+          } on InvalidGrantException {
+            await _handleLogout();
+            if (mounted) await _openWatchRequestedLogin();
+            return;
+          } catch (_) {
+            // Keep existing session on transient offline errors; the watch still
+            // persists refresh_token + institute_code and refreshes independently.
+          }
+        }
+        final pushed = await WearSyncService.instance.syncSessionToWatch(
+          session: active,
+          student: _cachedDashboard?.student,
+          nickname: _prefs.nickname,
+          forceSync: true,
+        );
+        if (pushed && mounted) {
+          _showWatchSyncFeedback('Munkamenet szinkronizálva az órával');
+        }
+      } else {
+        if (_isSplashLoading) {
+          _set(() {
+            _isSplashLoading = false;
+            _showSplashOverlay = false;
+          });
+        }
+        await _openWatchRequestedLogin();
+      }
+    } finally {
+      _isHandlingWatchAuth = false;
+    }
+  }
+
+  Future<void> _openWatchRequestedLogin() async {
+    final nav = _navigatorKey.currentState;
+    if (nav == null || _isLoginWebViewOpen) return;
+    await _launchWebViewLoginWithNavigator(nav);
   }
 
   Future<void> _updatePrefs(UserProfilePrefs nextPrefs) async {
@@ -148,21 +267,41 @@ class _ReKretaAppState extends State<ReKretaApp> {
   }
 
   Future<void> _launchWebViewLogin(BuildContext navContext) async {
-    final session = await Navigator.of(navContext).push<StoredSession>(
-      MaterialPageRoute(
-        builder: (_) => WebViewLoginScreen(
-          kretaClient: _kretaClient,
-          initialInstituteCode: _instituteController.text.trim(),
-          initialUsername: _usernameController.text.trim(),
-        ),
-      ),
-    );
+    await _launchWebViewLoginWithNavigator(Navigator.of(navContext));
+  }
 
-    if (session != null && mounted) {
-      _set(() {
-        _session = session;
-        _cachedDashboard = null;
-      });
+  Future<void> _launchWebViewLoginWithNavigator(
+    NavigatorState navigator,
+  ) async {
+    if (_isLoginWebViewOpen) return;
+    _isLoginWebViewOpen = true;
+    try {
+      final session = await navigator.push<StoredSession>(
+        MaterialPageRoute(
+          builder: (_) => WebViewLoginScreen(
+            kretaClient: _kretaClient,
+            initialInstituteCode: _instituteController.text.trim(),
+            initialUsername: _usernameController.text.trim(),
+          ),
+        ),
+      );
+
+      if (session != null && mounted) {
+        _set(() {
+          _session = session;
+          _cachedDashboard = null;
+        });
+        final pushed = await WearSyncService.instance.syncSessionToWatch(
+          session: session,
+          nickname: _prefs.nickname,
+          forceSync: true,
+        );
+        if (pushed && mounted) {
+          _showWatchSyncFeedback('Munkamenet elküldve az órára');
+        }
+      }
+    } finally {
+      _isLoginWebViewOpen = false;
     }
   }
 
@@ -174,6 +313,7 @@ class _ReKretaAppState extends State<ReKretaApp> {
       );
     }
     await _tokenStorage.clearSession();
+    unawaited(WearSyncService.instance.clearWatchSession());
     if (!mounted) return;
     _set(() {
       _session = null;
@@ -199,6 +339,8 @@ class _ReKretaAppState extends State<ReKretaApp> {
               );
 
               return MaterialApp(
+                navigatorKey: _navigatorKey,
+                scaffoldMessengerKey: _scaffoldMessengerKey,
                 title: 'Tinta Napló',
                 debugShowCheckedModeBanner: false,
                 theme: activeTheme,

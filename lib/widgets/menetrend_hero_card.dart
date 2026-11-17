@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:kreta_api/kreta_api.dart';
 
 import '../providers/app_providers.dart';
 import '../theme/oled_theme.dart';
@@ -20,6 +21,8 @@ class MenetrendHomeCard extends StatelessWidget {
   final UserProfilePrefs prefs;
   final VoidCallback onOpenSettings;
   final VoidCallback onRetry;
+  final List<Lesson>? todaysLessons;
+  final DateTime? now;
 
   const MenetrendHomeCard({
     super.key,
@@ -28,18 +31,35 @@ class MenetrendHomeCard extends StatelessWidget {
     required this.prefs,
     required this.onOpenSettings,
     required this.onRetry,
+    this.todaysLessons,
+    this.now,
   });
 
   @override
   Widget build(BuildContext context) {
     final scope = AppProvidersScope.maybeOf(context);
     final activePrefs = scope?.settings.prefs ?? prefs;
-    final eval = scope?.commute.evaluation ?? evaluation;
-    if (!activePrefs.transitConfigured || eval == null) {
+    final rawEval = scope?.commute.evaluation ?? evaluation;
+    if (!activePrefs.transitCardEnabled ||
+        !activePrefs.transitConfigured ||
+        rawEval == null) {
+      return const SizedBox.shrink();
+    }
+    final resolvedLessons = todaysLessons ??
+        (scope != null && scope.commute.hasLessons
+            ? scope.commute.todaysLessons
+            : null);
+    final effectiveEval = MenetrendService.filterVisibleEvaluation(
+      evaluation: rawEval,
+      todaysLessons: resolvedLessons,
+      prefs: activePrefs,
+      now: now ?? rawEval.now,
+    );
+    if (effectiveEval == null) {
       return const SizedBox.shrink();
     }
     return RepaintBoundary(
-      child: MenetrendHeroCard(evaluation: eval, prefs: activePrefs),
+      child: MenetrendHeroCard(evaluation: effectiveEval, prefs: activePrefs),
     );
   }
 }
@@ -631,10 +651,37 @@ class _MenetrendDetailsModalSheetState
         isDark ? OledTheme.borderSubtle : onSurface.withValues(alpha: 0.14);
 
     final closeMode = activePrefs.modalCloseMode;
-    final trip = _selectedTrip.recalculateForPrefs(
+    final firstLessonStart = activeEval.isMorningMode
+        ? activeEval.targetLesson?.start.toLocal()
+        : null;
+    final visibleAlternatives = activeEval.alternatives
+        .map(
+          (alt) => alt.recalculateForPrefs(
+            activePrefs,
+            isMorning: activeEval.isMorningMode,
+          ),
+        )
+        .where(
+          (alt) =>
+              firstLessonStart == null ||
+              MenetrendService.arrivesOnTimeForFirstLesson(
+                alt,
+                firstLessonStart,
+              ),
+        )
+        .toList();
+    final candidateTrip = _selectedTrip.recalculateForPrefs(
       activePrefs,
       isMorning: activeEval.isMorningMode,
     );
+    final trip = (firstLessonStart == null ||
+            MenetrendService.arrivesOnTimeForFirstLesson(
+              candidateTrip,
+              firstLessonStart,
+            ) ||
+            visibleAlternatives.isEmpty)
+        ? candidateTrip
+        : visibleAlternatives.last;
     final safeLine = trip.safeRouteShortName;
     final safeLongLine = MenetrendService.sanitizeRouteLongName(trip.routeLongName);
     final headerSubtitle =
@@ -709,6 +756,7 @@ class _MenetrendDetailsModalSheetState
                     type: MaterialType.transparency,
                     child: LiquidGlassSurface(
                       prefs: activePrefs,
+                      highContrastExpanded: true,
                       solidColor: resolveLiquidGlassEnabled(activePrefs)
                           ? (isDark
                               ? const Color(0xF0121212)
@@ -797,14 +845,13 @@ class _MenetrendDetailsModalSheetState
                               ),
                               const SizedBox(height: 14),
                               // Alternative departures selector
-                              if (activeEval.alternatives.length > 1) ...[
+                              if (visibleAlternatives.length > 1) ...[
                                 EdgeFadeHorizontalScroll(
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 20,
                                   ),
                                   spacing: 8,
-                                  children:
-                                      activeEval.alternatives.map((alt) {
+                                  children: visibleAlternatives.map((alt) {
                                     final safeAlt = alt.safeRouteShortName;
                                     final isSel = alt.scheduledDeparture ==
                                             trip.scheduledDeparture &&

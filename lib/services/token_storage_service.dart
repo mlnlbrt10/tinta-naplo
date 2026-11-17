@@ -103,6 +103,72 @@ enum LiquidGlassMode {
   }
 }
 
+/// Experimental GPU-friendly animated backdrop scenes selectable in
+/// Developer Options (`Fejlesztői beállítások`).
+enum AnimatedBackdropPreset {
+  off(
+    label: 'Off',
+    subtitle: 'Statikus stúdió háttér',
+    baseColor: Colors.black,
+    luminance: 0.0,
+  ),
+  gyroLiquidHorizon(
+    label: 'Gyro Liquid Horizon',
+    subtitle: 'Giroszkóp + érintés parallaxis [Ultra]',
+    baseColor: Color(0xFF0A0D12),
+    luminance: 0.012,
+  ),
+  causticWater(
+    label: 'Caustic Water',
+    subtitle: 'Fénytöréses víz',
+    baseColor: Color(0xFF0B1319),
+    luminance: 0.016,
+  ),
+  ferrofluidDrift(
+    label: 'Ferrofluid Drift',
+    subtitle: 'Ferrofluid',
+    baseColor: Color(0xFF0E1014),
+    luminance: 0.014,
+  ),
+  sunbeamDust(
+    label: 'Sunbeam Dust',
+    subtitle: 'Napsugár',
+    baseColor: Color(0xFF121110),
+    luminance: 0.018,
+  ),
+  topographicPulse(
+    label: 'Topographic Pulse',
+    subtitle: 'Élő szintvonalak',
+    baseColor: Color(0xFF0B0E14),
+    luminance: 0.010,
+  ),
+  analogFilmLight(
+    label: 'Analog Film Light',
+    subtitle: 'Analóg fényjáték',
+    baseColor: Color(0xFF110F0E),
+    luminance: 0.015,
+  );
+
+  final String label;
+  final String subtitle;
+  final Color baseColor;
+  final double luminance;
+
+  const AnimatedBackdropPreset({
+    required this.label,
+    required this.subtitle,
+    required this.baseColor,
+    required this.luminance,
+  });
+
+  static AnimatedBackdropPreset fromName(String? name) {
+    return AnimatedBackdropPreset.values.firstWhere(
+      (e) => e.name == name,
+      orElse: () => AnimatedBackdropPreset.off,
+    );
+  }
+}
+
 /// Configurable close button display modes for inspection & detail modals.
 enum ModalCloseButtonMode {
   onlyX,
@@ -258,11 +324,15 @@ class UserProfilePrefs {
   final String? customBackdropPath;
   final double customBackdropDim;
   final double customBackdropLuminance;
+  final AnimatedBackdropPreset animatedBackdropPreset;
   final double cardOpacity;
   final double cardBlurSigma;
 
   bool get hasCustomBackdrop =>
       customBackdropPath != null && customBackdropPath!.trim().isNotEmpty;
+
+  bool get hasAnimatedBackdrop =>
+      animatedBackdropPreset != AnimatedBackdropPreset.off;
   final String favoriteRoute1stPeriod;
   final String favoriteRoute2ndPeriod;
   final Map<String, GradeRoundingConfig> subjectRoundingOverrides;
@@ -322,6 +392,7 @@ class UserProfilePrefs {
     this.customBackdropPath,
     this.customBackdropDim = 0.35,
     this.customBackdropLuminance = 0.15,
+    this.animatedBackdropPreset = AnimatedBackdropPreset.off,
     this.cardOpacity = 0.9,
     this.cardBlurSigma = 4.0,
     this.favoriteRoute1stPeriod = '',
@@ -570,6 +641,7 @@ class UserProfilePrefs {
     bool clearCustomBackdropPath = false,
     double? customBackdropDim,
     double? customBackdropLuminance,
+    AnimatedBackdropPreset? animatedBackdropPreset,
     double? cardOpacity,
     double? cardBlurSigma,
     String? favoriteRoute1stPeriod,
@@ -630,6 +702,8 @@ class UserProfilePrefs {
       customBackdropLuminance:
           (customBackdropLuminance ?? this.customBackdropLuminance)
               .clamp(0.0, 1.0),
+      animatedBackdropPreset:
+          animatedBackdropPreset ?? this.animatedBackdropPreset,
       cardOpacity: cardOpacity ?? this.cardOpacity,
       cardBlurSigma: cardBlurSigma ?? this.cardBlurSigma,
       favoriteRoute1stPeriod:
@@ -687,6 +761,7 @@ class UserProfilePrefs {
       'customBackdropPath': customBackdropPath,
       'customBackdropDim': customBackdropDim,
       'customBackdropLuminance': customBackdropLuminance,
+      'animatedBackdropPreset': animatedBackdropPreset.name,
       'cardOpacity': cardOpacity,
       'cardBlurSigma': cardBlurSigma,
       'favoriteRoute1stPeriod': favoriteRoute1stPeriod,
@@ -839,6 +914,9 @@ class UserProfilePrefs {
       customBackdropLuminance:
           ((json['customBackdropLuminance'] as num?)?.toDouble() ?? 0.15)
               .clamp(0.0, 1.0),
+      animatedBackdropPreset: AnimatedBackdropPreset.fromName(
+        json['animatedBackdropPreset'] as String?,
+      ),
       cardOpacity: ((json['cardOpacity'] as num?)?.toDouble() ?? 0.9).clamp(0.6, 1.0),
       cardBlurSigma: ((json['cardBlurSigma'] as num?)?.toDouble() ?? 4.0).clamp(2.0, 8.0),
       favoriteRoute1stPeriod:
@@ -981,6 +1059,7 @@ class TokenStorageService {
   static const _keyCustomBackdropPath = 'kreta_custom_backdrop_path';
   static const _keyCustomBackdropDim = 'kreta_custom_backdrop_dim';
   static const _keyCustomBackdropLuminance = 'kreta_custom_backdrop_luminance';
+  static const _keyAnimatedBackdropPreset = 'kreta_animated_backdrop_preset';
   static const _keyCardOpacity = 'kreta_card_opacity';
   static const _keyCardBlurSigma = 'kreta_card_blur_sigma';
   static const _keyFavoriteRoute1stPeriod = 'kreta_fav_route_1st';
@@ -1368,6 +1447,9 @@ class TokenStorageService {
       customBackdropLuminance:
           (double.tryParse(values[_keyCustomBackdropLuminance] ?? '') ?? 0.15)
               .clamp(0.0, 1.0),
+      animatedBackdropPreset: AnimatedBackdropPreset.fromName(
+        values[_keyAnimatedBackdropPreset],
+      ),
       cardOpacity:
           (double.tryParse(values[_keyCardOpacity] ?? '') ?? 0.9).clamp(0.6, 1.0),
       cardBlurSigma:
@@ -1549,6 +1631,10 @@ class TokenStorageService {
       _storage.write(
         key: _keyCustomBackdropLuminance,
         value: prefs.customBackdropLuminance.toString(),
+      ),
+      _storage.write(
+        key: _keyAnimatedBackdropPreset,
+        value: prefs.animatedBackdropPreset.name,
       ),
       _storage.write(
         key: _keyCardOpacity,

@@ -14,6 +14,7 @@ import '../services/calendar_sync_service.dart';
 import '../services/kreta_client.dart';
 import '../services/menetrend_service.dart';
 import '../services/token_storage_service.dart';
+import '../services/wear_sync_service.dart';
 import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
@@ -492,6 +493,7 @@ class AppSettingsScreen extends StatefulWidget {
   final UserProfilePrefs prefs;
   final ValueChanged<UserProfilePrefs> onPrefsChanged;
   final VoidCallback onLogout;
+  final WearSyncService? wearSyncService;
 
   const AppSettingsScreen({
     super.key,
@@ -502,6 +504,7 @@ class AppSettingsScreen extends StatefulWidget {
     required this.prefs,
     required this.onPrefsChanged,
     required this.onLogout,
+    this.wearSyncService,
   });
 
   @override
@@ -557,6 +560,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           onPrefsChanged: _handlePrefsChanged,
           onLogout: widget.onLogout,
           settingsOnly: true,
+          wearSyncService: widget.wearSyncService,
         ),
       );
     }
@@ -603,6 +607,8 @@ class MoreScreen extends StatefulWidget {
   /// Whether this tab is currently visible in the bottom navigation IndexedStack.
   final bool isActiveTab;
 
+  final WearSyncService? wearSyncService;
+
   const MoreScreen({
     super.key,
     required this.session,
@@ -618,6 +624,7 @@ class MoreScreen extends StatefulWidget {
     this.messagesOnly = false,
     this.onMessagesChanged,
     this.isActiveTab = true,
+    this.wearSyncService,
   });
 
   @override
@@ -672,6 +679,12 @@ class _MoreScreenState extends State<MoreScreen>
   late final TextEditingController _fav2ndController;
   final ValueNotifier<int> _stateVersion = ValueNotifier<int>(0);
   CalendarSyncSettings? _calendarSyncSettings;
+  WearConnectionStatus _wearStatus = WearConnectionStatus.disconnected;
+  bool _isSyncingWear = false;
+  bool _wearSyncedRecently = false;
+
+  WearSyncService get _wearService =>
+      widget.wearSyncService ?? WearSyncService.instance;
 
   final DateFormat _dateFormat = DateFormat('yyyy. MM. dd.');
   final DateFormat _dateTimeFormat = DateFormat('yyyy. MM. dd. HH:mm');
@@ -694,6 +707,9 @@ class _MoreScreenState extends State<MoreScreen>
     _messages = List<KretaMessage>.from(widget.initialMessages);
     _loadPersistedReadIds();
     _loadCalendarSyncSettings();
+    if (widget.settingsOnly) {
+      unawaited(_loadWearStatus());
+    }
     _homeStationController =
         TextEditingController(text: _currentPrefs.transitHomeStation);
     _homeTrainStationController =
@@ -730,6 +746,55 @@ class _MoreScreenState extends State<MoreScreen>
       return true;
     }
     return false;
+  }
+
+  Future<void> _loadWearStatus() async {
+    final status = await _wearService.getConnectionStatus();
+    if (!mounted) return;
+    setState(() => _wearStatus = status);
+  }
+
+  Future<void> _syncWithWatch() async {
+    if (_isSyncingWear) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    setState(() {
+      _isSyncingWear = true;
+      _wearSyncedRecently = false;
+    });
+    StoredSession active = widget.session;
+    if (active.isExpired && widget.kretaClient != null) {
+      try {
+        active = await widget.kretaClient!.ensureValidSession(active);
+      } catch (_) {}
+    }
+    final ok = await _wearService.syncSessionToWatch(
+      session: active,
+      student: widget.student,
+      nickname: _currentPrefs.nickname,
+      forceSync: true,
+    );
+    final refreshed = await _wearService.getConnectionStatus();
+    if (!mounted) return;
+    setState(() {
+      _isSyncingWear = false;
+      _wearSyncedRecently = ok;
+      if (refreshed.isConnected) {
+        _wearStatus = refreshed;
+      }
+    });
+    if (messenger != null) {
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            ok
+                ? 'Munkamenet szinkronizálva az órával'
+                : 'Nem sikerült szinkronizálni az órával',
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   void _loadPersistedReadIds() {
@@ -1609,6 +1674,7 @@ class _MoreScreenState extends State<MoreScreen>
         final scheme = theme.colorScheme;
         return LiquidGlassSurface(
           prefs: _currentPrefs,
+          highContrastExpanded: true,
           contentOpacityAnimation: ModalRoute.of(sheetContext)?.animation,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
           child: DraggableScrollableSheet(
@@ -2250,6 +2316,41 @@ class _MoreScreenState extends State<MoreScreen>
               'Token lejárat',
               expFormat.format(widget.session.expiresAt.toLocal()),
             ),
+            if (_wearStatus.isConnected) ...[
+              _buildRow(
+                scheme,
+                'Wear OS óra',
+                _wearSyncedRecently
+                    ? 'Szinkronizálva'
+                    : (_wearStatus.resolvedDeviceName != null
+                        ? 'Csatlakozva (${_wearStatus.resolvedDeviceName})'
+                        : 'Csatlakozva'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                key: const ValueKey<String>('settings-wear-sync-button'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: OledTheme.cardRadius,
+                  ),
+                ),
+                onPressed: _isSyncingWear ? null : _syncWithWatch,
+                icon: _isSyncingWear
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.watch_rounded, size: 18),
+                label: Text(
+                  _wearSyncedRecently
+                      ? 'Szinkronizálva órával'
+                      : 'Szinkronizálás órával',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             FilledButton.icon(
               style: FilledButton.styleFrom(

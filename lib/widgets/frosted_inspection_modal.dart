@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
+import '../providers/app_providers.dart';
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
@@ -156,6 +157,7 @@ Future<void> showFrostedModal({
                       padding: const EdgeInsets.all(22),
                       borderRadius: OledTheme.largeRadius,
                       solidColor: cardBg,
+                      highContrastExpanded: true,
                       contentOpacityAnimation: fadeCurved,
                       boxShadow: [
                         BoxShadow(
@@ -541,7 +543,12 @@ Future<void> showHomeworkInspectionModal(
   Homework homework, {
   UserProfilePrefs? prefs,
   String? heroTag,
+  bool? isCompletedOverride,
 }) {
+  final scopeSettings =
+      context.getInheritedWidgetOfExactType<AppProvidersScope>()?.settings;
+  final isCompleted = isCompletedOverride ??
+      (scopeSettings?.isHomeworkCompleted(homework) ?? homework.isDone);
   final dtFormat = DateFormat('yyyy. MM. dd. HH:mm');
   final cleanedDesc = homework.description
       .replaceAll(RegExp(r'<[^>]*>'), ' ')
@@ -590,7 +597,7 @@ Future<void> showHomeworkInspectionModal(
       FrostedDetailRow(
         icon: Icons.scale_rounded,
         label: 'Súly / Státusz',
-        value: homework.isDone ? 'Megoldva (Kész)' : 'Aktív házi feladat',
+        value: isCompleted ? 'Megoldva (Kész)' : 'Aktív házi feladat',
       ),
       FrostedDetailRow(
         icon: Icons.category_rounded,
@@ -693,7 +700,15 @@ Future<void> showLessonInspectionModal(
   String? heroTag,
   UserProfilePrefs? prefs,
   Homework? homework,
+  bool? isHomeworkCompleted,
 }) {
+  final scopeSettings =
+      context.getInheritedWidgetOfExactType<AppProvidersScope>()?.settings;
+  final hwKey = homework != null
+      ? SettingsProvider.homeworkCompletionKey(homework)
+      : (lesson.homeworkUid?.trim() ?? '');
+  final resolvedHwCompleted = isHomeworkCompleted ??
+      (hwKey.isNotEmpty && (scopeSettings?.isHomeworkKeyCompleted(hwKey) ?? false));
   final dayFormat = DateFormat('yyyy. MM. dd.');
   final timeFormat = DateFormat('HH:mm');
   final startLocal = lesson.start.toLocal();
@@ -782,10 +797,15 @@ Future<void> showLessonInspectionModal(
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Házi feladat ehhez az órához',
+                        resolvedHwCompleted
+                            ? 'Házi feladat ehhez az órához (Kész)'
+                            : 'Házi feladat ehhez az órához',
                         style: theme.textTheme.labelMedium?.copyWith(
                           color: hwTeal,
                           fontWeight: FontWeight.w800,
+                          decoration: resolvedHwCompleted
+                              ? TextDecoration.lineThrough
+                              : null,
                         ),
                       ),
                     ),

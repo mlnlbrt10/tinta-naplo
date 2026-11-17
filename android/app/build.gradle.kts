@@ -4,8 +4,11 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+apply(from = "../../shared/kreta_config_codegen.gradle.kts")
+
 android {
     namespace = "hu.rekreta.rekreta_app"
+    sourceSets.getByName("main").java.srcDir(layout.buildDirectory.dir("generated/kreta/kotlin").get().asFile)
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -98,4 +101,12 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    implementation("androidx.security:security-crypto:1.1.0")
+    implementation("com.google.android.gms:play-services-wearable:20.0.1")
+}
+
+tasks.configureEach {
+    if (name.startsWith("compile") && name.endsWith("Kotlin")) {
+        dependsOn("generateKretaSharedConfig")
+    }
 }

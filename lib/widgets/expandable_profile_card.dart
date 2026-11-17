@@ -1,15 +1,20 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import '../utils/greeting_utils.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
 import '../providers/app_providers.dart';
+import '../services/kreta_client.dart';
 import '../services/token_storage_service.dart';
+import '../services/wear_sync_service.dart';
+import '../utils/greeting_utils.dart';
 import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
+import 'bug_report_sheet.dart';
 import 'glass_card.dart';
 
 /// Sleek top-right CircleAvatar icon for the HomeScreen AppBar.
@@ -108,6 +113,8 @@ Future<void> showStreamlinedProfileSheet({
   required BuildContext context,
   required Student? student,
   required StoredSession session,
+  KretaClient? kretaClient,
+  WearSyncService? wearSyncService,
   required UserProfilePrefs prefs,
   required ValueChanged<UserProfilePrefs> onPrefsChanged,
   required VoidCallback onOpenFullSettings,
@@ -157,6 +164,8 @@ Future<void> showStreamlinedProfileSheet({
                     child: _StreamlinedProfileModalSheet(
                       student: student,
                       session: session,
+                      kretaClient: kretaClient,
+                      wearSyncService: wearSyncService,
                       initialPrefs: prefs,
                       onPrefsChanged: onPrefsChanged,
                       contentOpacityAnimation: curved,
@@ -180,6 +189,8 @@ Future<void> showStreamlinedProfileSheet({
 class _StreamlinedProfileModalSheet extends StatefulWidget {
   final Student? student;
   final StoredSession session;
+  final KretaClient? kretaClient;
+  final WearSyncService? wearSyncService;
   final UserProfilePrefs initialPrefs;
   final ValueChanged<UserProfilePrefs> onPrefsChanged;
   final VoidCallback onOpenFullSettings;
@@ -188,6 +199,8 @@ class _StreamlinedProfileModalSheet extends StatefulWidget {
   const _StreamlinedProfileModalSheet({
     required this.student,
     required this.session,
+    this.kretaClient,
+    this.wearSyncService,
     required this.initialPrefs,
     required this.onPrefsChanged,
     required this.onOpenFullSettings,
@@ -204,12 +217,70 @@ class _StreamlinedProfileModalSheetState
   late UserProfilePrefs _prefs;
   late final TextEditingController _nicknameController;
   final ImagePicker _imagePicker = ImagePicker();
+  WearConnectionStatus _wearStatus = WearConnectionStatus.disconnected;
+  bool _isSyncingWear = false;
+  bool _wearSyncedRecently = false;
+
+  WearSyncService get _wearService =>
+      widget.wearSyncService ?? WearSyncService.instance;
 
   @override
   void initState() {
     super.initState();
     _prefs = widget.initialPrefs;
     _nicknameController = TextEditingController(text: _prefs.nickname ?? '');
+    unawaited(_loadWearStatus());
+  }
+
+  Future<void> _loadWearStatus() async {
+    final status = await _wearService.getConnectionStatus();
+    if (!mounted) return;
+    setState(() => _wearStatus = status);
+  }
+
+  Future<void> _syncWithWatch() async {
+    if (_isSyncingWear) return;
+    final activePrefs =
+        AppProvidersScope.maybeOf(context)?.settings.prefs ?? _prefs;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    setState(() {
+      _isSyncingWear = true;
+      _wearSyncedRecently = false;
+    });
+    StoredSession active = widget.session;
+    if (active.isExpired && widget.kretaClient != null) {
+      try {
+        active = await widget.kretaClient!.ensureValidSession(active);
+      } catch (_) {}
+    }
+    final ok = await _wearService.syncSessionToWatch(
+      session: active,
+      student: widget.student,
+      nickname: activePrefs.nickname,
+      forceSync: true,
+    );
+    final refreshedStatus = await _wearService.getConnectionStatus();
+    if (!mounted) return;
+    setState(() {
+      _isSyncingWear = false;
+      _wearSyncedRecently = ok;
+      if (refreshedStatus.isConnected) {
+        _wearStatus = refreshedStatus;
+      }
+    });
+    if (messenger != null) {
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            ok
+                ? 'Munkamenet szinkronizálva az órával'
+                : 'Nem sikerült szinkronizálni az órával',
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   @override
@@ -289,25 +360,54 @@ class _StreamlinedProfileModalSheetState
       padding: EdgeInsets.only(bottom: bottomInset),
       child: LiquidGlassSurface(
         prefs: activePrefs,
+        highContrastExpanded: true,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
         contentOpacityAnimation: widget.contentOpacityAnimation,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(22, 14, 22, 28),
+          padding: const EdgeInsets.fromLTRB(22, 12, 22, 28),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Center(
-                child: Container(
-                  width: 42,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: scheme.onSurface.withValues(alpha: 0.24),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
+              SizedBox(
+                height: 42,
+                child: Stack(
+                  alignment: Alignment.topCenter,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Container(
+                        width: 42,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: scheme.onSurface.withValues(alpha: 0.24),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.topRight,
+                      child: IconButton(
+                        tooltip: 'Hibajelentés',
+                        iconSize: 20,
+                        visualDensity: VisualDensity.compact,
+                        style: IconButton.styleFrom(
+                          backgroundColor: scheme.surfaceContainerHigh
+                              .withValues(alpha: 0.65),
+                          foregroundColor: scheme.onSurface,
+                        ),
+                        onPressed: () => showBugReportSheet(
+                          context,
+                          student: widget.student,
+                          prefs: activePrefs,
+                        ),
+                        icon: const Icon(Icons.bug_report_outlined),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 4),
               Center(
                 child: GestureDetector(
                   onTap: _pickCustomPhoto,
@@ -452,7 +552,94 @@ class _StreamlinedProfileModalSheetState
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
+              if (_wearStatus.isConnected) ...[
+                Container(
+                  key: const ValueKey<String>('profile-wear-sync-card'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHigh.withValues(alpha: 0.48),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: theme.dividerColor.withValues(alpha: 0.65),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.watch_rounded,
+                        size: 18,
+                        color: scheme.primary,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _wearStatus.resolvedDeviceName ?? 'Wear OS óra',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: scheme.onSurface,
+                              ),
+                            ),
+                            Text(
+                              _wearSyncedRecently
+                                  ? 'Szinkronizálva'
+                                  : (_wearStatus.lastSyncedAt != null
+                                      ? 'Csatlakozva • ${DateFormat('HH:mm').format(_wearStatus.lastSyncedAt!)}'
+                                      : 'Wear OS csatlakozva'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: _wearSyncedRecently
+                                    ? const Color(0xFF26D0A8)
+                                    : scheme.onSurface.withValues(alpha: 0.65),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton.tonal(
+                        key: const ValueKey<String>('profile-wear-sync-button'),
+                        onPressed: _isSyncingWear ? null : _syncWithWatch,
+                        style: FilledButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        ),
+                        child: _isSyncingWear
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text(
+                                'Szinkronizálás órával',
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               TactileBounce(
                 onTap: widget.onOpenFullSettings,
                 child: Container(
