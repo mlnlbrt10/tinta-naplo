@@ -41,11 +41,11 @@ class KretaSyncWorker(
             requestTileUpdate(applicationContext)
             Result.success()
         } catch (_: TokenExpiredException) {
-            tokenStore.clearSession()
+            // Keep persisted session and timetable cache intact on background refresh failures;
+            // only explicit user logout clears session/cache.
             requestTileUpdate(applicationContext)
             Result.failure()
         } catch (_: InvalidGrantException) {
-            tokenStore.clearSession()
             requestTileUpdate(applicationContext)
             Result.failure()
         } catch (_: Exception) {

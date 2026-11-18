@@ -227,31 +227,31 @@ void main() {
       GitHubUpdaterService.latestReleaseApiUrl,
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest',
     );
-    expect(GitHubUpdaterService.fallbackAppVersion, '1.1.1');
-    expect(GitHubUpdaterService.fallbackBuildNumber, '13');
-    expect(GitHubUpdaterService.defaultApkFileName, 'tinta-naplo-v1.1.1.apk');
+    expect(GitHubUpdaterService.fallbackAppVersion, '1.2.0');
+    expect(GitHubUpdaterService.fallbackBuildNumber, '15');
+    expect(GitHubUpdaterService.defaultApkFileName, 'tinta-naplo-v1.2.0.apk');
     expect(
-      GitHubUpdaterService.apkFileNameForTag('v1.1.1'),
-      'tinta-naplo-v1.1.1.apk',
+      GitHubUpdaterService.apkFileNameForTag('v1.2.0'),
+      'tinta-naplo-v1.2.0.apk',
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.1.1', 'v1.1.2'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.2.0', 'v1.2.1'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.1.1', 'v1.1.1'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.2.0', 'v1.2.0'),
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.1.1-alpha', 'v1.1.1'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.2.0-alpha', 'v1.2.0'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.1.1-alpha', 'v1.1.1-alpha'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.2.0-alpha', 'v1.2.0-alpha'),
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.1.1', 'v1.1.0'),
+      GitHubUpdaterService.isRemoteVersionNewer('1.2.0', 'v1.1.2'),
       isFalse,
     );
     // Legacy pre-rebrand v1.2.x / v1.1.x tags must not prompt updates on v1.0.0.
@@ -280,29 +280,29 @@ void main() {
       isFalse,
     );
     final brandedFutureRelease = GitHubReleaseInfo.fromJson({
-      'tag_name': 'v1.1.1',
-      'name': 'Tinta Napló v1.1.1',
+      'tag_name': 'v1.2.0',
+      'name': 'Tinta Napló v1.2.0',
       'body': 'Újdonságok',
-      'html_url': 'https://github.com/mlnlbrt10/tinta-naplo/releases/tag/v1.1.1',
+      'html_url': 'https://github.com/mlnlbrt10/tinta-naplo/releases/tag/v1.2.0',
       'assets': [
         {
           'name': 'app-release.apk',
           'browser_download_url': 'https://example.com/app-release.apk',
         },
         {
-          'name': 'tinta-naplo-v1.1.1.apk',
-          'browser_download_url': 'https://example.com/tinta-naplo-v1.1.1.apk',
+          'name': 'tinta-naplo-v1.2.0.apk',
+          'browser_download_url': 'https://example.com/tinta-naplo-v1.2.0.apk',
         },
       ],
     });
     expect(
       brandedFutureRelease.apkDownloadUrl,
-      'https://example.com/tinta-naplo-v1.1.1.apk',
+      'https://example.com/tinta-naplo-v1.2.0.apk',
     );
     expect(
       GitHubUpdaterService.isRemoteVersionNewer(
         '1.0.0',
-        'v1.1.1',
+        'v1.2.0',
         release: brandedFutureRelease,
       ),
       isTrue,
@@ -617,6 +617,80 @@ void main() {
     expect(
       KretaClient.getFirstSchoolDay(DateTime(2026, 11, 12)),
       DateTime(2026, 9, 1),
+    );
+  });
+
+  test('KretaClient single-flight lock serializes concurrent expired-token refreshes', () async {
+    int tokenRefreshCalls = 0;
+
+    final mockHttp = MockClient((request) async {
+      if (request.url.toString().contains('/connect/token')) {
+        tokenRefreshCalls++;
+        if (tokenRefreshCalls > 1) {
+          return http.Response('{"error":"invalid_grant"}', 400);
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        final bodyParams = Uri.splitQueryString(request.body);
+        expect(bodyParams['refresh_token'], 'rotate_tok_1');
+        return http.Response(
+          '{"access_token":"rotated_acc_2","refresh_token":"rotate_tok_2","id_token":"id_2","token_type":"Bearer","expires_in":1800}',
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.headers['Authorization'] == 'Bearer rotated_acc_2') {
+        return http.Response('[]', 200, headers: {'content-type': 'application/json'});
+      }
+      return http.Response('Unauthorized', 401);
+    });
+
+    final storage = _InMemoryTokenStorage();
+    final initialSession = StoredSession(
+      accessToken: 'expired_acc_1',
+      refreshToken: 'rotate_tok_1',
+      idToken: 'id_1',
+      instituteCode: 'klik123456',
+      userName: 'Single Flight User',
+      // Within the 2-minute proactive refresh window
+      expiresAt: DateTime.now().add(const Duration(seconds: 90)),
+    );
+    storage.savedSession = initialSession;
+
+    final client = KretaClient(httpClient: mockHttp, storage: storage);
+    final results = await Future.wait([
+      client.fetchAllGrades(initialSession),
+      client.fetchTests(initialSession),
+      client.fetchOmissions(initialSession),
+    ]);
+
+    expect(results.length, 3);
+    expect(tokenRefreshCalls, 1);
+    expect(storage.savedSession?.accessToken, 'rotated_acc_2');
+    expect(storage.savedSession?.refreshToken, 'rotate_tok_2');
+  });
+
+  test('Transient HTTP 503 during token refresh does NOT throw InvalidGrantException', () async {
+    final mockHttp = MockClient((request) async {
+      if (request.url.toString().contains('/connect/token')) {
+        return http.Response('Service Unavailable', 503);
+      }
+      return http.Response('[]', 200);
+    });
+
+    final storage = _InMemoryTokenStorage();
+    final session = StoredSession(
+      accessToken: 'expired_acc',
+      refreshToken: 'still_valid_refresh',
+      idToken: 'id',
+      instituteCode: 'klik123456',
+      expiresAt: DateTime.now().subtract(const Duration(minutes: 5)),
+    );
+    storage.savedSession = session;
+
+    expect(
+      () => storage.refreshToken(session: session, httpClient: mockHttp),
+      throwsA(isNot(isA<InvalidGrantException>())),
     );
   });
 }

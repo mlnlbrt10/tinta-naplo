@@ -16,10 +16,7 @@ bool resolveLiquidGlassEnabled([UserProfilePrefs? prefs]) {
 bool resolveSoftBlurEnabled([UserProfilePrefs? prefs]) =>
     resolveLiquidGlassEnabled(prefs);
 
-double resolveSoftBlurBackdropSigma([UserProfilePrefs? prefs]) {
-  final raw = prefs?.cardBlurSigma ?? UserProfilePrefs.activeSoftBlurSigma;
-  return (12.0 + raw * 2.0).clamp(12.0, 20.0);
-}
+double resolveSoftBlurBackdropSigma([UserProfilePrefs? prefs]) => 10.0;
 
 /// Returns a lighter scrim behind frosted glass modals and dialogs when Liquid
 /// Glass is enabled so blurred underlying content shines cleanly through.
@@ -189,22 +186,24 @@ class LiquidGlassSurface extends StatelessWidget {
           children: [
             Positioned.fill(
               child: IgnorePointer(
-                child: ClipRRect(
-                  borderRadius: borderRadius,
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(
-                      sigmaX: animatedSigma,
-                      sigmaY: animatedSigma,
-                    ),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [animTopTint, animBottomTint],
+                child: RepaintBoundary(
+                  child: ClipRRect(
+                    borderRadius: borderRadius,
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(
+                        sigmaX: animatedSigma,
+                        sigmaY: animatedSigma,
+                      ),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [animTopTint, animBottomTint],
+                          ),
+                          borderRadius: borderRadius,
+                          border: animBorder,
                         ),
-                        borderRadius: borderRadius,
-                        border: animBorder,
                       ),
                     ),
                   ),
@@ -218,25 +217,27 @@ class LiquidGlassSurface extends StatelessWidget {
           ],
         );
       } else {
-        glassContent = ClipRRect(
-          borderRadius: borderRadius,
-          child: BackdropFilter(
-            filter: ImageFilter.blur(
-              sigmaX: animatedSigma,
-              sigmaY: animatedSigma,
-            ),
-            child: Container(
-              padding: padding,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [animTopTint, animBottomTint],
-                ),
-                borderRadius: borderRadius,
-                border: animBorder,
+        glassContent = RepaintBoundary(
+          child: ClipRRect(
+            borderRadius: borderRadius,
+            child: BackdropFilter(
+              filter: ImageFilter.blur(
+                sigmaX: animatedSigma,
+                sigmaY: animatedSigma,
               ),
-              child: innerChild,
+              child: Container(
+                padding: padding,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [animTopTint, animBottomTint],
+                  ),
+                  borderRadius: borderRadius,
+                  border: animBorder,
+                ),
+                child: innerChild,
+              ),
             ),
           ),
         );
@@ -400,10 +401,10 @@ Future<T?> showSoftBlurDialog<T>({
   );
 }
 
-/// Card container rendering a frosted `BackdropFilter(sigmaX: 14, sigmaY: 14)`
-/// surface clipped to [borderRadius] for collapsed cards when Liquid Glass is
-/// active, high-contrast solid fills when [isExpanded] is true (avoiding
-/// double-blur stacking), and zero-blur Material surfaces when OFF.
+/// High-performance GPU-friendly Liquid Glass card surface using a multi-stop
+/// translucent gradient, subtle top specular highlight, and [RepaintBoundary]
+/// isolation (avoiding expensive per-item `BackdropFilter` offscreen `saveLayer`
+/// passes inside scrollable lists for steady 120Hz scrolling).
 class SoftGlassCard extends StatelessWidget {
   final UserProfilePrefs prefs;
   final Widget child;
@@ -480,7 +481,7 @@ class SoftGlassCard extends StatelessWidget {
           color: borderColor ??
               (hasStudioOrCustomBackdrop
                   ? contrast.cardBorder
-                  : Colors.white.withValues(alpha: isDark ? 0.14 : 0.28)),
+                  : Colors.white.withValues(alpha: isDark ? 0.14 : 0.34)),
           width: 1.0,
         );
 
@@ -501,37 +502,128 @@ class SoftGlassCard extends StatelessWidget {
       );
     }
 
-    final surfaceColor =
-        color ?? theme.cardTheme.color ?? scheme.surface;
-    final clearTint = hasStudioOrCustomBackdrop
-        ? (color ??
-            (contrast.isLightBackdrop
-                ? Colors.white.withValues(alpha: 0.56)
-                : const Color(0xFF141820).withValues(alpha: 0.54)))
-        : (isDark
-            ? Colors.black.withValues(
-                alpha: (activePrefs.cardOpacity * 0.42).clamp(0.18, 0.48),
-              )
-            : surfaceColor.withValues(
-                alpha: (activePrefs.cardOpacity * 0.48).clamp(0.24, 0.46),
-              ));
+    final opacityScale = activePrefs.cardOpacity.clamp(0.55, 0.95);
+    final surfaceBase =
+        color ?? (isDark ? const Color(0xFF141820) : Colors.white);
+    final Color topHighlightStop;
+    final Color midBodyStop;
+    final Color bottomDepthStop;
+    if (color != null) {
+      topHighlightStop = Color.alphaBlend(
+        Colors.white.withValues(alpha: isDark ? 0.08 : 0.22),
+        color!.withValues(alpha: (color!.a * opacityScale).clamp(0.28, 0.86)),
+      );
+      midBodyStop = color!.withValues(
+        alpha: (color!.a * opacityScale * 0.88).clamp(0.22, 0.78),
+      );
+      bottomDepthStop = color!.withValues(
+        alpha: (color!.a * opacityScale * 0.94).clamp(0.26, 0.84),
+      );
+    } else if (hasStudioOrCustomBackdrop) {
+      if (contrast.isLightBackdrop) {
+        topHighlightStop = Colors.white.withValues(alpha: 0.72 * opacityScale);
+        midBodyStop = Colors.white.withValues(alpha: 0.54 * opacityScale);
+        bottomDepthStop = const Color(0xFFF1F5F9).withValues(
+          alpha: 0.62 * opacityScale,
+        );
+      } else {
+        topHighlightStop = Colors.white.withValues(alpha: 0.13 * opacityScale);
+        midBodyStop = const Color(0xFF141820).withValues(
+          alpha: 0.56 * opacityScale,
+        );
+        bottomDepthStop = const Color(0xFF0C0F16).withValues(
+          alpha: 0.68 * opacityScale,
+        );
+      }
+    } else if (isDark) {
+      topHighlightStop = Colors.white.withValues(alpha: 0.095 * opacityScale);
+      midBodyStop = surfaceBase.withValues(alpha: 0.44 * opacityScale);
+      bottomDepthStop = const Color(0xFF0A0D13).withValues(
+        alpha: 0.56 * opacityScale,
+      );
+    } else {
+      topHighlightStop = Colors.white.withValues(alpha: 0.82 * opacityScale);
+      midBodyStop = scheme.surfaceContainerHigh.withValues(
+        alpha: 0.56 * opacityScale,
+      );
+      bottomDepthStop = scheme.surfaceContainer.withValues(
+        alpha: 0.66 * opacityScale,
+      );
+    }
 
     return RepaintBoundary(
       child: ClipRRect(
         borderRadius: borderRadius,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 14.0, sigmaY: 14.0),
-          child: Container(
-            padding: padding,
-            decoration: BoxDecoration(
-              color: clearTint,
-              borderRadius: borderRadius,
-              border: glassBorder,
+        child: Container(
+          padding: padding,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              stops: const [0.0, 0.35, 1.0],
+              colors: [topHighlightStop, midBodyStop, bottomDepthStop],
             ),
-            child: contentChild,
+            borderRadius: borderRadius,
+            border: glassBorder,
           ),
+          foregroundDecoration: BoxDecoration(
+            borderRadius: borderRadius,
+            border: Border(
+              top: BorderSide(
+                color: Colors.white.withValues(alpha: isDark ? 0.22 : 0.62),
+                width: 0.85,
+              ),
+            ),
+          ),
+          child: contentChild,
         ),
       ),
+    );
+  }
+}
+
+/// Animated first-seen highlight outline rendered around newly received grade
+/// cards (and subject tiles containing them). Smoothly fades out when tapped or
+/// when a pull-to-refresh clears active session glows.
+class GradeFirstSeenGlow extends StatelessWidget {
+  final bool isGlowing;
+  final Color accentColor;
+  final BorderRadius borderRadius;
+  final Widget child;
+
+  const GradeFirstSeenGlow({
+    super.key,
+    required this.isGlowing,
+    required this.accentColor,
+    required this.borderRadius,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+      decoration: BoxDecoration(
+        borderRadius: borderRadius,
+        border: Border.all(
+          color: isGlowing
+              ? accentColor.withValues(alpha: isDark ? 0.90 : 0.82)
+              : Colors.transparent,
+          width: isGlowing ? 1.5 : 0.0,
+        ),
+        boxShadow: isGlowing
+            ? [
+                BoxShadow(
+                  color: accentColor.withValues(alpha: isDark ? 0.42 : 0.30),
+                  blurRadius: 14,
+                  spreadRadius: 0.8,
+                ),
+              ]
+            : const [],
+      ),
+      child: child,
     );
   }
 }

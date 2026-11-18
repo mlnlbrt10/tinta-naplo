@@ -645,5 +645,152 @@ void main() {
         );
       },
     );
+
+    testWidgets(
+      'LiquidBubbleTabBar & LiquidSpringPillTrack translate strictly along X (translateY == 0), stretch horizontally during travel, and vertically rebound on arrival',
+      (tester) async {
+        var tabIdx = 0;
+        var dockIdx = 0;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData.dark(useMaterial3: true),
+            home: Scaffold(
+              body: Center(
+                child: SizedBox(
+                  width: 340,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      StatefulBuilder(
+                        builder: (context, setState) => LiquidBubbleTabBar(
+                          selectedIndex: tabIdx,
+                          items: const [
+                            LiquidBubbleTabItem(label: 'Első'),
+                            LiquidBubbleTabItem(label: 'Második'),
+                            LiquidBubbleTabItem(label: 'Harmadik'),
+                            LiquidBubbleTabItem(label: 'Negyedik'),
+                          ],
+                          onSelected: (i) => setState(() => tabIdx = i),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      StatefulBuilder(
+                        builder: (context, setState) => LiquidSpringPillTrack(
+                          itemCount: 4,
+                          selectedIndex: dockIdx,
+                          height: 62,
+                          pillWidth: 56,
+                          pillHeight: 42,
+                          onSelected: (i) => setState(() => dockIdx = i),
+                          pillBuilder: (_, __) => const LiquidGlassPillSurface(
+                            pressProgress: 0.0,
+                            borderRadius: BorderRadius.all(Radius.circular(22)),
+                          ),
+                          itemBuilder: (_, idx, __) => Center(
+                            child: Text('Dock$idx'),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final barPillFinder = find.descendant(
+          of: find.byType(LiquidBubbleTabBar),
+          matching: find.byWidgetPredicate(
+            (w) => w is Positioned && w.width != null && w.height != null,
+          ),
+        );
+        final barTransformFinder = find.descendant(
+          of: barPillFinder,
+          matching: find.byType(Transform),
+        );
+        final dockPillFinder = find.descendant(
+          of: find.byType(LiquidSpringPillTrack),
+          matching: find.byWidgetPredicate(
+            (w) => w is Positioned && w.width != null && w.height != null,
+          ),
+        );
+        final dockTransformFinder = find.descendant(
+          of: dockPillFinder,
+          matching: find.byType(Transform),
+        );
+
+        final restingBarTop = tester.widget<Positioned>(barPillFinder).top!;
+        final restingDockTop = tester.widget<Positioned>(dockPillFinder).top!;
+
+        // Tap rightmost tab on both bars
+        await tester.tap(find.text('Negyedik'));
+        await tester.tap(find.text('Dock3'));
+
+        double maxBarTravelScaleX = 1.0;
+        double minBarTravelScaleY = 1.0;
+        double maxBarArrivalScaleY = 1.0;
+        double maxDockTravelScaleX = 1.0;
+        double minDockTravelScaleY = 1.0;
+        double maxDockArrivalScaleY = 1.0;
+
+        for (int frame = 0; frame < 30; frame++) {
+          await tester.pump(const Duration(milliseconds: 16));
+          final barPos = tester.widget<Positioned>(barPillFinder);
+          final dockPos = tester.widget<Positioned>(dockPillFinder);
+          // Strict zero vertical translation throughout entire tap animation
+          expect(barPos.top!, closeTo(restingBarTop, 0.001));
+          expect(dockPos.top!, closeTo(restingDockTop, 0.001));
+
+          final barMatrix =
+              tester.widget<Transform>(barTransformFinder).transform;
+          final bsx = barMatrix.entry(0, 0);
+          final bsy = barMatrix.entry(1, 1);
+          if (bsx > maxBarTravelScaleX) maxBarTravelScaleX = bsx;
+          if (bsy < minBarTravelScaleY) minBarTravelScaleY = bsy;
+          if (bsy > maxBarArrivalScaleY) maxBarArrivalScaleY = bsy;
+
+          final dockMatrix =
+              tester.widget<Transform>(dockTransformFinder).transform;
+          final dsx = dockMatrix.entry(0, 0);
+          final dsy = dockMatrix.entry(1, 1);
+          if (dsx > maxDockTravelScaleX) maxDockTravelScaleX = dsx;
+          if (dsy < minDockTravelScaleY) minDockTravelScaleY = dsy;
+          if (dsy > maxDockArrivalScaleY) maxDockArrivalScaleY = dsy;
+        }
+
+        // Balanced tactile travel stretch (~1.085 X, ~0.95 Y) & arrival vertical wobble (~1.055 Y)
+        expect(maxBarTravelScaleX, greaterThan(1.055));
+        expect(maxBarTravelScaleX, lessThanOrEqualTo(1.10));
+        expect(minBarTravelScaleY, lessThan(0.975));
+        expect(maxBarArrivalScaleY, greaterThan(1.035));
+        expect(maxBarArrivalScaleY, lessThanOrEqualTo(1.07));
+
+        expect(maxDockTravelScaleX, greaterThan(1.055));
+        expect(maxDockTravelScaleX, lessThanOrEqualTo(1.10));
+        expect(minDockTravelScaleY, lessThan(0.975));
+        expect(maxDockArrivalScaleY, greaterThan(1.035));
+        expect(maxDockArrivalScaleY, lessThanOrEqualTo(1.07));
+
+        await tester.pumpAndSettle();
+        final settledBar = tester.widget<Transform>(barTransformFinder).transform;
+        final settledDock =
+            tester.widget<Transform>(dockTransformFinder).transform;
+        expect(settledBar.entry(0, 0), closeTo(1.0, 0.001));
+        expect(settledBar.entry(1, 1), closeTo(1.0, 0.001));
+        expect(settledDock.entry(0, 0), closeTo(1.0, 0.001));
+        expect(settledDock.entry(1, 1), closeTo(1.0, 0.001));
+        expect(
+          tester.widget<Positioned>(barPillFinder).top!,
+          closeTo(restingBarTop, 0.001),
+        );
+        expect(
+          tester.widget<Positioned>(dockPillFinder).top!,
+          closeTo(restingDockTop, 0.001),
+        );
+      },
+    );
   });
 }

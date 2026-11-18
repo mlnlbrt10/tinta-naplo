@@ -203,9 +203,20 @@ void main() {
             ),
           ),
         );
-        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pumpAndSettle();
 
-        expect(find.text('Animált hátterek (kísérleti)'), findsOneWidget);
+        final appearanceTile = find.text('Megjelenés és UI');
+        await tester.ensureVisible(appearanceTile);
+        await tester.tap(appearanceTile);
+        await tester.pumpAndSettle();
+
+        final animatedHeader = find.text('Animált hátterek (kísérleti)');
+        await tester.scrollUntilVisible(
+          animatedHeader,
+          200.0,
+          scrollable: find.byType(Scrollable).last,
+        );
+        expect(animatedHeader, findsOneWidget);
 
         for (final preset in [
           AnimatedBackdropPreset.gyroLiquidHorizon,

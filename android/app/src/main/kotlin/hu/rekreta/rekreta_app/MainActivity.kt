@@ -39,7 +39,9 @@ open class MainActivity : FlutterActivity() {
         private const val UPDATER_CHANNEL_NAME = "hu.rekreta.rekreta_app/updater"
         private const val CALENDAR_CHANNEL_NAME = "tinta_naplo/calendar_sync"
         private const val WEAR_SYNC_CHANNEL_NAME = "hu.rekreta.rekreta_app/wear_sync"
+        private const val HOME_WIDGET_CHANNEL_NAME = "hu.rekreta.rekreta_app/home_widget"
         private const val CALENDAR_PERMISSION_REQUEST_CODE = 4208
+        private const val LIVE_ACTIVITY_PERMISSION_REQUEST_CODE = 4209
 
         const val EXTRA_WEAR_AUTH_REQUEST = "extra_wear_auth_request"
 
@@ -204,15 +206,34 @@ open class MainActivity : FlutterActivity() {
     }
 
     private var wearSyncChannel: MethodChannel? = null
+    private var homeWidgetChannel: MethodChannel? = null
+    private var pendingLiveActivityPermissionResult: MethodChannel.Result? = null
+    private var pendingOpenTimetableTab: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         inspectAndConsumeWearAuthIntent(intent)
+        inspectAndConsumeHomeWidgetIntent(intent, fromNewIntent = false)
         super.onCreate(savedInstanceState)
     }
 
     override fun onNewIntent(intent: Intent) {
         inspectAndConsumeWearAuthIntent(intent)
+        inspectAndConsumeHomeWidgetIntent(intent, fromNewIntent = true)
         super.onNewIntent(intent)
+    }
+
+    private fun inspectAndConsumeHomeWidgetIntent(incoming: Intent?, fromNewIntent: Boolean) {
+        if (incoming == null) return
+        val tab = incoming.getStringExtra(TintaLiveLessonResolver.EXTRA_OPEN_TAB)
+        if (tab == TintaLiveLessonResolver.TAB_TIMETABLE) {
+            incoming.removeExtra(TintaLiveLessonResolver.EXTRA_OPEN_TAB)
+            val activeChannel = homeWidgetChannel
+            if (fromNewIntent && activeChannel != null) {
+                activeChannel.invokeMethod("openTimetableTab", null)
+            } else {
+                pendingOpenTimetableTab = true
+            }
+        }
     }
 
     private fun inspectAndConsumeWearAuthIntent(incoming: Intent?) {
@@ -237,6 +258,7 @@ open class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         ensureNotificationChannel(applicationContext)
+        TintaLiveActivityManager.ensureChannel(applicationContext)
 
         val iconHandler = MethodChannel.MethodCallHandler { call, result ->
             handleIconMethodCall(call, result)
@@ -293,6 +315,98 @@ open class MainActivity : FlutterActivity() {
         }
         WearSessionBridge.registerAuthRequestListener {
             wearSyncChannel?.invokeMethod("onWatchAuthRequested", null)
+        }
+
+        val widgetChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            HOME_WIDGET_CHANNEL_NAME,
+        )
+        homeWidgetChannel = widgetChannel
+        widgetChannel.setMethodCallHandler { call, result ->
+            handleHomeWidgetMethodCall(call, result)
+        }
+    }
+
+    private fun handleHomeWidgetMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "syncTimetableData" -> {
+                val args = call.arguments as? Map<*, *>
+                val json = args?.get("timetableJson")?.toString()
+                if (json.isNullOrBlank()) {
+                    result.success(false)
+                    return
+                }
+                val accent = (args["accentColorArgb"] as? Number)?.toInt()
+                val liveEnabled = args["liveActivityEnabled"] as? Boolean
+                val updatedAt = (args["updatedAtMs"] as? Number)?.toLong()
+                TintaLiveLessonResolver.saveTimetableData(
+                    context = applicationContext,
+                    timetableJson = json,
+                    accentColorArgb = accent,
+                    liveActivityEnabled = liveEnabled,
+                    updatedAtMs = updatedAt,
+                )
+                TintaLiveTickReceiver.triggerBroadcastUpdate(applicationContext)
+                result.success(true)
+            }
+            "setLiveActivityEnabled" -> {
+                val args = call.arguments as? Map<*, *>
+                val enabled = args?.get("enabled") as? Boolean ?: false
+                val requestPermission = args?.get("requestPermission") as? Boolean ?: true
+                if (!enabled) {
+                    TintaLiveLessonResolver.setLiveActivityEnabled(applicationContext, false)
+                    TintaLiveActivityManager.dismiss(applicationContext)
+                    TintaLiveTickReceiver.triggerBroadcastUpdate(applicationContext)
+                    result.success(true)
+                    return
+                }
+                val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    ContextCompat.checkSelfPermission(
+                        this,
+                        Manifest.permission.POST_NOTIFICATIONS,
+                    ) == PackageManager.PERMISSION_GRANTED
+                } else {
+                    true
+                }
+                if (granted) {
+                    TintaLiveLessonResolver.setLiveActivityEnabled(applicationContext, true)
+                    TintaLiveTickReceiver.triggerBroadcastUpdate(applicationContext)
+                    result.success(true)
+                } else if (!requestPermission) {
+                    result.success(false)
+                } else {
+                    if (pendingLiveActivityPermissionResult != null) {
+                        result.error("PERMISSION_IN_PROGRESS", "Notification permission request already in progress", null)
+                        return
+                    }
+                    pendingLiveActivityPermissionResult = result
+                    ActivityCompat.requestPermissions(
+                        this,
+                        arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                        LIVE_ACTIVITY_PERMISSION_REQUEST_CODE,
+                    )
+                }
+            }
+            "refreshLiveUpdateNow" -> {
+                TintaLiveTickReceiver.triggerBroadcastUpdate(applicationContext)
+                result.success(true)
+            }
+            "canPostPromotedNotifications" -> {
+                result.success(
+                    TintaLiveActivityManager.canPostPromotedNotifications(applicationContext),
+                )
+            }
+            "openPromotedNotificationSettings" -> {
+                result.success(
+                    TintaLiveActivityManager.openPromotedNotificationSettings(this),
+                )
+            }
+            "consumePendingOpenTimetableTab" -> {
+                val pending = pendingOpenTimetableTab
+                pendingOpenTimetableTab = false
+                result.success(pending)
+            }
+            else -> result.notImplemented()
         }
     }
 
@@ -571,12 +685,24 @@ open class MainActivity : FlutterActivity() {
                         return
                     }
 
-                    // 3. Fallback to package launcher intent with pre-populated route search extras
+                    // 3. Fallback to package launcher intent with pre-populated deep-link URI & route search extras
                     val launchIntent = pm.getLaunchIntentForPackage(MENETRENDGO_PACKAGE)
                     if (launchIntent != null) {
                         populateExtras(launchIntent)
+                        candidateUris.firstOrNull()?.let { launchIntent.data = Uri.parse(it) }
                         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                        startActivity(launchIntent)
+                        try {
+                            startActivity(launchIntent)
+                        } catch (_: Exception) {
+                            val plainLaunch = pm.getLaunchIntentForPackage(MENETRENDGO_PACKAGE)
+                            if (plainLaunch != null) {
+                                populateExtras(plainLaunch)
+                                plainLaunch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                                startActivity(plainLaunch)
+                            } else {
+                                throw IllegalStateException("MenetrendGO launch intent missing")
+                            }
+                        }
                         result.success(true)
                     } else {
                         val fallbackIntent =
@@ -654,6 +780,24 @@ open class MainActivity : FlutterActivity() {
             val pending = pendingCalendarPermissionResult
             pendingCalendarPermissionResult = null
             pending?.success(hasCalendarPermissions())
+        } else if (requestCode == LIVE_ACTIVITY_PERMISSION_REQUEST_CODE) {
+            val pending = pendingLiveActivityPermissionResult
+            pendingLiveActivityPermissionResult = null
+            val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) == PackageManager.PERMISSION_GRANTED
+            } else {
+                true
+            }
+            TintaLiveLessonResolver.setLiveActivityEnabled(applicationContext, granted)
+            if (granted) {
+                TintaLiveTickReceiver.triggerBroadcastUpdate(applicationContext)
+            } else {
+                TintaLiveActivityManager.dismiss(applicationContext)
+            }
+            pending?.success(granted)
         }
     }
 

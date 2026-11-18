@@ -908,6 +908,14 @@ class _GradesScreenState extends State<GradesScreen>
       curve: Curves.easeOutCubic,
     );
     unawaited(_restorePersistedSortMode());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(
+        AppProvidersScope.maybeOf(context)
+            ?.settings
+            .ingestGrades(widget.allGrades),
+      );
+    });
     if (widget.isActiveTab) {
       _armInitialEntrance();
     }
@@ -1179,7 +1187,10 @@ class _GradesScreenState extends State<GradesScreen>
         displacement: 44,
         edgeOffset: 8,
         strokeWidth: 2.6,
-        onRefresh: widget.onRefresh,
+        onRefresh: () async {
+          AppProvidersScope.maybeOf(context)?.settings.clearAllGradeGlows();
+          await widget.onRefresh();
+        },
         child: CustomScrollView(
           physics: const BouncingScrollPhysics(
             parent: AlwaysScrollableScrollPhysics(),
@@ -1750,135 +1761,160 @@ class _GradesScreenState extends State<GradesScreen>
     );
 
     final subjectHeroTag = summary.uniqueHeroTag;
+    final settings = AppProvidersScope.maybeOf(context)?.settings;
+    final glowAccent = customColor ??
+        (roundedStanding != null
+            ? OledTheme.gradeColor(roundedStanding, widget.prefs)
+            : scheme.primary);
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: TactileBounce(
-        pressedScale: 0.97,
-        onTap: () {
-          Navigator.of(context).push(
-            SmoothSharedAxisRoute(
-              page: SubjectGradesDetailScreen(
-                summary: summary,
-                allSubjects: allSubjects,
-                prefs: widget.prefs,
-                onPrefsChanged: widget.onPrefsChanged,
-              ),
-            ),
-          );
-        },
-        child: Hero(
-          tag: subjectHeroTag,
-          child: Material(
-            type: MaterialType.transparency,
-            child: ChristmasSnowCap(
-              enabled: widget.prefs.christmasModeEnabled,
-              child: SoftGlassCard(
-                prefs: widget.prefs,
-                padding: const EdgeInsets.all(16),
-                borderRadius: OledTheme.cardRadius,
-                border: Border.all(
-                  color: customColor != null
-                      ? customColor.withValues(alpha: 0.65)
-                      : theme.dividerColor,
+    Widget buildTile(bool isGlowing) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: TactileBounce(
+          pressedScale: 0.97,
+          onTap: () {
+            Navigator.of(context).push(
+              SmoothSharedAxisRoute(
+                page: SubjectGradesDetailScreen(
+                  summary: summary,
+                  allSubjects: allSubjects,
+                  prefs: widget.prefs,
+                  onPrefsChanged: widget.onPrefsChanged,
                 ),
-                child: SingleChildScrollView(
-                  physics: const NeverScrollableScrollPhysics(),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              displaySubjectName,
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w800,
-                                color: scheme.onSurface,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 4,
-                              crossAxisAlignment: WrapCrossAlignment.center,
+              ),
+            );
+          },
+          child: Hero(
+            tag: subjectHeroTag,
+            child: Material(
+              type: MaterialType.transparency,
+              child: ChristmasSnowCap(
+                enabled: widget.prefs.christmasModeEnabled,
+                child: GradeFirstSeenGlow(
+                  isGlowing: isGlowing,
+                  accentColor: glowAccent,
+                  borderRadius: OledTheme.cardRadius,
+                  child: SoftGlassCard(
+                    prefs: widget.prefs,
+                    padding: const EdgeInsets.all(16),
+                    borderRadius: OledTheme.cardRadius,
+                    border: Border.all(
+                      color: customColor != null
+                          ? customColor.withValues(alpha: 0.65)
+                          : theme.dividerColor,
+                    ),
+                    child: SingleChildScrollView(
+                      physics: const NeverScrollableScrollPhysics(),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 4,
+                                Text(
+                                  displaySubjectName,
+                                  style: theme.textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w800,
+                                    color: scheme.onSurface,
                                   ),
-                                  decoration: BoxDecoration(
-                                    color: standingColor.withValues(alpha: 0.2),
-                                    borderRadius: BorderRadius.circular(22),
-                                    border: Border.all(
-                                      color: standingColor.withValues(
-                                        alpha: 0.65,
+                                ),
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 4,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 4,
                                       ),
-                                    ),
-                                  ),
-                                  child: avg != null
-                                      ? AnimatedNumberText(
-                                          value: avg,
-                                          fractionDigits: 2,
-                                          prefix: 'Átlag: ',
-                                          style: theme.textTheme.labelSmall
-                                              ?.copyWith(
-                                            color: scheme.onSurface,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        )
-                                      : Text(
-                                          'Átlag: $avgText',
-                                          style: theme.textTheme.labelSmall
-                                              ?.copyWith(
-                                            color: scheme.onSurface,
-                                            fontWeight: FontWeight.w700,
+                                      decoration: BoxDecoration(
+                                        color:
+                                            standingColor.withValues(alpha: 0.2),
+                                        borderRadius: BorderRadius.circular(22),
+                                        border: Border.all(
+                                          color: standingColor.withValues(
+                                            alpha: 0.65,
                                           ),
                                         ),
-                                ),
-                                Text(
-                                  '${summary.grades.length} db jegy',
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color:
-                                        scheme.onSurface.withValues(alpha: 0.6),
-                                  ),
+                                      ),
+                                      child: avg != null
+                                          ? AnimatedNumberText(
+                                              value: avg,
+                                              fractionDigits: 2,
+                                              prefix: 'Átlag: ',
+                                              style: theme.textTheme.labelSmall
+                                                  ?.copyWith(
+                                                color: scheme.onSurface,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            )
+                                          : Text(
+                                              'Átlag: $avgText',
+                                              style: theme.textTheme.labelSmall
+                                                  ?.copyWith(
+                                                color: scheme.onSurface,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                    ),
+                                    Text(
+                                      '${summary.grades.length} db jegy',
+                                      style:
+                                          theme.textTheme.labelSmall?.copyWith(
+                                        color: scheme.onSurface
+                                            .withValues(alpha: 0.6),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Container(
-                        width: 44,
-                        height: 44,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: standingColor,
-                          borderRadius: OledTheme.badgeRadius,
-                        ),
-                        child: Text(
-                          standingText,
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w900,
                           ),
-                        ),
+                          const SizedBox(width: 12),
+                          Container(
+                            width: 44,
+                            height: 44,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: standingColor,
+                              borderRadius: OledTheme.badgeRadius,
+                            ),
+                            child: Text(
+                              standingText,
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            color: scheme.onSurface.withValues(alpha: 0.54),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                      Icon(
-                        Icons.chevron_right_rounded,
-                        color: scheme.onSurface.withValues(alpha: 0.54),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ),
             ),
           ),
         ),
+      );
+    }
+
+    if (settings == null) {
+      return buildTile(false);
+    }
+
+    return ListenableBuilder(
+      listenable: settings,
+      builder: (_, __) => buildTile(
+        settings.hasGlowingGradesForSubject(summary.grades),
       ),
     );
   }
@@ -4061,116 +4097,195 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
     final modeText = grade.mode?.description;
     final teacherDisplay = _prefs.resolveTeacherName(grade.teacher);
     final heroTag = 'subj_grade_${grade.uid}';
+    final settings = AppProvidersScope.maybeOf(context)?.settings;
+    final isMinimalist = (settings?.prefs ?? _prefs).minimalistModeEnabled;
+    final evalTypeText = (modeText != null && modeText.trim().isNotEmpty)
+        ? modeText.trim()
+        : grade.type.description;
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: TactileBounce(
-        pressedScale: 0.97,
-        onTap: () => showGradeInspectionModal(
-          context,
-          grade,
-          heroTag: heroTag,
-          prefs: _prefs,
-        ),
-        child: SoftGlassCard(
-          prefs: _prefs,
-          padding: const EdgeInsets.all(16),
-          borderRadius: OledTheme.cardRadius,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Hero(
-                tag: heroTag,
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: Container(
-                    width: 48,
-                    height: 48,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: badgeColor,
-                      borderRadius: OledTheme.badgeRadius,
-                    ),
-                    child: Text(
-                      badgeText,
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
+    Widget buildCard(bool isGlowing) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: TactileBounce(
+          pressedScale: 0.97,
+          onTap: () {
+            settings?.dismissGradeGlow(grade);
+            showGradeInspectionModal(
+              context,
+              grade,
+              heroTag: heroTag,
+              prefs: _prefs,
+            );
+          },
+          child: GradeFirstSeenGlow(
+            isGlowing: isGlowing,
+            accentColor: badgeColor,
+            borderRadius: OledTheme.cardRadius,
+            child: SoftGlassCard(
+              prefs: _prefs,
+              padding: const EdgeInsets.all(16),
+              borderRadius: OledTheme.cardRadius,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Hero(
+                    tag: heroTag,
+                    child: Material(
+                      type: MaterialType.transparency,
+                      child: Container(
+                        width: 48,
+                        height: 48,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: badgeColor,
+                          borderRadius: OledTheme.badgeRadius,
+                        ),
+                        child: Text(
+                          badgeText,
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: isMinimalist
+                          ? [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      evalTypeText,
+                                      style:
+                                          theme.textTheme.titleSmall?.copyWith(
+                                        fontWeight: FontWeight.w800,
+                                        color: scheme.onSurface,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    _dateFormat.format(grade.recordedAt.toLocal()),
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: scheme.onSurface
+                                          .withValues(alpha: 0.65),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.person_outline_rounded,
+                                    size: 14,
+                                    color:
+                                        scheme.onSurface.withValues(alpha: 0.54),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      teacherDisplay.isNotEmpty
+                                          ? teacherDisplay
+                                          : 'Ismeretlen tanár',
+                                      style:
+                                          theme.textTheme.labelSmall?.copyWith(
+                                        color: scheme.onSurface
+                                            .withValues(alpha: 0.72),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ]
+                          : [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      '${grade.strValue} ($weightText)',
+                                      style:
+                                          theme.textTheme.titleSmall?.copyWith(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                  Text(
+                                    _dateFormat.format(grade.recordDate.toLocal()),
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: scheme.onSurface
+                                          .withValues(alpha: 0.6),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                [
+                                  grade.type.description,
+                                  if (modeText != null && modeText.isNotEmpty)
+                                    modeText,
+                                ].join(' • '),
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: scheme.primary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              if (grade.topic != null &&
+                                  grade.topic!.trim().isNotEmpty) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Téma: ${grade.topic}',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: scheme.onSurface,
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.person_outline_rounded,
+                                    size: 14,
+                                    color:
+                                        scheme.onSurface.withValues(alpha: 0.54),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      teacherDisplay,
+                                      style:
+                                          theme.textTheme.labelSmall?.copyWith(
+                                        color: scheme.onSurface
+                                            .withValues(alpha: 0.65),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '${grade.strValue} ($weightText)',
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          _dateFormat.format(grade.recordDate.toLocal()),
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.onSurface.withValues(alpha: 0.6),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      [
-                        grade.type.description,
-                        if (modeText != null && modeText.isNotEmpty) modeText,
-                      ].join(' • '),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: scheme.primary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    if (grade.topic != null &&
-                        grade.topic!.trim().isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        'Téma: ${grade.topic}',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurface,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.person_outline_rounded,
-                          size: 14,
-                          color: scheme.onSurface.withValues(alpha: 0.54),
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            teacherDisplay,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: scheme.onSurface.withValues(alpha: 0.65),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            ),
           ),
         ),
-      ),
+      );
+    }
+
+    if (settings == null) {
+      return buildCard(false);
+    }
+
+    return ListenableBuilder(
+      listenable: settings,
+      builder: (_, __) => buildCard(settings.isGradeGlowing(grade)),
     );
   }
 }

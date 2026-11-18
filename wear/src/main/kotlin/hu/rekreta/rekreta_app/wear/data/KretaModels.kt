@@ -3,6 +3,7 @@ package hu.rekreta.rekreta_app.wear.data
 import org.json.JSONArray
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
+import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -18,7 +19,10 @@ object JwtPayloadDecoder {
         val parts = jwt.split('.')
         if (parts.size < 2) return JSONObject()
         return runCatching {
-            val payloadBytes = urlDecoder.decode(parts[1])
+            val rawPayload = parts[1]
+            val rem = rawPayload.length % 4
+            val padded = if (rem == 0) rawPayload else rawPayload + "=".repeat(4 - rem)
+            val payloadBytes = urlDecoder.decode(padded)
             JSONObject(String(payloadBytes, StandardCharsets.UTF_8))
         }.getOrDefault(JSONObject())
     }
@@ -631,18 +635,47 @@ data class TimetableStatus(
     val currentLesson: Lesson?,
     val nextLesson: Lesson?,
     val upcomingLessons: List<Lesson>,
+    val phaseStartEpochMs: Long? = null,
+    val phaseEndEpochMs: Long? = null,
+) {
+    fun remainingMillisAt(nowEpochMs: Long): Long? {
+        val endMs = phaseEndEpochMs ?: return remainingMillis
+        return (endMs - nowEpochMs).coerceAtLeast(0L)
+    }
+
+    fun remainingFractionAt(nowEpochMs: Long): Float {
+        val startMs = phaseStartEpochMs ?: return remainingFraction
+        val endMs = phaseEndEpochMs ?: return remainingFraction
+        val total = (endMs - startMs).coerceAtLeast(1L)
+        return ((endMs - nowEpochMs).toDouble() / total.toDouble()).toFloat().coerceIn(0f, 1f)
+    }
+}
+
+data class RolloverTimetableState(
+    val todayStatus: TimetableStatus,
+    val isRolledOverToNextDay: Boolean,
+    val displayDate: LocalDate,
+    val displayDayPillLabel: String,
+    val page1DayBadgeLabel: String?,
+    val displayLessons: List<Lesson>,
+    val previewFirstLesson: Lesson?,
+    val previewSecondLesson: Lesson?,
 )
 
 object TimetableStatusEvaluator {
     private const val PRE_SCHOOL_WINDOW_MS = 60L * 60_000L
 
+    @JvmOverloads
     fun evaluate(
         lessons: List<Lesson>,
         nowEpochMs: Long = System.currentTimeMillis(),
+        zoneId: ZoneId = ZoneId.systemDefault(),
     ): TimetableStatus {
-        val active = lessons.filter { !it.isCancelled }.sortedBy { it.startEpochMs }
+        val sampleDate = KretaDateParser.localDateFor(nowEpochMs, zoneId)
+        val todaysLessons = lessons.filter { KretaDateParser.isSameLocalDay(it.startEpochMs, sampleDate, zoneId) }
+        val active = todaysLessons.filter { !it.isCancelled }.sortedBy { it.startEpochMs }
         if (active.isEmpty()) {
-            val allCancelled = lessons.isNotEmpty()
+            val allCancelled = todaysLessons.isNotEmpty()
             return TimetableStatus(
                 phase = if (allCancelled) TimetablePhase.AFTER_SCHOOL else TimetablePhase.NO_CLASSES_TODAY,
                 badgeLabel = "Ma",
@@ -676,6 +709,8 @@ object TimetableStatusEvaluator {
                     currentLesson = lesson,
                     nextLesson = upcoming.firstOrNull(),
                     upcomingLessons = upcoming,
+                    phaseStartEpochMs = lesson.startEpochMs,
+                    phaseEndEpochMs = lesson.endEpochMs,
                 )
             }
         }
@@ -697,6 +732,8 @@ object TimetableStatusEvaluator {
                 currentLesson = null,
                 nextLesson = first,
                 upcomingLessons = upcoming,
+                phaseStartEpochMs = first.startEpochMs - PRE_SCHOOL_WINDOW_MS,
+                phaseEndEpochMs = first.startEpochMs,
             )
         }
 
@@ -720,6 +757,8 @@ object TimetableStatusEvaluator {
                 currentLesson = null,
                 nextLesson = next,
                 upcomingLessons = upcomingAfterNext,
+                phaseStartEpochMs = prev.endEpochMs,
+                phaseEndEpochMs = next.startEpochMs,
             )
         }
 
@@ -735,6 +774,94 @@ object TimetableStatusEvaluator {
             currentLesson = null,
             nextLesson = null,
             upcomingLessons = emptyList(),
+        )
+    }
+
+    @JvmOverloads
+    fun millisUntilNextTransition(
+        lessons: List<Lesson>,
+        nowEpochMs: Long = System.currentTimeMillis(),
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): Long {
+        val nextMidnightMs = KretaDateParser.localDateFor(nowEpochMs, zoneId)
+            .plusDays(1)
+            .atStartOfDay(zoneId)
+            .toInstant()
+            .toEpochMilli()
+        val nextLessonBoundary = lessons
+            .asSequence()
+            .filter { !it.isCancelled }
+            .flatMap { sequenceOf(it.startEpochMs, it.endEpochMs) }
+            .filter { it > nowEpochMs }
+            .minOrNull()
+        val target = if (nextLessonBoundary != null) {
+            minOf(nextLessonBoundary, nextMidnightMs)
+        } else {
+            nextMidnightMs
+        }
+        return ((target - nowEpochMs) + 50L).coerceIn(500L, 60L * 60_000L)
+    }
+
+    @JvmOverloads
+    fun evaluateWithRollover(
+        lessons: List<Lesson>,
+        nowEpochMs: Long = System.currentTimeMillis(),
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): RolloverTimetableState {
+        val todayDate = KretaDateParser.localDateFor(nowEpochMs, zoneId)
+        val todayStatus = evaluate(lessons, nowEpochMs, zoneId)
+        val todaysLessons = lessons
+            .filter { KretaDateParser.isSameLocalDay(it.startEpochMs, todayDate, zoneId) }
+            .sortedBy { it.startEpochMs }
+
+        val todayEnded = todayStatus.phase == TimetablePhase.AFTER_SCHOOL ||
+            todayStatus.phase == TimetablePhase.NO_CLASSES_TODAY
+
+        if (todayEnded) {
+            val futureByDate = lessons
+                .mapNotNull { lesson ->
+                    val lessonDate = KretaDateParser.localDateFor(lesson.startEpochMs, zoneId)
+                    if (lessonDate.isAfter(todayDate)) lessonDate to lesson else null
+                }
+                .groupBy({ it.first }, { it.second })
+                .toSortedMap()
+
+            val nextSchoolEntry = futureByDate.entries.firstOrNull { (_, dayLessons) ->
+                dayLessons.any { !it.isCancelled }
+            } ?: futureByDate.entries.firstOrNull()
+
+            if (nextSchoolEntry != null) {
+                val nextDate = nextSchoolEntry.key
+                val nextDayLessons = nextSchoolEntry.value.sortedBy { it.startEpochMs }
+                val nonCancelled = nextDayLessons.filter { !it.isCancelled }
+                val isTomorrow = nextDate == todayDate.plusDays(1)
+                val weekday = KretaDateParser.weekdayNameHu(nextDate)
+                return RolloverTimetableState(
+                    todayStatus = todayStatus,
+                    isRolledOverToNextDay = true,
+                    displayDate = nextDate,
+                    displayDayPillLabel = if (isTomorrow) {
+                        "Holnap • $weekday"
+                    } else {
+                        "$weekday • ${KretaDateParser.formatMonthDay(nextDate)}"
+                    },
+                    page1DayBadgeLabel = if (isTomorrow) "Holnap" else weekday,
+                    displayLessons = nextDayLessons,
+                    previewFirstLesson = nonCancelled.firstOrNull(),
+                    previewSecondLesson = nonCancelled.drop(1).firstOrNull(),
+                )
+            }
+        }
+
+        return RolloverTimetableState(
+            todayStatus = todayStatus,
+            isRolledOverToNextDay = false,
+            displayDate = todayDate,
+            displayDayPillLabel = "Ma • ${KretaDateParser.weekdayNameHu(todayDate)}",
+            page1DayBadgeLabel = null,
+            displayLessons = todaysLessons,
+            previewFirstLesson = null,
+            previewSecondLesson = null,
         )
     }
 
@@ -767,6 +894,21 @@ object KretaDateParser {
 
     fun formatMonthDay(epochMs: Long, zoneId: ZoneId = ZoneId.systemDefault()): String =
         Instant.ofEpochMilli(epochMs).atZone(zoneId).toLocalDate().format(monthDayFormatter)
+
+    fun formatMonthDay(date: LocalDate): String = date.format(monthDayFormatter)
+
+    fun localDateFor(epochMs: Long, zoneId: ZoneId = ZoneId.systemDefault()): LocalDate =
+        Instant.ofEpochMilli(epochMs).atZone(zoneId).toLocalDate()
+
+    fun weekdayNameHu(date: LocalDate): String = when (date.dayOfWeek) {
+        DayOfWeek.MONDAY -> "Hétfő"
+        DayOfWeek.TUESDAY -> "Kedd"
+        DayOfWeek.WEDNESDAY -> "Szerda"
+        DayOfWeek.THURSDAY -> "Csütörtök"
+        DayOfWeek.FRIDAY -> "Péntek"
+        DayOfWeek.SATURDAY -> "Szombat"
+        DayOfWeek.SUNDAY -> "Vasárnap"
+    }
 
     fun dateKeyFor(epochMs: Long = System.currentTimeMillis(), zoneId: ZoneId = ZoneId.systemDefault()): String =
         Instant.ofEpochMilli(epochMs).atZone(zoneId).toLocalDate().toString()

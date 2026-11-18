@@ -702,8 +702,9 @@ class BreakPerimeterCountdownPainter extends CustomPainter {
 }
 
 /// Dedicated glowing full-perimeter Break (`Szünet`) card rendered between
-/// consecutive lessons during an active break. Applies a clipped `14px` frosted
-/// `BackdropFilter` when Liquid Glass mode is enabled and omits blur in Material mode.
+/// consecutive lessons during an active break. Uses a 120Hz GPU-friendly
+/// multi-stop Liquid Glass gradient surface wrapped in [RepaintBoundary] when
+/// Liquid Glass mode is enabled (zero per-item BackdropFilter stalls).
 class BreakCountdownCard extends StatelessWidget {
   final DateTime breakStart;
   final DateTime breakEnd;
@@ -733,11 +734,29 @@ class BreakCountdownCard extends StatelessWidget {
     final effectivePrefs =
         prefs ?? AppProvidersScope.maybeOf(context)?.settings.prefs;
     final liquidGlass = resolveLiquidGlassEnabled(effectivePrefs);
-    final fill = liquidGlass
-        ? (isDark
-            ? Colors.black.withValues(alpha: 0.46)
-            : scheme.surfaceContainerHigh.withValues(alpha: 0.62))
-        : scheme.surfaceContainerHigh.withValues(alpha: isDark ? 0.92 : 0.98);
+    final solidFill =
+        scheme.surfaceContainerHigh.withValues(alpha: isDark ? 0.92 : 0.98);
+    final glassGradient = isDark
+        ? LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            stops: const [0.0, 0.38, 1.0],
+            colors: [
+              Colors.white.withValues(alpha: 0.09),
+              const Color(0xFF141820).withValues(alpha: 0.56),
+              const Color(0xFF0A0D13).withValues(alpha: 0.68),
+            ],
+          )
+        : LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            stops: const [0.0, 0.4, 1.0],
+            colors: [
+              Colors.white.withValues(alpha: 0.84),
+              scheme.surfaceContainerHigh.withValues(alpha: 0.62),
+              scheme.surfaceContainer.withValues(alpha: 0.72),
+            ],
+          );
 
     return RepaintBoundary(
       child: LiveCountdownProgressScope(
@@ -754,7 +773,19 @@ class BreakCountdownCard extends StatelessWidget {
           );
           final Widget body = Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            color: fill,
+            decoration: liquidGlass
+                ? BoxDecoration(
+                    gradient: glassGradient,
+                    border: Border(
+                      top: BorderSide(
+                        color: Colors.white.withValues(
+                          alpha: isDark ? 0.20 : 0.62,
+                        ),
+                        width: 0.85,
+                      ),
+                    ),
+                  )
+                : BoxDecoration(color: solidFill),
             child: Row(
               children: [
                 Container(
@@ -831,12 +862,7 @@ class BreakCountdownCard extends StatelessWidget {
 
           final Widget clippedSurface = ClipRRect(
             borderRadius: BorderRadius.circular(20),
-            child: liquidGlass
-                ? BackdropFilter(
-                    filter: ui.ImageFilter.blur(sigmaX: 14.0, sigmaY: 14.0),
-                    child: body,
-                  )
-                : body,
+            child: body,
           );
 
           return Container(

@@ -1,7 +1,7 @@
 name: rekreta_app
 description: Tinta Napló Mobile Flutter client using in-app WebView OAuth2 PKCE and kreta_api.
 publish_to: 'none'
-version: 1.1.1+13
+version: 1.2.0+15
 
 environment:
   sdk: ^3.11.0
@@ -42,9 +42,5 @@ flutter_launcher_icons:
 flutter:
   uses-material-design: true
   assets:
-    - assets/icon.png
     - assets/images/tinta_icon.png
-    - assets/icons/icon_normal.png
-    - assets/icons/icon_oled.png
-    - assets/icons/icon_christmas.png
-    - assets/icons/icon_christmas_oled.png
+    - assets/images/showcase/

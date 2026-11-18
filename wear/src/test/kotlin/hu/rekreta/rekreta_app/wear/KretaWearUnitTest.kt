@@ -1,5 +1,8 @@
 package hu.rekreta.rekreta_app.wear
 
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.SharedPreferences
 import hu.rekreta.rekreta_app.shared.KretaSharedConfig
 import hu.rekreta.rekreta_app.wear.auth.AuthSessionSynchronizer
 import hu.rekreta.rekreta_app.wear.data.AuthSessionPayload
@@ -10,6 +13,7 @@ import hu.rekreta.rekreta_app.wear.data.Homework
 import hu.rekreta.rekreta_app.wear.data.JwtPayloadDecoder
 import hu.rekreta.rekreta_app.wear.data.KretaWearApiClient
 import hu.rekreta.rekreta_app.wear.data.Lesson
+import hu.rekreta.rekreta_app.wear.data.SecureTokenStorage
 import hu.rekreta.rekreta_app.wear.data.StoredSession
 import hu.rekreta.rekreta_app.wear.data.TimetablePhase
 import hu.rekreta.rekreta_app.wear.data.TimetableStatusEvaluator
@@ -29,6 +33,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -76,9 +81,118 @@ private class InMemoryWearTokenStore : WearTokenStore {
         caches[accountKey] = CachedWearData(dateKey, syncedAtEpochMs, lessons, homeworks, grades)
     }
 
+    override fun saveWearDataCache(
+        accountKey: String,
+        dateKey: String,
+        lessons: List<Lesson>,
+        homeworks: List<Homework>,
+        grades: List<Grade>,
+        syncedAtEpochMs: Long,
+        studentName: String?,
+        studentUid: String?,
+        instituteName: String?,
+        instituteCode: String?,
+        schoolYearUid: String?,
+        userName: String?,
+    ) {
+        caches[accountKey] = CachedWearData(
+            dateKey = dateKey,
+            syncedAtEpochMs = syncedAtEpochMs,
+            lessons = lessons,
+            homeworks = homeworks,
+            grades = grades,
+            studentName = studentName,
+            studentUid = studentUid,
+            instituteName = instituteName,
+            instituteCode = instituteCode,
+            schoolYearUid = schoolYearUid,
+            userName = userName,
+        )
+    }
+
     override fun loadWearDataCache(accountKey: String, dateKey: String): CachedWearData? = caches[accountKey]
     override fun clearWearDataCache(accountKey: String) {
         caches.remove(accountKey)
+    }
+}
+
+private class InMemorySharedPreferences : SharedPreferences {
+    private val data = mutableMapOf<String, Any?>()
+
+    override fun getAll(): MutableMap<String, *> = data.toMutableMap()
+    override fun getString(key: String?, defValue: String?): String? =
+        (data[key] as? String) ?: defValue
+
+    @Suppress("UNCHECKED_CAST")
+    override fun getStringSet(key: String?, defValues: MutableSet<String>?): MutableSet<String>? =
+        (data[key] as? Set<String>)?.toMutableSet() ?: defValues
+
+    override fun getInt(key: String?, defValue: Int): Int = (data[key] as? Int) ?: defValue
+    override fun getLong(key: String?, defValue: Long): Long = (data[key] as? Long) ?: defValue
+    override fun getFloat(key: String?, defValue: Float): Float = (data[key] as? Float) ?: defValue
+    override fun getBoolean(key: String?, defValue: Boolean): Boolean = (data[key] as? Boolean) ?: defValue
+    override fun contains(key: String?): Boolean = data.containsKey(key)
+    override fun registerOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) {}
+    override fun unregisterOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) {}
+
+    override fun edit(): SharedPreferences.Editor = object : SharedPreferences.Editor {
+        private val pending = mutableMapOf<String, Any?>()
+        private var clearAll = false
+
+        override fun putString(key: String?, value: String?): SharedPreferences.Editor = apply {
+            if (key != null) pending[key] = value
+        }
+
+        override fun putStringSet(key: String?, values: MutableSet<String>?): SharedPreferences.Editor = apply {
+            if (key != null) pending[key] = values?.toSet()
+        }
+
+        override fun putInt(key: String?, value: Int): SharedPreferences.Editor = apply {
+            if (key != null) pending[key] = value
+        }
+
+        override fun putLong(key: String?, value: Long): SharedPreferences.Editor = apply {
+            if (key != null) pending[key] = value
+        }
+
+        override fun putFloat(key: String?, value: Float): SharedPreferences.Editor = apply {
+            if (key != null) pending[key] = value
+        }
+
+        override fun putBoolean(key: String?, value: Boolean): SharedPreferences.Editor = apply {
+            if (key != null) pending[key] = value
+        }
+
+        override fun remove(key: String?): SharedPreferences.Editor = apply {
+            if (key != null) pending[key] = null
+        }
+
+        override fun clear(): SharedPreferences.Editor = apply {
+            clearAll = true
+        }
+
+        override fun commit(): Boolean {
+            apply()
+            return true
+        }
+
+        override fun apply() {
+            if (clearAll) data.clear()
+            for ((k, v) in pending) {
+                if (v == null) data.remove(k) else data[k] = v
+            }
+        }
+    }
+}
+
+private class FakeWearContext(private val tempFilesDir: File) : ContextWrapper(null) {
+    private val prefsByName = mutableMapOf<String, InMemorySharedPreferences>()
+
+    override fun getApplicationContext(): Context = this
+    override fun getFilesDir(): File = tempFilesDir
+    override fun getSharedPreferences(name: String?, mode: Int): SharedPreferences {
+        val key = name ?: "default"
+        return prefsByName.getOrPut(key) { InMemorySharedPreferences() }
     }
 }
 
@@ -327,6 +441,20 @@ class KretaWearUnitTest {
         assertEquals(TimetablePhase.AFTER_SCHOOL, afterSchool.phase)
         assertEquals("Nincs több óra ma", afterSchool.titleLabel)
         assertTrue(afterSchool.upcomingLessons.isEmpty())
+
+        // Break between lesson 3 (ends 10:35) and lesson 4 (starts 10:45)
+        val duringBreak = TimetableStatusEvaluator.evaluate(lessons, at(10, 40))
+        assertEquals(TimetablePhase.BREAK, duringBreak.phase)
+        assertNull(duringBreak.currentLesson)
+        assertEquals("4. Történelem • A-102", duringBreak.nextLesson?.periodSubjectRoomBadge())
+        assertEquals(0.5f, duringBreak.remainingFraction, 0.001f)
+        assertEquals("5 perc hátra", TimetableStatusEvaluator.formatRemainingMinutesBadge(duringBreak.remainingMillis!!))
+
+        // Final lesson of the day (lesson 5) has no next lesson
+        val lastLesson = TimetableStatusEvaluator.evaluate(lessons, at(12, 0))
+        assertEquals(TimetablePhase.ACTIVE_LESSON, lastLesson.phase)
+        assertEquals("Angol", lastLesson.currentLesson?.displaySubject)
+        assertNull(lastLesson.nextLesson)
     }
 
     @Test
@@ -432,6 +560,295 @@ class KretaWearUnitTest {
             assertEquals("Fazekas Gimnázium", store.loadSession()?.instituteName)
         } finally {
             server.shutdown()
+        }
+    }
+
+    @Test
+    fun `TimetableStatusEvaluator evaluateWithRollover auto-advances after classes end and across weekend`() {
+        val zone = ZoneId.of("Europe/Budapest")
+        fun at(date: LocalDate, h: Int, m: Int): Long =
+            ZonedDateTime.of(date.year, date.monthValue, date.dayOfMonth, h, m, 0, 0, zone)
+                .toInstant()
+                .toEpochMilli()
+
+        val tuesday = LocalDate.of(2026, 11, 17)
+        val wednesday = LocalDate.of(2026, 11, 18)
+        val friday = LocalDate.of(2026, 11, 20)
+        val monday = LocalDate.of(2026, 11, 23)
+
+        val multiDayLessons = listOf(
+            Lesson("t1", tuesday.toString(), at(tuesday, 8, 0), at(tuesday, 8, 45), "Matematika", 1, "m", "Matematika", "B-204", null, null, null, "Megtartott", "Megtartott", null, false),
+            Lesson("t2", tuesday.toString(), at(tuesday, 8, 55), at(tuesday, 9, 40), "Történelem", 2, "h", "Történelem", "A-102", null, null, null, "Megtartott", "Megtartott", null, false),
+            Lesson("t3", tuesday.toString(), at(tuesday, 9, 50), at(tuesday, 10, 35), "Fizika", 3, "p", "Fizika", "B-101", null, null, null, "Elmaradt", "Elmaradt", null, false),
+            Lesson("w1", wednesday.toString(), at(wednesday, 8, 0), at(wednesday, 8, 45), "Ének", 1, "e", "Ének", "Z-1", null, null, null, "Elmaradt", "Elmaradt", null, false),
+            Lesson("w2", wednesday.toString(), at(wednesday, 8, 55), at(wednesday, 9, 40), "Irodalom", 2, "i", "Irodalom", "C-12", null, null, null, "Megtartott", "Megtartott", null, false),
+            Lesson("w3", wednesday.toString(), at(wednesday, 9, 50), at(wednesday, 10, 35), "Angol", 3, "a", "Angol", "C-14", null, null, null, "Megtartott", "Megtartott", null, false),
+            Lesson("f1", friday.toString(), at(friday, 8, 0), at(friday, 8, 45), "Kémia", 1, "k", "Kémia", "L-2", null, null, null, "Megtartott", "Megtartott", null, false),
+            Lesson("m1", monday.toString(), at(monday, 8, 0), at(monday, 8, 45), "Informatika", 1, "inf", "Informatika", "Inf-1", null, null, null, "Megtartott", "Megtartott", null, false),
+        )
+
+        // While Tuesday lesson 2 is still active -> stays on Tuesday
+        val duringTuesday = TimetableStatusEvaluator.evaluateWithRollover(multiDayLessons, at(tuesday, 9, 10), zone)
+        assertFalse(duringTuesday.isRolledOverToNextDay)
+        assertEquals(TimetablePhase.ACTIVE_LESSON, duringTuesday.todayStatus.phase)
+        assertEquals("Ma • Kedd", duringTuesday.displayDayPillLabel)
+        assertEquals(3, duringTuesday.displayLessons.size)
+        assertNull(duringTuesday.page1DayBadgeLabel)
+
+        // Right after Tuesday's last non-cancelled lesson ends (09:41) -> auto-advances to Wednesday
+        val afterTuesday = TimetableStatusEvaluator.evaluateWithRollover(multiDayLessons, at(tuesday, 9, 41), zone)
+        assertTrue(afterTuesday.isRolledOverToNextDay)
+        assertEquals(TimetablePhase.AFTER_SCHOOL, afterTuesday.todayStatus.phase)
+        assertEquals("Holnap", afterTuesday.page1DayBadgeLabel)
+        assertEquals("Holnap • Szerda", afterTuesday.displayDayPillLabel)
+        assertEquals("w2", afterTuesday.previewFirstLesson?.uid)
+        assertEquals("w3", afterTuesday.previewSecondLesson?.uid)
+        assertEquals(listOf("w1", "w2", "w3"), afterTuesday.displayLessons.map { it.uid })
+
+        // After Friday's classes -> rolls over across weekend to Monday
+        val afterFriday = TimetableStatusEvaluator.evaluateWithRollover(multiDayLessons, at(friday, 10, 0), zone)
+        assertTrue(afterFriday.isRolledOverToNextDay)
+        assertEquals("Hétfő", afterFriday.page1DayBadgeLabel)
+        assertEquals("Hétfő • 11. 23.", afterFriday.displayDayPillLabel)
+        assertEquals("m1", afterFriday.previewFirstLesson?.uid)
+
+        // On Sunday (no classes today) -> rolls over to Monday ("Holnap • Hétfő")
+        val sunday = LocalDate.of(2026, 11, 22)
+        val onSunday = TimetableStatusEvaluator.evaluateWithRollover(multiDayLessons, at(sunday, 14, 0), zone)
+        assertTrue(onSunday.isRolledOverToNextDay)
+        assertEquals(TimetablePhase.NO_CLASSES_TODAY, onSunday.todayStatus.phase)
+        assertEquals("Holnap", onSunday.page1DayBadgeLabel)
+        assertEquals("Holnap • Hétfő", onSunday.displayDayPillLabel)
+        assertEquals("m1", onSunday.previewFirstLesson?.uid)
+    }
+
+    @Test
+    fun `KretaWearApiClient refreshSession uses freshest persisted token and syncAll caches multi-day timetable`() = runTest {
+        val server = MockWebServer()
+        val expFuture = (System.currentTimeMillis() / 1000L) + 3600L
+        val freshJwt = fakeJwt(
+            mapOf(
+                "kreta:institute_code" to "klik035277001",
+                "kreta:user_name" to "71234567890",
+                "exp" to expFuture,
+            ),
+        )
+        val today = LocalDate.now()
+        val tomorrow = today.plusDays(1)
+        var observedRefreshToken: String? = null
+        var observedFrom: String? = null
+        var observedTo: String? = null
+
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path.orEmpty()
+                return when {
+                    path.startsWith("/connect/token") -> {
+                        val body = request.body.readUtf8()
+                        observedRefreshToken = body.split("&")
+                            .firstOrNull { it.startsWith("refresh_token=") }
+                            ?.substringAfter("refresh_token=")
+                        MockResponse()
+                            .setResponseCode(200)
+                            .setBody(
+                                JSONObject(
+                                    mapOf(
+                                        "access_token" to freshJwt,
+                                        "refresh_token" to "rt_rotated_next",
+                                        "id_token" to freshJwt,
+                                        "expires_in" to 3600,
+                                        "token_type" to "Bearer",
+                                    ),
+                                ).toString(),
+                            )
+                    }
+
+                    path.startsWith("/ellenorzo/v3/sajat/OrarendElemek") -> {
+                        observedFrom = request.requestUrl?.queryParameter("datumTol")
+                        observedTo = request.requestUrl?.queryParameter("datumIg")
+                        val array = JSONArray().apply {
+                            put(
+                                JSONObject(
+                                    mapOf(
+                                        "Uid" to "today_1",
+                                        "Datum" to "${today}T00:00:00Z",
+                                        "KezdetIdopont" to "${today}T08:00:00Z",
+                                        "VegIdopont" to "${today}T08:45:00Z",
+                                        "Nev" to "Matematika",
+                                        "Oraszam" to 1,
+                                        "Tantargy" to mapOf("Uid" to "m", "Nev" to "Matematika"),
+                                        "Allapot" to mapOf("Nev" to "Megtartott", "Leiras" to "Megtartott"),
+                                    ),
+                                ),
+                            )
+                            put(
+                                JSONObject(
+                                    mapOf(
+                                        "Uid" to "tomorrow_1",
+                                        "Datum" to "${tomorrow}T00:00:00Z",
+                                        "KezdetIdopont" to "${tomorrow}T08:00:00Z",
+                                        "VegIdopont" to "${tomorrow}T08:45:00Z",
+                                        "Nev" to "Biológia",
+                                        "Oraszam" to 1,
+                                        "Tantargy" to mapOf("Uid" to "b", "Nev" to "Biológia"),
+                                        "Allapot" to mapOf("Nev" to "Megtartott", "Leiras" to "Megtartott"),
+                                    ),
+                                ),
+                            )
+                        }
+                        MockResponse().setResponseCode(200).setBody(array.toString())
+                    }
+
+                    path.startsWith("/ellenorzo/v3/sajat/Ertekelesek") ->
+                        MockResponse().setResponseCode(200).setBody("[]")
+
+                    path.startsWith("/ellenorzo/v3/sajat/HaziFeladatok") ->
+                        MockResponse().setResponseCode(200).setBody("[]")
+
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
+        server.start()
+
+        try {
+            val baseUrl = server.url("/").toString().trimEnd('/')
+            val store = InMemoryWearTokenStore()
+            val staleSession = StoredSession(
+                accessToken = "old_access",
+                refreshToken = "rt_stale_in_memory",
+                idToken = "",
+                instituteCode = "klik035277001",
+                userName = "71234567890",
+                expiresAtEpochMs = 0L,
+                studentName = "Kovács Milán",
+                instituteName = "Fazekas Gimnázium",
+            )
+            val newerDiskSession = staleSession.copy(refreshToken = "rt_fresh_on_disk")
+            store.saveSession(newerDiskSession)
+
+            val client = KretaWearApiClient(
+                tokenStore = store,
+                idpBaseUrlOverride = baseUrl,
+                tenantBaseUrlOverride = baseUrl,
+            )
+
+            val refreshed = client.refreshSession(staleSession)
+            assertEquals("rt_fresh_on_disk", observedRefreshToken)
+            assertEquals("rt_rotated_next", refreshed.refreshToken)
+            assertEquals("Kovács Milán", refreshed.studentName)
+            assertEquals("Fazekas Gimnázium", refreshed.instituteName)
+
+            val synced = client.syncAll(refreshed, targetDate = today, zoneId = ZoneId.of("UTC"))
+            assertEquals(today.toString(), observedFrom)
+            assertEquals(today.plusDays(10).toString(), observedTo)
+            assertEquals(listOf("today_1", "tomorrow_1"), synced.lessons.map { it.uid })
+            assertEquals("Kovács Milán", synced.studentName)
+            assertTrue(synced.syncedAtEpochMs > 0L)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `SecureTokenStorage persists multi-day cache and metadata across dates and accountKey normalization`() {
+        val tempDir = Files.createTempDirectory("tinta_wear_cache_test").toFile()
+        try {
+            val context = FakeWearContext(tempDir)
+            val storage = SecureTokenStorage(context)
+            val session = StoredSession(
+                accessToken = "acc_1",
+                refreshToken = "rt_1",
+                idToken = "id_1",
+                instituteCode = "KLIK035277001",
+                userName = null,
+                expiresAtEpochMs = System.currentTimeMillis() + 3_600_000L,
+                studentName = "Nagy Anna",
+                studentUid = "stu_9",
+                instituteName = "Radnóti Gimnázium",
+                schoolYearUid = "2026",
+            )
+            storage.saveSession(session)
+
+            val zone = ZoneId.of("Europe/Budapest")
+            val day1 = LocalDate.of(2026, 11, 17)
+            val day2 = LocalDate.of(2026, 11, 18)
+            val lessons = listOf(
+                Lesson(
+                    "d1_1",
+                    day1.toString(),
+                    ZonedDateTime.of(2026, 11, 17, 8, 0, 0, 0, zone).toInstant().toEpochMilli(),
+                    ZonedDateTime.of(2026, 11, 17, 8, 45, 0, 0, zone).toInstant().toEpochMilli(),
+                    "Matematika",
+                    1,
+                    "m",
+                    "Matematika",
+                    "101",
+                    null,
+                    null,
+                    null,
+                    "Megtartott",
+                    "Megtartott",
+                    null,
+                    false,
+                ),
+                Lesson(
+                    "d2_1",
+                    day2.toString(),
+                    ZonedDateTime.of(2026, 11, 18, 8, 0, 0, 0, zone).toInstant().toEpochMilli(),
+                    ZonedDateTime.of(2026, 11, 18, 8, 45, 0, 0, zone).toInstant().toEpochMilli(),
+                    "Fizika",
+                    1,
+                    "f",
+                    "Fizika",
+                    "202",
+                    null,
+                    null,
+                    null,
+                    "Megtartott",
+                    "Megtartott",
+                    null,
+                    false,
+                ),
+            )
+
+            val initialKey = SecureTokenStorage.accountKeyFor(session)
+            assertEquals("klik035277001|default", initialKey)
+
+            storage.saveWearDataCache(
+                accountKey = initialKey,
+                dateKey = day1.toString(),
+                lessons = lessons,
+                homeworks = emptyList(),
+                grades = emptyList(),
+                syncedAtEpochMs = 123_456L,
+            )
+
+            // Cache file written on disk
+            assertTrue(File(tempDir, "wear_timetable_cache_v2.json").exists())
+
+            // Next day lookup still returns multi-day cached lessons + student metadata
+            val reloadedSameUser = storage.loadWearDataCache(initialKey, day2.toString())
+            assertNotNull(reloadedSameUser)
+            assertEquals(2, reloadedSameUser!!.lessons.size)
+            assertEquals(123_456L, reloadedSameUser.syncedAtEpochMs)
+            assertEquals("Nagy Anna", reloadedSameUser.studentName)
+            assertEquals("Radnóti Gimnázium", reloadedSameUser.instituteName)
+
+            // Even after userName resolves from JWT refresh, fallback recovers the cache
+            val updatedKey = SecureTokenStorage.accountKeyFor(session.copy(userName = "71234567890"))
+            val recoveredAfterUserResolved = storage.loadWearDataCache(updatedKey, day2.toString())
+            assertNotNull(recoveredAfterUserResolved)
+            assertEquals(listOf("d1_1", "d2_1"), recoveredAfterUserResolved!!.lessons.map { it.uid })
+
+            // Explicit logout clears session and cache
+            storage.clearWearDataCache(initialKey)
+            storage.clearSession()
+            assertNull(storage.loadSession())
+            assertNull(storage.loadWearDataCache(initialKey, day2.toString()))
+            assertFalse(File(tempDir, "wear_timetable_cache_v2.json").exists())
+        } finally {
+            tempDir.deleteRecursively()
         }
     }
 }

@@ -63,12 +63,13 @@ class _LiquidPillMotionScope extends InheritedWidget {
       oldWidget.rippleOrigin != rippleOrigin;
 }
 
-/// Shared underdamped liquid spring parameters (~380–400ms settling) used by
-/// the floating bottom dock, weekday selector, and filter tab bars.
+/// Shared lively underdamped liquid spring parameters (`dampingRatio ~ 0.64`)
+/// used by the floating bottom dock, weekday selector, and filter tab bars so
+/// pills glide with fluid elastic overshoot and settle smoothly in-bounds.
 const SpringDescription kLiquidPillSpring = SpringDescription(
   mass: 1.0,
-  stiffness: 255.0,
-  damping: 17.5,
+  stiffness: 360.0,
+  damping: 24.5,
 );
 
 /// Paints an ultra-thin stadium-shaped optical glass rim tracing the outer pill
@@ -404,7 +405,7 @@ class LiquidGlassPillSurface extends StatelessWidget {
 /// [LiquidSpringPillTrack] and [LiquidBubbleTabBar].
 class _LiquidInteractivePhysics {
   static const double _maxOverscrollPx = 15.0;
-  static const double _maxVerticalPullPx = 10.5;
+  static const double _maxVerticalPullPx = 0.0;
 
   final TickerProvider vsync;
   final VoidCallback onScheduleUpdate;
@@ -430,6 +431,13 @@ class _LiquidInteractivePhysics {
   double _renderedPosY = 0.0;
   double _renderedVelY = 0.0;
   double _dragTargetPosY = 0.0;
+
+  bool _tapSlideActive = false;
+  double _tapSlideStartPos = 0.0;
+  double _tapSlideTargetPos = 0.0;
+  double _tapSlidePeakProgress = 0.0;
+  bool _arrivalReboundActive = false;
+  double _arrivalReboundT = 0.0;
 
   bool _isExternalFollowing = false;
   double _externalVelocity = 0.0;
@@ -527,6 +535,10 @@ class _LiquidInteractivePhysics {
       _renderedPosY = 0.0;
       _renderedVelY = 0.0;
       _dragTargetPosY = 0.0;
+      _tapSlideActive = false;
+      _tapSlidePeakProgress = 0.0;
+      _arrivalReboundActive = false;
+      _arrivalReboundT = 0.0;
       _snapTargetPos = pillAnim.value;
       _dragTargetPos = pillAnim.value;
       if (offsetYAnim.value != 0.0) {
@@ -645,16 +657,39 @@ class _LiquidInteractivePhysics {
       _renderedPosY += _renderedVelY * h;
     }
 
+    if (_tapSlideActive && !isInteracting) {
+      final span = (_tapSlideTargetPos - _tapSlideStartPos).abs();
+      if (span > 0.001) {
+        final rawProgress =
+            ((_renderedPos - _tapSlideStartPos).abs() / span).clamp(0.0, 1.0);
+        if (rawProgress > _tapSlidePeakProgress) {
+          _tapSlidePeakProgress = rawProgress;
+        }
+      } else {
+        _tapSlidePeakProgress = 1.0;
+      }
+      if (_tapSlidePeakProgress >= 0.72) {
+        _arrivalReboundActive = true;
+        _arrivalReboundT = (_arrivalReboundT + (rawDt / 0.18)).clamp(0.0, 1.0);
+      }
+    }
+
     final xSettled = (_renderedPos - targetX).abs() < 0.0005 &&
         _renderedVel.abs() < 0.002;
     final ySettled = (_renderedPosY - targetY).abs() < 0.02 &&
         _renderedVelY.abs() < 0.25;
+    final tapReboundSettled =
+        !_tapSlideActive || (_arrivalReboundActive && _arrivalReboundT >= 1.0);
 
-    if (!isInteracting && xSettled && ySettled) {
+    if (!isInteracting && xSettled && ySettled && tapReboundSettled) {
       _renderedPos = targetX;
       _renderedVel = 0.0;
       _renderedPosY = targetY;
       _renderedVelY = 0.0;
+      _tapSlideActive = false;
+      _tapSlidePeakProgress = 0.0;
+      _arrivalReboundActive = false;
+      _arrivalReboundT = 0.0;
       pillAnim.value = targetX;
       offsetYAnim.value = targetY;
       _stopPhysicsTicker();
@@ -865,10 +900,7 @@ class _LiquidInteractivePhysics {
   }
 
   double verticalPullAtDeltaY(double rawDy) {
-    if (!_liquidGlassEnabled || rawDy.abs() < 0.5) return 0.0;
-    return rawDy.sign *
-        _maxVerticalPullPx *
-        (1.0 - math.exp(-rawDy.abs() / 22.0));
+    return 0.0;
   }
 
   Matrix4 buildDropletTransform({
@@ -879,24 +911,57 @@ class _LiquidInteractivePhysics {
     if (!_liquidGlassEnabled) return Matrix4.identity();
     final holdScale = lerpDouble(1.0, pressScale, pressProgress)!;
     final velX = currentVelocity;
+    final stretchMult = _liquidGlassMode.stretchMultiplier.clamp(0.0, 1.08);
+
+    if (_tapSlideActive && !isInteracting && !_isExternalFollowing) {
+      final modeGain = switch (_liquidGlassMode) {
+        LiquidGlassMode.smokedObsidian => 0.45,
+        LiquidGlassMode.hydroMercury => 1.05,
+        _ => 1.0,
+      };
+      final double scaleX;
+      final double scaleY;
+      final double skewX;
+      if (!_arrivalReboundActive) {
+        // Phase 1 (0.0 -> 0.72 travel): fluid horizontal stretch up to ~1.085
+        // paired with vertical compression down to ~0.95 along strict X slide.
+        final u = (_tapSlidePeakProgress / 0.72).clamp(0.0, 1.0);
+        final travelArch = math.sin(math.pi * u);
+        scaleX = (1.0 + (0.085 * travelArch * modeGain)) * holdScale;
+        scaleY = (1.0 - (0.05 * travelArch * modeGain)) * holdScale;
+        final signedDir =
+            velX.abs() > 0.2 ? (velX / 10.0).clamp(-1.0, 1.0) : 0.0;
+        skewX = signedDir == 0.0
+            ? 0.0
+            : -signedDir * 0.026 * travelArch * modeGain;
+      } else {
+        // Phase 2 (0.72 -> 1.0 arrival settle): lively springy vertical liquid
+        // expansion (~1.055) while scaleX rebounds cleanly inside the bar.
+        final reboundCurve = math.sin(
+          math.pi * math.pow(_arrivalReboundT.clamp(0.0, 1.0), 0.78),
+        );
+        scaleX = (1.0 - (0.022 * reboundCurve * modeGain)) * holdScale;
+        scaleY = (1.0 + (0.055 * reboundCurve * modeGain)) * holdScale;
+        skewX = 0.0;
+      }
+      return Matrix4.diagonal3Values(scaleX, scaleY, 1.0)
+        ..setEntry(0, 1, skewX);
+    }
+
     final velXNorm = (velX.abs() / 10.0).clamp(0.0, 1.0);
     final edgeXPx = overscrollPxAtPos(pos);
     final edgeXNorm = (edgeXPx.abs() / _maxOverscrollPx).clamp(0.0, 1.0);
     final motionX = math.max(velXNorm, edgeXNorm * 0.65).clamp(0.0, 1.0);
 
-    final pullYNorm = (_renderedPosY.abs() / _maxVerticalPullPx).clamp(0.0, 1.0);
-    final velYNorm = (_renderedVelY.abs() / 180.0).clamp(0.0, 1.0);
-    final motionY = math.max(pullYNorm, velYNorm * 0.75).clamp(0.0, 1.0);
-
-    // Volume-preserving coupled 2D surface tension scaled by physical mode.
-    final stretchMult = _liquidGlassMode.stretchMultiplier;
-    final hStretch = 1.0 + ((motionX * 0.22) - (motionY * 0.055)) * stretchMult;
-    final vStretch = 1.0 + ((motionY * 0.19) - (motionX * 0.06)) * stretchMult;
+    // Balanced 2D droplet glide: stretches horizontally up to ~1.085 while
+    // compressing vertically down to ~0.955 so the pill stays within bar padding.
+    final hStretch = 1.0 + (motionX * 0.085) * stretchMult;
+    final vStretch = 1.0 - (motionX * 0.045) * stretchMult;
     final gelSquishX = _liquidGlassMode == LiquidGlassMode.rippleGel
-        ? (1.0 + 0.06 * pressProgress)
+        ? (1.0 + 0.04 * pressProgress)
         : 1.0;
     final gelSquishY = _liquidGlassMode == LiquidGlassMode.rippleGel
-        ? (1.0 - 0.05 * pressProgress)
+        ? (1.0 - 0.03 * pressProgress)
         : 1.0;
     final scaleX = hStretch * holdScale * gelSquishX;
     final scaleY = vStretch * holdScale * gelSquishY;
@@ -906,7 +971,7 @@ class _LiquidInteractivePhysics {
         : (edgeXPx / _maxOverscrollPx).clamp(-1.0, 1.0);
     final skewX = signedMotion.abs() < 0.001
         ? 0.0
-        : -signedMotion * 0.055 * stretchMult;
+        : -signedMotion * 0.032 * stretchMult;
 
     return Matrix4.diagonal3Values(scaleX, scaleY, 1.0)
       ..setEntry(0, 1, skewX);
@@ -919,9 +984,11 @@ class _LiquidInteractivePhysics {
     final bx = ((velX / 10.0).clamp(-1.0, 1.0) * 0.65 +
             (edgeXPx / _maxOverscrollPx).clamp(-1.0, 1.0) * 0.55)
         .clamp(-1.0, 1.0);
-    final by = ((_renderedPosY / _maxVerticalPullPx) * 0.85 +
-            (_renderedVelY / 180.0) * 0.35)
-        .clamp(-1.0, 1.0);
+    final by = _maxVerticalPullPx <= 0.0
+        ? 0.0
+        : ((_renderedPosY / _maxVerticalPullPx) * 0.85 +
+                (_renderedVelY / 180.0) * 0.35)
+            .clamp(-1.0, 1.0);
     return Offset(bx, by);
   }
 
@@ -929,7 +996,6 @@ class _LiquidInteractivePhysics {
     double target, {
     double? initialVelocity,
     double? initialVelocityY,
-    bool triggerVerticalWave = false,
     bool keepInteracting = false,
   }) {
     if (_disposed) return;
@@ -945,6 +1011,10 @@ class _LiquidInteractivePhysics {
       _renderedVel = 0.0;
       _renderedPosY = 0.0;
       _renderedVelY = 0.0;
+      _tapSlideActive = false;
+      _tapSlidePeakProgress = 0.0;
+      _arrivalReboundActive = false;
+      _arrivalReboundT = 0.0;
       if (offsetYAnim.value != 0.0) {
         offsetYAnim.value = 0.0;
       }
@@ -978,12 +1048,30 @@ class _LiquidInteractivePhysics {
     if (keepInteracting) {
       _dragTargetPos = target;
       isInteracting = true;
+      _tapSlideActive = false;
+      _tapSlidePeakProgress = 0.0;
+      _arrivalReboundActive = false;
+      _arrivalReboundT = 0.0;
     } else {
       isInteracting = false;
       _dragTargetPosY = 0.0;
       dragVelocity = 0.0;
       _lastPointerX = null;
       _lastPointerTimeUs = 0;
+      final distSlots = (_renderedPos - target).abs();
+      if (distSlots >= 0.25) {
+        _tapSlideActive = true;
+        _tapSlideStartPos = _renderedPos;
+        _tapSlideTargetPos = target;
+        _tapSlidePeakProgress = 0.0;
+        _arrivalReboundActive = false;
+        _arrivalReboundT = 0.0;
+      } else {
+        _tapSlideActive = false;
+        _tapSlidePeakProgress = 0.0;
+        _arrivalReboundActive = false;
+        _arrivalReboundT = 0.0;
+      }
     }
 
     if (initialVelocity != null &&
@@ -996,20 +1084,10 @@ class _LiquidInteractivePhysics {
       _renderedVelY = initialVelocityY;
     }
 
-    if (triggerVerticalWave && !keepInteracting) {
-      final distSlots = (_renderedPos - target).abs();
-      if (distSlots >= 0.35) {
-        final impulse = 105.0 + (distSlots.clamp(1.0, 3.0) * 18.0);
-        _renderedVelY = _renderedVelY.abs() > 20.0
-            ? (_renderedVelY * 0.4) + (impulse * 0.75)
-            : impulse;
-      }
-    }
-
     final xSettled = (_renderedPos - target).abs() < 0.0005 &&
         _renderedVel.abs() < 0.002;
     final ySettled = _renderedPosY.abs() < 0.02 && _renderedVelY.abs() < 0.25;
-    if (!keepInteracting && xSettled && ySettled) {
+    if (!keepInteracting && xSettled && ySettled && !_tapSlideActive) {
       _renderedPos = target;
       _renderedVel = 0.0;
       _renderedPosY = 0.0;
@@ -1031,10 +1109,7 @@ class _LiquidInteractivePhysics {
       return;
     }
     if (!isInteracting && !skipSpring) {
-      launchSpringTo(
-        newSelectedIndex.toDouble(),
-        triggerVerticalWave: _liquidGlassEnabled,
-      );
+      launchSpringTo(newSelectedIndex.toDouble());
     }
   }
 
@@ -1283,16 +1358,10 @@ class _LiquidInteractivePhysics {
             (instance) {
               instance.onStart = (details) {
                 _horizontalDragActive = true;
-                final rawDy = _downGlobalPos != null
-                    ? (details.globalPosition.dy - _downGlobalPos!.dy)
-                    : 0.0;
-                _beginInteractionAt(details.localPosition.dx, rawDy: rawDy);
+                _beginInteractionAt(details.localPosition.dx, rawDy: 0.0);
               };
               instance.onUpdate = (details) {
-                final rawDy = _downGlobalPos != null
-                    ? (details.globalPosition.dy - _downGlobalPos!.dy)
-                    : 0.0;
-                _updateInteractionAt(details.localPosition.dx, rawDy: rawDy);
+                _updateInteractionAt(details.localPosition.dx, rawDy: 0.0);
               };
               instance.onEnd = (details) {
                 _horizontalDragActive = false;
@@ -1311,7 +1380,6 @@ class _LiquidInteractivePhysics {
                     currentSelectedIndex: currentSelectedIndex,
                     onSelected: onSelected,
                     releaseVelocity: releaseSlotVel,
-                    releaseVelocityY: details.velocity.pixelsPerSecond.dy,
                   );
                 }
               };

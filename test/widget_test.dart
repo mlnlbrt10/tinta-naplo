@@ -345,7 +345,7 @@ void main() {
     expect(AppIconPresetInfo.resolve(christmasOledPrefs).id, 'icon_christmas_oled');
     expect(
       AppIconPresetInfo.resolve(christmasOledPrefs).assetPath,
-      'assets/icons/icon_christmas_oled.png',
+      'assets/images/tinta_icon.png',
     );
 
     const christmasNormalPrefs = UserProfilePrefs(
@@ -355,7 +355,7 @@ void main() {
     expect(AppIconPresetInfo.resolve(christmasNormalPrefs).id, 'icon_christmas');
     expect(
       AppIconPresetInfo.resolve(christmasNormalPrefs).assetPath,
-      'assets/icons/icon_christmas.png',
+      'assets/images/tinta_icon.png',
     );
 
     const manualForcedPrefs = UserProfilePrefs(
@@ -366,7 +366,7 @@ void main() {
     expect(AppIconPresetInfo.resolve(manualForcedPrefs).id, 'icon_oled');
     expect(
       AppIconPresetInfo.resolve(manualForcedPrefs).assetPath,
-      'assets/icons/icon_oled.png',
+      'assets/images/tinta_icon.png',
     );
   });
 
@@ -395,7 +395,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('Karácsonyi OLED'), findsOneWidget);
-    expect(find.text('v1.1.1'), findsOneWidget);
+    expect(find.text('v1.2.0'), findsOneWidget);
   });
 
   testWidgets(

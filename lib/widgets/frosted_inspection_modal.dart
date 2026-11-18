@@ -181,28 +181,30 @@ Future<void> showFrostedModal({
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 3,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: accentColor.withValues(
-                                            alpha: 0.18,
+                                      if (categoryLabel.trim().isNotEmpty) ...[
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 3,
                                           ),
-                                          borderRadius:
-                                              BorderRadius.circular(22),
-                                        ),
-                                        child: Text(
-                                          categoryLabel,
-                                          style: theme.textTheme.labelSmall
-                                              ?.copyWith(
-                                            color: accentColor,
-                                            fontWeight: FontWeight.w800,
+                                          decoration: BoxDecoration(
+                                            color: accentColor.withValues(
+                                              alpha: 0.18,
+                                            ),
+                                            borderRadius:
+                                                BorderRadius.circular(22),
+                                          ),
+                                          child: Text(
+                                            categoryLabel,
+                                            style: theme.textTheme.labelSmall
+                                                ?.copyWith(
+                                              color: accentColor,
+                                              fontWeight: FontWeight.w800,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                      const SizedBox(height: 6),
+                                        const SizedBox(height: 6),
+                                      ],
                                       Text(
                                         title,
                                         style: theme.textTheme.titleMedium
@@ -461,8 +463,13 @@ Future<void> showGradeInspectionModal(
   UserProfilePrefs? prefs,
   String? heroTag,
 }) {
+  final scopeSettings =
+      context.getInheritedWidgetOfExactType<AppProvidersScope>()?.settings;
+  final effectivePrefs = prefs ?? scopeSettings?.prefs;
+  final isMinimalist = effectivePrefs?.minimalistModeEnabled ??
+      UserProfilePrefs.activeMinimalistModeEnabled;
   final dtFormat = DateFormat('yyyy. MM. dd. HH:mm');
-  final color = OledTheme.gradeColor(grade.numericValue, prefs);
+  final color = OledTheme.gradeColor(grade.numericValue, effectivePrefs);
   final badge = grade.numericValue?.toString() ??
       grade.shortStrValue ??
       (grade.strValue.isNotEmpty ? grade.strValue.substring(0, 1) : '?');
@@ -470,15 +477,30 @@ Future<void> showGradeInspectionModal(
       ? '${grade.weightPercentage}%'
       : '100%';
 
-  final subjectDisplay = prefs != null
-      ? prefs.resolveSubjectName(grade.subject.name, grade.subject.uid)
+  final subjectDisplay = effectivePrefs != null
+      ? effectivePrefs.resolveSubjectName(grade.subject.name, grade.subject.uid)
       : grade.subject.name;
-  final teacherDisplay = prefs != null
-      ? prefs.resolveTeacherName(grade.teacher)
+  final teacherDisplay = effectivePrefs != null
+      ? effectivePrefs.resolveTeacherName(grade.teacher)
       : grade.teacher;
+  final evalTypeText =
+      (grade.mode != null && grade.mode!.description.trim().isNotEmpty)
+          ? grade.mode!.description.trim()
+          : (grade.type.description.trim().isNotEmpty
+              ? grade.type.description.trim()
+              : 'Értékelés');
 
-  final tsundereNote = (prefs?.tsundereModeEnabled == true ||
-          UwuHelper.isTsundereEnabled)
+  final teacherText =
+      teacherDisplay.trim().isNotEmpty ? teacherDisplay.trim() : 'Ismeretlen tanár';
+  final evalModeValue = [
+    grade.type.description,
+    if (grade.mode != null && grade.mode!.description.isNotEmpty)
+      grade.mode!.description,
+  ].where((e) => e.trim().isNotEmpty).join(' • ');
+
+  final tsundereNote = !isMinimalist &&
+          (effectivePrefs?.tsundereModeEnabled == true ||
+              UwuHelper.isTsundereEnabled)
       ? UwuHelper.tsundereCommentForGrade(grade.numericValue)
       : null;
 
@@ -492,48 +514,64 @@ Future<void> showGradeInspectionModal(
     badgeShape: BoxShape.circle,
     heroTag: heroTag,
     tsundereNote: tsundereNote,
-    closeMode: prefs?.modalCloseMode,
-    prefs: prefs,
-    rows: [
-      FrostedDetailRow(
-        icon: Icons.school_rounded,
-        label: 'Tantárgy',
-        value: subjectDisplay,
-      ),
-      FrostedDetailRow(
-        icon: Icons.grade_rounded,
-        label: 'Érdemjegy',
-        value: grade.strValue,
-      ),
-      FrostedDetailRow(
-        icon: Icons.scale_rounded,
-        label: 'Súlyozás',
-        value: weightStr,
-      ),
-      FrostedDetailRow(
-        icon: Icons.category_rounded,
-        label: 'Értékelés módja',
-        value: [
-          grade.type.description,
-          if (grade.mode != null && grade.mode!.description.isNotEmpty)
-            grade.mode!.description,
-        ].join(' • '),
-      ),
-      FrostedDetailRow(
-        icon: Icons.calendar_today_rounded,
-        label: 'Rögzítés ideje',
-        value: dtFormat.format(grade.recordedAt),
-      ),
-      FrostedDetailRow(
-        icon: Icons.person_rounded,
-        label: 'Értékelő tanár',
-        value: teacherDisplay,
-      ),
-    ],
-    topicTitle: 'Pontosan rögzített téma',
-    topicBody: (grade.topic != null && grade.topic!.trim().isNotEmpty)
-        ? grade.topic!
-        : 'Nem lett külön téma megadva.',
+    closeMode: effectivePrefs?.modalCloseMode,
+    prefs: effectivePrefs,
+    rows: isMinimalist
+        ? [
+            FrostedDetailRow(
+              icon: Icons.calendar_today_rounded,
+              label: 'Rögzítés ideje',
+              value: dtFormat.format(grade.recordedAt.toLocal()),
+            ),
+            FrostedDetailRow(
+              icon: Icons.person_rounded,
+              label: 'Értékelő tanár',
+              value: teacherText,
+            ),
+            FrostedDetailRow(
+              icon: Icons.category_rounded,
+              label: 'Értékelés módja',
+              value: evalModeValue.isNotEmpty ? evalModeValue : evalTypeText,
+            ),
+          ]
+        : [
+            FrostedDetailRow(
+              icon: Icons.school_rounded,
+              label: 'Tantárgy',
+              value: subjectDisplay,
+            ),
+            FrostedDetailRow(
+              icon: Icons.grade_rounded,
+              label: 'Érdemjegy',
+              value: grade.strValue,
+            ),
+            FrostedDetailRow(
+              icon: Icons.scale_rounded,
+              label: 'Súlyozás',
+              value: weightStr,
+            ),
+            FrostedDetailRow(
+              icon: Icons.category_rounded,
+              label: 'Értékelés módja',
+              value: evalModeValue,
+            ),
+            FrostedDetailRow(
+              icon: Icons.calendar_today_rounded,
+              label: 'Rögzítés ideje',
+              value: dtFormat.format(grade.recordedAt),
+            ),
+            FrostedDetailRow(
+              icon: Icons.person_rounded,
+              label: 'Értékelő tanár',
+              value: teacherDisplay,
+            ),
+          ],
+    topicTitle: isMinimalist ? null : 'Pontosan rögzített téma',
+    topicBody: isMinimalist
+        ? null
+        : ((grade.topic != null && grade.topic!.trim().isNotEmpty)
+            ? grade.topic!
+            : 'Nem lett külön téma megadva.'),
   );
 }
 
@@ -624,6 +662,11 @@ Future<void> showTestInspectionModal(
   UserProfilePrefs? prefs,
   String? heroTag,
 }) {
+  final scopeSettings =
+      context.getInheritedWidgetOfExactType<AppProvidersScope>()?.settings;
+  final effectivePrefs = prefs ?? scopeSettings?.prefs;
+  final isMinimalist = effectivePrefs?.minimalistModeEnabled ??
+      UserProfilePrefs.activeMinimalistModeEnabled;
   final dayFormat = DateFormat('yyyy. MM. dd.');
   const weekdayNames = [
     '',
@@ -639,12 +682,15 @@ Future<void> showTestInspectionModal(
   final weekdayLabel = weekdayNames[testLocal.weekday.clamp(1, 7)];
   final rawSubject =
       test.subject.name.isNotEmpty ? test.subject.name : test.subjectName;
-  final subjectDisplay = prefs != null
-      ? prefs.resolveSubjectName(rawSubject, test.subject.uid)
+  final subjectDisplay = effectivePrefs != null
+      ? effectivePrefs.resolveSubjectName(rawSubject, test.subject.uid)
       : rawSubject;
-  final teacherDisplay = prefs != null
-      ? prefs.resolveTeacherName(test.teacherName)
+  final teacherDisplay = effectivePrefs != null
+      ? effectivePrefs.resolveTeacherName(test.teacherName)
       : test.teacherName;
+  final themeText = (test.theme != null && test.theme!.trim().isNotEmpty)
+      ? test.theme!.trim()
+      : 'Nem lett külön téma megadva.';
 
   return showFrostedModal(
     context: context,
@@ -654,40 +700,57 @@ Future<void> showTestInspectionModal(
     title: subjectDisplay,
     badgeText: '${test.lessonNumber}.',
     heroTag: heroTag,
-    closeMode: prefs?.modalCloseMode,
-    prefs: prefs,
-    rows: [
-      FrostedDetailRow(
-        icon: Icons.school_rounded,
-        label: 'Tantárgy',
-        value: subjectDisplay,
-      ),
-      FrostedDetailRow(
-        icon: Icons.event_rounded,
-        label: 'Számonkérés\nnapja',
-        value:
-            '$weekdayLabel (${test.lessonNumber}. óra)\n${dayFormat.format(testLocal)}',
-      ),
-      FrostedDetailRow(
-        icon: Icons.history_edu_rounded,
-        label: 'Bejelentés\ndátuma',
-        value: dayFormat.format(test.reportDate.toLocal()),
-      ),
-      FrostedDetailRow(
-        icon: Icons.category_rounded,
-        label: 'Számonkérés módja',
-        value: test.method.description,
-      ),
-      FrostedDetailRow(
-        icon: Icons.person_rounded,
-        label: 'Bejelentő tanár',
-        value: teacherDisplay,
-      ),
-    ],
-    topicTitle: 'Számonkérés témája',
-    topicBody: (test.theme != null && test.theme!.trim().isNotEmpty)
-        ? test.theme!
-        : 'Nem lett külön téma megadva.',
+    closeMode: effectivePrefs?.modalCloseMode,
+    prefs: effectivePrefs,
+    rows: isMinimalist
+        ? [
+            FrostedDetailRow(
+              icon: Icons.event_rounded,
+              label: 'Számonkérés\nnapja',
+              value:
+                  '$weekdayLabel (${test.lessonNumber}. óra)\n${dayFormat.format(testLocal)}',
+            ),
+            FrostedDetailRow(
+              icon: Icons.topic_rounded,
+              label: 'Számonkérés témája',
+              value: themeText,
+            ),
+            FrostedDetailRow(
+              icon: Icons.category_rounded,
+              label: 'Számonkérés módja',
+              value: test.method.description,
+            ),
+          ]
+        : [
+            FrostedDetailRow(
+              icon: Icons.school_rounded,
+              label: 'Tantárgy',
+              value: subjectDisplay,
+            ),
+            FrostedDetailRow(
+              icon: Icons.event_rounded,
+              label: 'Számonkérés\nnapja',
+              value:
+                  '$weekdayLabel (${test.lessonNumber}. óra)\n${dayFormat.format(testLocal)}',
+            ),
+            FrostedDetailRow(
+              icon: Icons.history_edu_rounded,
+              label: 'Bejelentés\ndátuma',
+              value: dayFormat.format(test.reportDate.toLocal()),
+            ),
+            FrostedDetailRow(
+              icon: Icons.category_rounded,
+              label: 'Számonkérés módja',
+              value: test.method.description,
+            ),
+            FrostedDetailRow(
+              icon: Icons.person_rounded,
+              label: 'Bejelentő tanár',
+              value: teacherDisplay,
+            ),
+          ],
+    topicTitle: isMinimalist ? null : 'Számonkérés témája',
+    topicBody: isMinimalist ? null : themeText,
   );
 }
 
@@ -704,6 +767,9 @@ Future<void> showLessonInspectionModal(
 }) {
   final scopeSettings =
       context.getInheritedWidgetOfExactType<AppProvidersScope>()?.settings;
+  final effectivePrefs = prefs ?? scopeSettings?.prefs;
+  final isMinimalist = effectivePrefs?.minimalistModeEnabled ??
+      UserProfilePrefs.activeMinimalistModeEnabled;
   final hwKey = homework != null
       ? SettingsProvider.homeworkCompletionKey(homework)
       : (lesson.homeworkUid?.trim() ?? '');
@@ -714,7 +780,7 @@ Future<void> showLessonInspectionModal(
   final startLocal = lesson.start.toLocal();
   final endLocal = lesson.end.toLocal();
   final timeSpan =
-      '${timeFormat.format(startLocal)} - ${timeFormat.format(endLocal)}';
+      '${timeFormat.format(startLocal)} – ${timeFormat.format(endLocal)}';
 
   final isCancelled = lesson.state.name.toLowerCase() == 'elmaradt' ||
       lesson.state.name.toLowerCase().contains('elmarad') ||
@@ -722,7 +788,7 @@ Future<void> showLessonInspectionModal(
   final hasSub = lesson.substituteTeacher != null &&
       lesson.substituteTeacher!.trim().isNotEmpty;
 
-  final customPeriodColor = prefs?.timetablePeriodColor;
+  final customPeriodColor = effectivePrefs?.timetablePeriodColor;
   final accent = isCancelled
       ? const Color(0xFFC62828)
       : hasSub
@@ -737,20 +803,29 @@ Future<void> showLessonInspectionModal(
               : Colors.white);
 
   final rawSubject = lesson.subject?.name ?? lesson.name;
-  final subjectDisplay = prefs != null
-      ? prefs.resolveSubjectName(rawSubject, lesson.subject?.uid)
+  final subjectDisplay = effectivePrefs != null
+      ? effectivePrefs.resolveSubjectName(rawSubject, lesson.subject?.uid)
       : rawSubject;
-  final teacherDisplay = prefs != null && lesson.teacher != null
-      ? prefs.resolveTeacherName(lesson.teacher)
+  final teacherDisplay = effectivePrefs != null && lesson.teacher != null
+      ? effectivePrefs.resolveTeacherName(lesson.teacher)
       : (lesson.teacher ?? 'Nincs megadva');
   final subTeacherDisplay =
-      prefs != null && lesson.substituteTeacher != null
-          ? prefs.resolveTeacherName(lesson.substituteTeacher)
+      effectivePrefs != null && lesson.substituteTeacher != null
+          ? effectivePrefs.resolveTeacherName(lesson.substituteTeacher)
           : lesson.substituteTeacher;
+  final roomText =
+      (lesson.roomName != null && lesson.roomName!.trim().isNotEmpty)
+          ? lesson.roomName!.trim()
+          : 'Nincs megadva';
+  final effectiveTeacher =
+      (hasSub && subTeacherDisplay != null && subTeacherDisplay.trim().isNotEmpty)
+          ? subTeacherDisplay.trim()
+          : teacherDisplay;
 
   const hwTeal = Color(0xFF00BFA5);
-  final hasHomeworkFlag = homework != null ||
-      (lesson.homeworkUid != null && lesson.homeworkUid!.trim().isNotEmpty);
+  final hasHomeworkFlag = !isMinimalist &&
+      (homework != null ||
+          (lesson.homeworkUid != null && lesson.homeworkUid!.trim().isNotEmpty));
 
   Widget? homeworkSection;
   if (hasHomeworkFlag) {
@@ -771,7 +846,7 @@ Future<void> showLessonInspectionModal(
                   showHomeworkInspectionModal(
                     context,
                     homework,
-                    prefs: prefs,
+                    prefs: effectivePrefs,
                   );
                 }
               : null,
@@ -852,47 +927,65 @@ Future<void> showLessonInspectionModal(
     subtitleTimeSpan: timeSpan,
     badgeText: lesson.lessonNumber != null ? '${lesson.lessonNumber}.' : '•',
     heroTag: heroTag ?? 'lesson_num_${lesson.uid}',
-    closeMode: prefs?.modalCloseMode,
-    prefs: prefs,
-    rows: [
-      FrostedDetailRow(
-        icon: Icons.access_time_filled_rounded,
-        label: 'Idősáv',
-        value: timeSpan,
-      ),
-      FrostedDetailRow(
-        icon: Icons.calendar_today_rounded,
-        label: 'Dátum',
-        value: dayFormat.format(startLocal),
-      ),
-      FrostedDetailRow(
-        icon: Icons.meeting_room_rounded,
-        label: 'Tanterem',
-        value: (lesson.roomName != null && lesson.roomName!.trim().isNotEmpty)
-            ? lesson.roomName!
-            : 'Nincs megadva',
-      ),
-      FrostedDetailRow(
-        icon: Icons.person_rounded,
-        label: 'Tanár',
-        value: teacherDisplay,
-      ),
-      if (hasSub && subTeacherDisplay != null)
-        FrostedDetailRow(
-          icon: Icons.swap_horiz_rounded,
-          label: 'Helyettesítő tanár',
-          value: subTeacherDisplay,
-        ),
-      FrostedDetailRow(
-        icon: Icons.info_outline_rounded,
-        label: 'Állapot',
-        value: isCancelled ? 'Elmarad' : lesson.state.description,
-      ),
-    ],
-    topicTitle: 'Tanár által beírt tananyag / téma',
-    topicBody: (lesson.theme != null && lesson.theme!.trim().isNotEmpty)
-        ? lesson.theme!
-        : 'Még nem lett tananyag rögzítve ehhez az órához.',
-    extraBottomSection: homeworkSection,
+    closeMode: effectivePrefs?.modalCloseMode,
+    prefs: effectivePrefs,
+    rows: isMinimalist
+        ? [
+            FrostedDetailRow(
+              icon: Icons.access_time_filled_rounded,
+              label: 'Idősáv',
+              value: timeSpan,
+            ),
+            FrostedDetailRow(
+              icon: Icons.meeting_room_rounded,
+              label: 'Tanterem',
+              value: roomText,
+            ),
+            FrostedDetailRow(
+              icon: Icons.person_rounded,
+              label: 'Tanár',
+              value: effectiveTeacher,
+            ),
+          ]
+        : [
+            FrostedDetailRow(
+              icon: Icons.access_time_filled_rounded,
+              label: 'Idősáv',
+              value: timeSpan,
+            ),
+            FrostedDetailRow(
+              icon: Icons.calendar_today_rounded,
+              label: 'Dátum',
+              value: dayFormat.format(startLocal),
+            ),
+            FrostedDetailRow(
+              icon: Icons.meeting_room_rounded,
+              label: 'Tanterem',
+              value: roomText,
+            ),
+            FrostedDetailRow(
+              icon: Icons.person_rounded,
+              label: 'Tanár',
+              value: teacherDisplay,
+            ),
+            if (hasSub && subTeacherDisplay != null)
+              FrostedDetailRow(
+                icon: Icons.swap_horiz_rounded,
+                label: 'Helyettesítő tanár',
+                value: subTeacherDisplay,
+              ),
+            FrostedDetailRow(
+              icon: Icons.info_outline_rounded,
+              label: 'Állapot',
+              value: isCancelled ? 'Elmarad' : lesson.state.description,
+            ),
+          ],
+    topicTitle: isMinimalist ? null : 'Tanár által beírt tananyag / téma',
+    topicBody: isMinimalist
+        ? null
+        : ((lesson.theme != null && lesson.theme!.trim().isNotEmpty)
+            ? lesson.theme!
+            : 'Még nem lett tananyag rögzítve ehhez az órához.'),
+    extraBottomSection: isMinimalist ? null : homeworkSection,
   );
 }

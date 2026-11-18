@@ -415,7 +415,7 @@ void main() {
         reporter: 'A. Milán',
         category: 'UI / Megjelenés',
         description: 'Gomb igazítás hiba az órarendben',
-        appVersion: '1.1.1+13',
+        appVersion: '1.2.0+15',
         osVersion: 'Android (14)',
         themeMode: 'OLED Fekete • Liquid Glass',
         attachment: BugAttachment(
@@ -446,7 +446,7 @@ void main() {
         reporter: 'A. Milán',
         category: 'Hiba / Bug',
         description: 'Progress test',
-        appVersion: '1.1.1+13',
+        appVersion: '1.2.0+15',
         osVersion: 'Android (14)',
         themeMode: 'OLED Fekete',
         attachment: BugAttachment(
@@ -499,9 +499,10 @@ void main() {
         await tester.tap(find.text('OpenProfile'));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
-        expect(find.byIcon(Icons.bug_report_outlined), findsOneWidget);
+        expect(find.byIcon(Icons.bug_report_rounded), findsOneWidget);
+        expect(find.text('Hibajelentés'), findsOneWidget);
 
-        await tester.tap(find.byIcon(Icons.bug_report_outlined));
+        await tester.tap(find.byIcon(Icons.bug_report_rounded));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
         expect(find.text('Hibajelentés küldése'), findsOneWidget);
@@ -547,7 +548,7 @@ void main() {
                       prefs: const UserProfilePrefs(),
                       httpClient: mockClient,
                       pickImageOverride: () async => XFile(tempImg.path),
-                      appVersionLoader: () async => '1.1.1+13',
+                      appVersionLoader: () async => '1.2.0+15',
                     ),
                     child: const Text('OpenBug'),
                   ),
@@ -563,7 +564,7 @@ void main() {
 
         expect(find.text('Hibajelentés küldése'), findsOneWidget);
         expect(find.text('Beküldő: N. Anna Eszter'), findsOneWidget);
-        expect(find.text('Verzió: 1.1.1+13'), findsOneWidget);
+        expect(find.text('Verzió: 1.2.0+15'), findsOneWidget);
 
         await tester.tap(find.text('Képernyőkép csatolása'));
         await tester.runAsync(
@@ -574,7 +575,7 @@ void main() {
 
         await tester.enterText(
           find.byType(TextField),
-          'Teszt hibaleírás v1.1.1',
+          'Teszt hibaleírás v1.2.0',
         );
         await tester.tap(find.text('UI / Megjelenés'));
         await tester.pump();
@@ -800,13 +801,13 @@ void main() {
                       onPressed: () => GitHubUpdaterService.showFrostedUpdateDialog(
                         context,
                         release: const GitHubReleaseInfo(
-                          tagName: 'v1.2.0',
-                          title: 'v1.2.0',
+                          tagName: 'v1.2.1',
+                          title: 'v1.2.1',
                           releaseNotes: 'Teszt frissítés',
                           htmlUrl: 'https://github.com/mlnlbrt10/tinta-naplo',
                           apkDownloadUrl: 'https://example.com/app.apk',
                         ),
-                        currentVersion: '1.1.1+13',
+                        currentVersion: '1.2.0+15',
                       ),
                       child: const Text('ShowUpdate'),
                     ),

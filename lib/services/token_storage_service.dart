@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -23,44 +24,44 @@ enum LiquidGlassMode {
     label: 'Classic Frost',
     subtitle: 'Alapértelmezett matt üveg',
     description:
-        'Kiegyensúlyozott matt üvegfelület, tiszta rugófizika és lágy felső peremfény.',
-    stiffnessX: 340.0,
-    dampingX: 22.0,
-    stiffnessY: 290.0,
-    dampingY: 14.5,
+        'Kiegyensúlyozott matt üvegfelület, élénk alulcsillapított rugófizika és lágy felső peremfény.',
+    stiffnessX: 360.0,
+    dampingX: 24.5,
+    stiffnessY: 360.0,
+    dampingY: 24.5,
     stretchMultiplier: 1.0,
   ),
   hydroMercury(
     label: 'Hydro Mercury',
     subtitle: 'Folyékony Higany',
     description:
-        'Nagy felületi feszültségű higanycsepp fizika, nyújtás húzáskor és fémes peremtükröződés.',
-    stiffnessX: 430.0,
-    dampingX: 14.0,
-    stiffnessY: 340.0,
-    dampingY: 11.5,
-    stretchMultiplier: 1.45,
+        'Nagy felületi feszültségű higanycsepp fizika, élénk nyújtás és fémes peremtükröződés.',
+    stiffnessX: 410.0,
+    dampingX: 19.5,
+    stiffnessY: 380.0,
+    dampingY: 21.0,
+    stretchMultiplier: 1.05,
   ),
   opticalPrism(
     label: 'Optical Prism',
     subtitle: 'Optikai Prizma',
     description:
         'Kristálytiszta üveg finom meleg-borostyán és jégkék kromatikus élszóródással.',
-    stiffnessX: 350.0,
-    dampingX: 21.0,
-    stiffnessY: 290.0,
-    dampingY: 14.5,
-    stretchMultiplier: 1.05,
+    stiffnessX: 360.0,
+    dampingX: 24.0,
+    stiffnessY: 360.0,
+    dampingY: 24.0,
+    stretchMultiplier: 1.02,
   ),
   smokedObsidian(
     label: 'Smoked Obsidian',
     subtitle: 'Füstölt Obszidián',
     description:
         'ND füstölt stúdióüveg kritikusan csillapított viszkózus csúszással és 1px csiszolt éllel.',
-    stiffnessX: 210.0,
-    dampingX: 34.0,
-    stiffnessY: 210.0,
-    dampingY: 32.0,
+    stiffnessX: 340.0,
+    dampingX: 36.9,
+    stiffnessY: 340.0,
+    dampingY: 36.9,
     stretchMultiplier: 0.25,
   ),
   rippleGel(
@@ -68,11 +69,11 @@ enum LiquidGlassMode {
     subtitle: 'Hidrogél',
     description:
         'Puha rugalmas zselé összenyomódás érintéspontból sugárzó koncentrikus fényhullámmal.',
-    stiffnessX: 265.0,
-    dampingX: 16.5,
-    stiffnessY: 240.0,
-    dampingY: 12.5,
-    stretchMultiplier: 1.15,
+    stiffnessX: 330.0,
+    dampingX: 21.5,
+    stiffnessY: 330.0,
+    dampingY: 21.5,
+    stretchMultiplier: 1.04,
   );
 
   final String label;
@@ -275,12 +276,16 @@ class UserProfilePrefs {
   static bool get activeSoftBlurEnabled => activeLiquidGlassEnabled;
   static LiquidGlassMode activeLiquidGlassMode = LiquidGlassMode.classicFrost;
   static double activeSoftBlurSigma = 4.0;
+  static bool activeMinimalistModeEnabled = false;
+  static bool activeDemoModeEnabled = false;
 
   static void syncActiveGlobals(UserProfilePrefs prefs) {
     activeModalCloseMode = prefs.modalCloseMode;
     activeLiquidGlassEnabled = prefs.liquidGlassEnabled;
     activeLiquidGlassMode = prefs.liquidGlassMode;
     activeSoftBlurSigma = prefs.cardBlurSigma;
+    activeMinimalistModeEnabled = prefs.minimalistModeEnabled;
+    activeDemoModeEnabled = prefs.demoModeEnabled;
   }
 
   static bool _parseBool(dynamic value) => value == true || value == 'true';
@@ -412,6 +417,24 @@ class UserProfilePrefs {
   /// "Lyukas / szabad órák elrejtése" (falls back to the legacy single filter).
   bool get hideFreeLessons =>
       (extras['hideFreeLessons'] as bool?) ?? !showCancelledLessons;
+
+  /// Developer Options: "Minimalista mód" (stripped-down expanded cards/modals).
+  bool get minimalistModeEnabled => extras['minimalistModeEnabled'] == true;
+
+  UserProfilePrefs withMinimalistMode(bool enabled) =>
+      withExtra('minimalistModeEnabled', enabled);
+
+  /// Developer Options: Isolated "Demó mód" (Kovács Bence showcase dataset).
+  bool get demoModeEnabled => extras['demoModeEnabled'] == true;
+
+  UserProfilePrefs withDemoMode(bool enabled) =>
+      withExtra('demoModeEnabled', enabled);
+
+  /// Developer Options: Live Activity / Samsung Now Bar ongoing lesson notification.
+  bool get liveActivityEnabled => extras['liveActivityEnabled'] == true;
+
+  UserProfilePrefs withLiveActivityEnabled(bool enabled) =>
+      withExtra('liveActivityEnabled', enabled);
 
   /// `true` => "Ágazati alapoktatás (9–10. évf.)", `false` => "Szakirányú oktatás".
   bool get scholarshipBasicEducation => extras['scholarshipBasic'] == true;
@@ -961,7 +984,7 @@ class StoredSession {
   });
 
   bool get isExpired =>
-      DateTime.now().isAfter(expiresAt.subtract(const Duration(seconds: 60)));
+      DateTime.now().isAfter(expiresAt.subtract(const Duration(minutes: 2)));
 
   /// Creates a [StoredSession] from a [TokenGrantResponse] and extracts
   /// `kreta:institute_code` and `kreta:user_name` from the JWT claims.
@@ -1073,6 +1096,9 @@ class TokenStorageService {
   static const _keyDashboardCachePrefix = 'kreta_dashboard_cache_v1_';
   static const String sharedPrefsProfileKey = 'tinta_profile_prefs_v1';
 
+  static Completer<bool>? _refreshCompleter;
+  static StoredSession? _lastRefreshedSession;
+
   final FlutterSecureStorage _storage;
 
   const TokenStorageService({FlutterSecureStorage? storage})
@@ -1082,6 +1108,7 @@ class TokenStorageService {
             );
 
   Future<void> saveSession(StoredSession session) async {
+    _lastRefreshedSession = session;
     await Future.wait([
       _storage.write(key: _keyAccessToken, value: session.accessToken),
       _storage.write(key: _keyRefreshToken, value: session.refreshToken),
@@ -1126,60 +1153,148 @@ class TokenStorageService {
     );
   }
 
-  /// Transparently refreshes the OAuth2 access & refresh tokens in the background,
-  /// updates the stored session in [FlutterSecureStorage], and returns the new [StoredSession].
+  /// Transparently refreshes the OAuth2 access & refresh tokens using a strict
+  /// single-flight lock (`_refreshCompleter`) so concurrent callers never race
+  /// KRÉTA's single-use refresh token rotation. Transient network / 429 / 5xx
+  /// failures raise regular exceptions rather than [InvalidGrantException].
   Future<StoredSession> refreshToken({
     StoredSession? session,
     http.Client? httpClient,
     String clientId = KretaAuthConfig.clientIdIos,
   }) async {
-    final active = session ?? await loadSession();
-    if (active == null || active.refreshToken.isEmpty) {
-      throw const TokenExpiredException();
+    if (_refreshCompleter != null) {
+      final succeeded = await _refreshCompleter!.future;
+      StoredSession? storedAfterWait;
+      try {
+        storedAfterWait = await loadSession();
+      } catch (_) {}
+      final latest = storedAfterWait ?? _lastRefreshedSession ?? session;
+      if (succeeded && latest != null && latest.refreshToken.isNotEmpty) {
+        return latest;
+      }
+      throw Exception('Concurrent token refresh did not succeed.');
     }
 
-    final client = httpClient ?? http.Client();
-    final response = await client.post(
-      Uri.parse(KretaAuthConfig.tokenEndpoint),
-      headers: const {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'Accept': '*/*',
-        'User-Agent': KretaAuthConfig.userAgent,
-      },
-      body: {
-        'institute_code': active.instituteCode,
-        'refresh_token': active.refreshToken,
-        'grant_type': 'refresh_token',
-        'client_id': clientId,
-      },
-    );
+    final completer = Completer<bool>();
+    _refreshCompleter = completer;
 
-    if (response.statusCode == 400) {
-      throw const TokenExpiredException();
-    }
-    if (response.statusCode == 401) {
-      throw const InvalidGrantException();
-    }
-    if (response.statusCode != 200) {
-      throw Exception(
-        'Token refresh failed (HTTP ${response.statusCode}): ${response.body}',
+    try {
+      StoredSession? stored;
+      try {
+        stored = await loadSession();
+      } catch (_) {
+        stored = null;
+      }
+
+      // If another caller already rotated and saved a fresh session while we
+      // were scheduling, return it immediately without calling /connect/token.
+      if (stored != null &&
+          session != null &&
+          stored.refreshToken.isNotEmpty &&
+          stored.refreshToken != session.refreshToken &&
+          !stored.isExpired) {
+        _lastRefreshedSession = stored;
+        completer.complete(true);
+        return stored;
+      }
+
+      final sameIdentityCached = _lastRefreshedSession != null &&
+              session != null &&
+              _lastRefreshedSession!.instituteCode == session.instituteCode &&
+              _lastRefreshedSession!.userName == session.userName
+          ? _lastRefreshedSession
+          : null;
+      final active = (stored != null && stored.refreshToken.isNotEmpty)
+          ? stored
+          : (sameIdentityCached ?? session ?? _lastRefreshedSession);
+
+      if (active == null || active.refreshToken.trim().isEmpty) {
+        throw const InvalidGrantException();
+      }
+
+      final client = httpClient ?? http.Client();
+      final response = await client
+          .post(
+            Uri.parse(KretaAuthConfig.tokenEndpoint),
+            headers: const {
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'Accept': '*/*',
+              'User-Agent': KretaAuthConfig.userAgent,
+            },
+            body: {
+              'institute_code': active.instituteCode,
+              'refresh_token': active.refreshToken,
+              'grant_type': 'refresh_token',
+              'client_id': clientId,
+            },
+          )
+          .timeout(const Duration(seconds: 20));
+
+      if (response.statusCode == 400 || response.statusCode == 401) {
+        String? errorCode;
+        try {
+          final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+          if (decoded is Map) {
+            errorCode = decoded['error']?.toString().toLowerCase().trim();
+          }
+        } catch (_) {}
+        final bodyLower = response.body.toLowerCase();
+        final isExplicitInvalidGrant = errorCode == 'invalid_grant' ||
+            errorCode == 'invalid_client' ||
+            errorCode == 'unauthorized_client' ||
+            bodyLower.contains('invalid_grant') ||
+            (response.statusCode == 400 &&
+                (errorCode == null || errorCode.isEmpty));
+        if (isExplicitInvalidGrant) {
+          throw const InvalidGrantException();
+        }
+        throw Exception(
+          'Token refresh rejected transiently (HTTP ${response.statusCode}): ${response.body}',
+        );
+      }
+      if (response.statusCode != 200) {
+        throw Exception(
+          'Transient token refresh failed (HTTP ${response.statusCode}): ${response.body}',
+        );
+      }
+
+      final jsonMap =
+          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      final rawGrant = TokenGrantResponse.fromJson(jsonMap);
+      final effectiveGrant = rawGrant.refreshToken.trim().isEmpty
+          ? TokenGrantResponse(
+              idToken: rawGrant.idToken,
+              accessToken: rawGrant.accessToken,
+              expiresIn: rawGrant.expiresIn,
+              tokenType: rawGrant.tokenType,
+              refreshToken: active.refreshToken,
+              scope: rawGrant.scope,
+            )
+          : rawGrant;
+      final refreshed = StoredSession.fromTokenGrant(
+        effectiveGrant,
+        fallbackInstituteCode: active.instituteCode,
       );
+      await saveSession(refreshed);
+      _lastRefreshedSession = refreshed;
+      completer.complete(true);
+      return refreshed;
+    } catch (_) {
+      if (!completer.isCompleted) {
+        completer.complete(false);
+      }
+      rethrow;
+    } finally {
+      if (identical(_refreshCompleter, completer)) {
+        _refreshCompleter = null;
+      }
     }
-
-    final jsonMap =
-        jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
-    final grant = TokenGrantResponse.fromJson(jsonMap);
-    final refreshed = StoredSession.fromTokenGrant(
-      grant,
-      fallbackInstituteCode: active.instituteCode,
-    );
-    await saveSession(refreshed);
-    return refreshed;
   }
 
   /// Clears only the authentication tokens while preserving all user
   /// preferences, colors, nicknames, subject renames, and rounding configs.
   Future<void> clearSession() async {
+    _lastRefreshedSession = null;
     await Future.wait([
       _storage.delete(key: _keyAccessToken),
       _storage.delete(key: _keyRefreshToken),

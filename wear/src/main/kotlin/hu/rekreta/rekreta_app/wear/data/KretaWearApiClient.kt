@@ -1,6 +1,7 @@
 package hu.rekreta.rekreta_app.wear.data
 
 import hu.rekreta.rekreta_app.shared.KretaSharedConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -36,7 +37,6 @@ class KretaWearApiClient(
     private val idpBaseUrlOverride: String? = null,
     private val tenantBaseUrlOverride: String? = null,
 ) {
-    private val refreshMutex = Mutex()
     @Volatile
     private var latestSession: StoredSession? = null
 
@@ -58,14 +58,17 @@ class KretaWearApiClient(
         }
     }
 
-    suspend fun refreshSession(current: StoredSession): StoredSession = refreshMutex.withLock {
-        val candidate = latestSession?.takeIf { !it.isExpired() } ?: tokenStore.loadSession()?.takeIf { !it.isExpired() }
+    suspend fun refreshSession(current: StoredSession): StoredSession = globalRefreshMutex.withLock {
+        val stored = tokenStore.loadSession()
+        val candidate = stored?.takeIf { !it.isExpired() } ?: latestSession?.takeIf { !it.isExpired() }
         if (candidate != null && candidate.accessToken != current.accessToken) {
             latestSession = candidate
             return@withLock candidate
         }
 
-        val active = latestSession ?: current
+        val active = stored?.takeIf { it.refreshToken.isNotBlank() }
+            ?: latestSession?.takeIf { it.refreshToken.isNotBlank() }
+            ?: current
         if (active.refreshToken.isBlank()) {
             throw TokenExpiredException()
         }
@@ -118,7 +121,12 @@ class KretaWearApiClient(
     }
 
     suspend fun ensureValidSession(session: StoredSession): StoredSession {
-        val active = latestSession ?: session
+        val stored = tokenStore.loadSession()
+        val active = stored?.takeIf { !it.isExpired() }
+            ?: latestSession?.takeIf { !it.isExpired() }
+            ?: stored
+            ?: latestSession
+            ?: session
         if (!active.isExpired()) {
             latestSession = active
             return active
@@ -142,6 +150,30 @@ class KretaWearApiClient(
         return array.toJsonObjectList()
             .map { Lesson.fromJson(it) }
             .filter { KretaDateParser.isSameLocalDay(it.startEpochMs, targetDate, zoneId) }
+            .sortedBy { it.startEpochMs }
+    }
+
+    suspend fun fetchUpcomingTimetable(
+        session: StoredSession,
+        startDate: LocalDate = LocalDate.now(),
+        daysAhead: Int = DEFAULT_UPCOMING_DAYS,
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): List<Lesson> {
+        val base = instituteBaseUrl(session.instituteCode)
+        val endDate = startDate.plusDays(daysAhead.toLong().coerceAtLeast(1L))
+        val fromStr = startDate.toString()
+        val toStr = endDate.toString()
+        val url = "$base${KretaSharedConfig.ENDPOINT_TIMETABLE}?datumTol=$fromStr&datumIg=$toStr"
+        val body = getAuthenticatedBody(session, url)
+        if (body.isBlank()) return emptyList()
+
+        val array = JSONArray(body)
+        return array.toJsonObjectList()
+            .map { Lesson.fromJson(it) }
+            .filter {
+                val lessonDay = KretaDateParser.localDateFor(it.startEpochMs, zoneId)
+                !lessonDay.isBefore(startDate) && !lessonDay.isAfter(endDate)
+            }
             .sortedBy { it.startEpochMs }
     }
 
@@ -179,19 +211,39 @@ class KretaWearApiClient(
         zoneId: ZoneId = ZoneId.systemDefault(),
     ): CachedWearData = coroutineScope {
         val validSession = ensureValidSession(session)
-        val lessonsDeferred = async { fetchTodaysTimetable(validSession, targetDate, zoneId) }
-        val gradesDeferred = async { fetchAllGrades(validSession) }
+        val dateKey = targetDate.toString()
+        val initialAccountKey = SecureTokenStorage.accountKeyFor(latestSession ?: validSession)
+        val existingCache = tokenStore.loadWearDataCache(initialAccountKey, dateKey)
+
+        val lessonsDeferred = async {
+            fetchUpcomingTimetable(validSession, targetDate, daysAhead = DEFAULT_UPCOMING_DAYS, zoneId = zoneId)
+        }
+        val gradesDeferred = async {
+            try {
+                fetchAllGrades(validSession)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Exception) {
+                existingCache?.grades ?: emptyList()
+            }
+        }
         val homeworksDeferred = async {
-            runCatching { fetchHomeworks(validSession, targetDate) }.getOrDefault(emptyList())
+            try {
+                fetchHomeworks(validSession, targetDate)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Exception) {
+                existingCache?.homeworks ?: emptyList()
+            }
         }
 
         val lessons = lessonsDeferred.await()
         val grades = gradesDeferred.await()
         val homeworks = homeworksDeferred.await()
 
-        val dateKey = targetDate.toString()
         val syncedAt = System.currentTimeMillis()
-        val accountKey = SecureTokenStorage.accountKeyFor(latestSession ?: validSession)
+        val effectiveSession = latestSession ?: tokenStore.loadSession() ?: validSession
+        val accountKey = SecureTokenStorage.accountKeyFor(effectiveSession)
         tokenStore.saveWearDataCache(
             accountKey = accountKey,
             dateKey = dateKey,
@@ -199,6 +251,12 @@ class KretaWearApiClient(
             homeworks = homeworks,
             grades = grades,
             syncedAtEpochMs = syncedAt,
+            studentName = effectiveSession.studentName,
+            studentUid = effectiveSession.studentUid,
+            instituteName = effectiveSession.instituteName,
+            instituteCode = effectiveSession.instituteCode,
+            schoolYearUid = effectiveSession.schoolYearUid,
+            userName = effectiveSession.userName,
         )
 
         CachedWearData(
@@ -207,6 +265,12 @@ class KretaWearApiClient(
             lessons = lessons,
             homeworks = homeworks,
             grades = grades,
+            studentName = effectiveSession.studentName,
+            studentUid = effectiveSession.studentUid,
+            instituteName = effectiveSession.instituteName,
+            instituteCode = effectiveSession.instituteCode,
+            schoolYearUid = effectiveSession.schoolYearUid,
+            userName = effectiveSession.userName,
         )
     }
 
@@ -285,6 +349,9 @@ class KretaWearApiClient(
     }
 
     companion object {
+        private const val DEFAULT_UPCOMING_DAYS = 10
+        private val globalRefreshMutex = Mutex()
+
         fun firstSchoolDay(reference: LocalDate = LocalDate.now()): LocalDate {
             val sept1 = LocalDate.of(reference.year, 9, 1)
             return if (reference.isBefore(sept1)) {

@@ -221,7 +221,8 @@ class WearRemoteAuthManager private constructor(context: Context) :
         fromLiveChange: Boolean,
     ) = callbackMutex.withLock {
         val payload = AuthSessionPayload.fromMap(values) ?: return@withLock
-        val hadSession = tokenStore.loadSession() != null
+        val existingSession = tokenStore.loadSession()
+        val hadSession = existingSession != null
         if (!hadSession && fromLiveChange) {
             _status.value = RemoteAuthStatus.SavingSession
         }
@@ -230,6 +231,10 @@ class WearRemoteAuthManager private constructor(context: Context) :
             payload = payload,
             fromLiveChange = fromLiveChange,
         ) ?: return@withLock
+
+        if (!fromLiveChange && existingSession == savedSession) {
+            return@withLock
+        }
 
         KretaSyncScheduler.ensurePeriodicSync(appContext)
         KretaSyncScheduler.triggerImmediateSync(appContext)

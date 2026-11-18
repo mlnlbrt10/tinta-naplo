@@ -12,6 +12,7 @@ import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
 import '../widgets/glass_card.dart';
+import '../widgets/tinta_toast.dart';
 
 /// Parsed metadata from `https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest`.
 class GitHubReleaseInfo {
@@ -91,20 +92,20 @@ class GitHubUpdaterService {
   static const String repoUrl = 'https://github.com/mlnlbrt10/tinta-naplo';
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest';
-  static const String fallbackAppVersion = '1.1.1';
-  static const String fallbackBuildNumber = '13';
-  static const String defaultApkFileName = 'tinta-naplo-v1.1.1.apk';
+  static const String fallbackAppVersion = '1.2.0';
+  static const String fallbackBuildNumber = '15';
+  static const String defaultApkFileName = 'tinta-naplo-v1.2.0.apk';
 
   static bool _hasCheckedOnStartup = false;
 
-  /// Resolves the target APK file name for a given release tag (`tinta-naplo-v1.1.1.apk`).
+  /// Resolves the target APK file name for a given release tag (`tinta-naplo-v1.2.0.apk`).
   static String apkFileNameForTag(String tagName) {
     final clean = _stripPrefix(tagName);
     if (clean.isEmpty) return defaultApkFileName;
     return 'tinta-naplo-v$clean.apk';
   }
 
-  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.1.1`.
+  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.2.0`.
   static Future<String> fetchLatestReleaseTag({http.Client? httpClient}) async {
     final client = httpClient ?? http.Client();
     try {
@@ -308,35 +309,26 @@ class GitHubUpdaterService {
         }
 
         if (manual) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                uwu('A legfrissebb verziót használod (v$currentVersion)!'),
-              ),
-            ),
+          TintaToast.success(
+            context,
+            uwu('A legfrissebb verziót használod (v$currentVersion)!'),
           );
         }
       } else if (manual) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              uwu(
-                response.statusCode == 404
-                    ? 'Még nincs közzétett kiadás a GitHubon (v$currentVersion a legújabb).'
-                    : 'Nem sikerült lekérdezni a frissítéseket (HTTP ${response.statusCode}).',
-              ),
-            ),
+        TintaToast.info(
+          context,
+          uwu(
+            response.statusCode == 404
+                ? 'Még nincs közzétett kiadás a GitHubon (v$currentVersion a legújabb).'
+                : 'Nem sikerült lekérdezni a frissítéseket (HTTP ${response.statusCode}).',
           ),
         );
       }
     } catch (_) {
       if (manual && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              uwu('Hálózati hiba a GitHub frissítések ellenőrzésekor.'),
-            ),
-          ),
+        TintaToast.error(
+          context,
+          uwu('Hálózati hiba a GitHub frissítések ellenőrzésekor.'),
         );
       }
     }

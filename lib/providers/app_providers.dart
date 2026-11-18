@@ -15,10 +15,18 @@ import '../theme/oled_theme.dart';
 /// persistence.
 class SettingsProvider extends ChangeNotifier {
   static const String completedHomeworkPrefsKey = 'completed_homework_ids_v1';
+  static const String acknowledgedGradesPrefsKey = 'acknowledged_grade_ids_v1';
+  static const String acknowledgedGradesInitPrefsKey =
+      'acknowledged_grades_initialized_v1';
 
   final TokenStorageService _storage;
   UserProfilePrefs _prefs;
   Set<String> _completedHomeworkIds;
+  Set<String> _acknowledgedGradeIds = <String>{};
+  Set<String> _glowingGradeIds = <String>{};
+  bool _acknowledgedGradesInitialized = false;
+  bool _gradePrefsLoaded = false;
+  Future<void>? _gradePrefsLoadFuture;
   Future<void> _saveQueue = Future<void>.value();
 
   SettingsProvider({
@@ -29,11 +37,145 @@ class SettingsProvider extends ChangeNotifier {
         _completedHomeworkIds = Set<String>.from(initialCompletedHomeworkIds),
         _storage = storage ?? const TokenStorageService() {
     UserProfilePrefs.syncActiveGlobals(_prefs);
+    _gradePrefsLoadFuture = _loadGradeGlowStateFromPrefs();
   }
 
   UserProfilePrefs get prefs => _prefs;
+  bool get demoModeEnabled => _prefs.demoModeEnabled;
+  bool get minimalistModeEnabled => _prefs.minimalistModeEnabled;
   Set<String> get completedHomeworkIds =>
       Set<String>.unmodifiable(_completedHomeworkIds);
+  Set<String> get glowingGradeIds => Set<String>.unmodifiable(_glowingGradeIds);
+
+  static String gradeGlowKey(Grade grade) {
+    final trimmed = grade.uid.trim();
+    if (trimmed.isNotEmpty) return trimmed;
+    final subj =
+        grade.subject.uid.isNotEmpty ? grade.subject.uid : grade.subject.name;
+    return '${subj}_${grade.recordedAt.toUtc().toIso8601String()}_${grade.numericValue ?? grade.strValue}';
+  }
+
+  bool isGradeGlowing(Grade grade) =>
+      _glowingGradeIds.contains(gradeGlowKey(grade));
+
+  bool hasGlowingGradesForSubject(Iterable<Grade> subjectGrades) {
+    if (_glowingGradeIds.isEmpty) return false;
+    for (final g in subjectGrades) {
+      if (_glowingGradeIds.contains(gradeGlowKey(g))) return true;
+    }
+    return false;
+  }
+
+  static Future<SharedPreferences?> _safePrefs() async {
+    try {
+      return await SharedPreferences.getInstance()
+          .then<SharedPreferences?>((sp) => sp)
+          .timeout(
+            const Duration(milliseconds: 800),
+            onTimeout: () => null,
+          );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _loadGradeGlowStateFromPrefs() async {
+    if (_gradePrefsLoaded) return;
+    try {
+      final sp = await _safePrefs();
+      if (sp == null) return;
+      final initialized = sp.getBool(acknowledgedGradesInitPrefsKey) ?? false;
+      final list = sp.getStringList(acknowledgedGradesPrefsKey);
+      _acknowledgedGradesInitialized = initialized;
+      if (list != null) {
+        _acknowledgedGradeIds =
+            list.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
+      }
+    } catch (_) {
+      // Keep safe in-memory fallback when SharedPreferences isn't available.
+    } finally {
+      _gradePrefsLoaded = true;
+    }
+  }
+
+  Future<void> _saveAcknowledgedGradeIdsToPrefs(Set<String> ids) async {
+    try {
+      final sp = await _safePrefs();
+      if (sp == null) return;
+      final sorted = ids.toList()..sort();
+      await sp.setStringList(acknowledgedGradesPrefsKey, sorted);
+      await sp.setBool(acknowledgedGradesInitPrefsKey, true);
+    } catch (_) {}
+  }
+
+  /// Registers [grades] for first-seen glow tracking:
+  /// - First launch: initializes baseline with all existing IDs (no glow).
+  /// - Subsequent syncs/launches: any unseen ID glows in-memory during this
+  ///   session AND is persisted immediately so future launches won't re-glow.
+  Future<void> ingestGrades(Iterable<Grade> grades) async {
+    await (_gradePrefsLoadFuture ??= _loadGradeGlowStateFromPrefs());
+    final incomingKeys =
+        grades.map(gradeGlowKey).where((k) => k.isNotEmpty).toSet();
+    if (incomingKeys.isEmpty) return;
+
+    if (!_acknowledgedGradesInitialized) {
+      _acknowledgedGradesInitialized = true;
+      _acknowledgedGradeIds = Set<String>.from(incomingKeys);
+      final snapshot = Set<String>.from(_acknowledgedGradeIds);
+      _saveQueue = _saveQueue
+          .then((_) => _saveAcknowledgedGradeIdsToPrefs(snapshot))
+          .catchError((_) {});
+      return;
+    }
+
+    final newlySeen = incomingKeys.difference(_acknowledgedGradeIds);
+    if (newlySeen.isEmpty) return;
+
+    _acknowledgedGradeIds = <String>{..._acknowledgedGradeIds, ...newlySeen};
+    _glowingGradeIds = <String>{..._glowingGradeIds, ...newlySeen};
+    notifyListeners();
+
+    final snapshot = Set<String>.from(_acknowledgedGradeIds);
+    _saveQueue = _saveQueue
+        .then((_) => _saveAcknowledgedGradeIdsToPrefs(snapshot))
+        .catchError((_) {});
+  }
+
+  void dismissGradeGlow(Grade grade) => dismissGradeGlowById(gradeGlowKey(grade));
+
+  void dismissGradeGlowById(String gradeKey) {
+    final trimmed = gradeKey.trim();
+    if (trimmed.isEmpty || !_glowingGradeIds.contains(trimmed)) return;
+    final next = Set<String>.from(_glowingGradeIds)..remove(trimmed);
+    _glowingGradeIds = next;
+    notifyListeners();
+  }
+
+  void clearAllGradeGlows() {
+    if (_glowingGradeIds.isEmpty) return;
+    _glowingGradeIds = <String>{};
+    notifyListeners();
+  }
+
+  /// Resets the first-seen grade acknowledgment baseline in local storage and
+  /// memory so newly synced (or optional [previewGrades]) will highlight cleanly.
+  Future<void> resetGradeGlowBaseline({Iterable<Grade>? previewGrades}) async {
+    _acknowledgedGradeIds = <String>{};
+    _acknowledgedGradesInitialized = false;
+    _glowingGradeIds = previewGrades != null
+        ? previewGrades.map(gradeGlowKey).where((k) => k.isNotEmpty).toSet()
+        : <String>{};
+    notifyListeners();
+
+    final queued = _saveQueue.then((_) async {
+      final sp = await _safePrefs();
+      if (sp == null) return;
+      await sp.remove(acknowledgedGradesPrefsKey);
+      await sp.remove(acknowledgedGradesInitPrefsKey);
+    }).catchError((_) {});
+    _saveQueue = queued;
+    await queued;
+  }
 
   static String homeworkCompletionKey(Homework homework) {
     final uid = homework.uid.trim();
@@ -43,7 +185,8 @@ class SettingsProvider extends ChangeNotifier {
 
   static Future<Set<String>> loadCompletedHomeworkIdsFromPrefs() async {
     try {
-      final sp = await SharedPreferences.getInstance();
+      final sp = await _safePrefs();
+      if (sp == null) return <String>{};
       final list = sp.getStringList(completedHomeworkPrefsKey);
       if (list == null) return <String>{};
       return list.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
@@ -54,7 +197,8 @@ class SettingsProvider extends ChangeNotifier {
 
   static Future<void> saveCompletedHomeworkIdsToPrefs(Set<String> ids) async {
     try {
-      final sp = await SharedPreferences.getInstance();
+      final sp = await _safePrefs();
+      if (sp == null) return;
       final sorted = ids.toList()..sort();
       await sp.setStringList(completedHomeworkPrefsKey, sorted);
     } catch (_) {}
@@ -73,6 +217,7 @@ class SettingsProvider extends ChangeNotifier {
   Future<UserProfilePrefs> load() async {
     final loaded = await _storage.loadProfilePrefs();
     final completed = await loadCompletedHomeworkIdsFromPrefs();
+    await (_gradePrefsLoadFuture ??= _loadGradeGlowStateFromPrefs());
     _prefs = loaded;
     if (completed.isNotEmpty) {
       _completedHomeworkIds = completed;
@@ -139,6 +284,11 @@ class SettingsProvider extends ChangeNotifier {
   /// Persists custom timetable period number badge color (`null` = theme default).
   Future<void> setTimetablePeriodColor(int? argb) =>
       updateWith((p) => p.withTimetablePeriodColor(argb));
+
+  /// Toggles isolated showcase Demo Mode (`Kovács Bence` dataset) without
+  /// touching stored real credentials or KRÉTA caches.
+  Future<void> setDemoModeEnabled(bool enabled) =>
+      updateWith((p) => p.withDemoMode(enabled));
 
   /// Waits for any in-flight persistence writes to finish (useful in tests).
   Future<void> flushPersistence() => _saveQueue;
@@ -248,6 +398,7 @@ class _ThemeSnapshot {
   final Map<int, int> customGradeColors;
   final ModalCloseButtonMode modalCloseMode;
   final int? timetablePeriodColorValue;
+  final bool minimalistModeEnabled;
 
   const _ThemeSnapshot({
     required this.themeStyle,
@@ -269,6 +420,7 @@ class _ThemeSnapshot {
     required this.customGradeColors,
     required this.modalCloseMode,
     this.timetablePeriodColorValue,
+    required this.minimalistModeEnabled,
   });
 
   factory _ThemeSnapshot.fromPrefs(UserProfilePrefs p) => _ThemeSnapshot(
@@ -291,6 +443,7 @@ class _ThemeSnapshot {
         customGradeColors: p.customGradeColors,
         modalCloseMode: p.modalCloseMode,
         timetablePeriodColorValue: p.timetablePeriodColorValue,
+        minimalistModeEnabled: p.minimalistModeEnabled,
       );
 
   @override
@@ -315,6 +468,7 @@ class _ThemeSnapshot {
         other.cardBlurSigma == cardBlurSigma &&
         other.modalCloseMode == modalCloseMode &&
         other.timetablePeriodColorValue == timetablePeriodColorValue &&
+        other.minimalistModeEnabled == minimalistModeEnabled &&
         mapEquals(other.customGradeColors, customGradeColors);
   }
 
@@ -338,6 +492,7 @@ class _ThemeSnapshot {
         cardBlurSigma,
         modalCloseMode,
         timetablePeriodColorValue,
+        minimalistModeEnabled,
         customGradeColors.length,
       );
 }

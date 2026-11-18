@@ -9,7 +9,7 @@ apply(from = "../../shared/kreta_config_codegen.gradle.kts")
 android {
     namespace = "hu.rekreta.rekreta_app"
     sourceSets.getByName("main").java.srcDir(layout.buildDirectory.dir("generated/kreta/kotlin").get().asFile)
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -24,7 +24,7 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 36
         multiDexEnabled = true
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
@@ -44,7 +44,7 @@ android {
 
     applicationVariants.all {
         val variant = this
-        val versionLabel = variant.versionName ?: "1.1.1"
+        val versionLabel = variant.versionName ?: "1.2.0"
         val customApkName = "tinta-naplo-v${versionLabel}.apk"
         variant.outputs
             .map { it as com.android.build.gradle.internal.api.BaseVariantOutputImpl }
@@ -101,6 +101,7 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    implementation("androidx.core:core-ktx:1.18.0")
     implementation("androidx.security:security-crypto:1.1.0")
     implementation("com.google.android.gms:play-services-wearable:20.0.1")
 }

@@ -166,7 +166,7 @@ void main() {
         expect(overscrolledLeftPill.left!, lessThan(restingLeft - 5.0));
         expect(overscrolledLeftPill.left!, greaterThanOrEqualTo(restingLeft - 16.0));
 
-        // Check droplet deformation: horizontal stretch, vertical squash, tilt skew
+        // Check droplet deformation: horizontal stretch, vertical squash, subtle tilt skew
         final leftDragMatrix =
             tester.widget<Transform>(transformFinder).transform;
         final dragScaleX = leftDragMatrix.entry(0, 0);
@@ -174,7 +174,7 @@ void main() {
         final dragSkew = leftDragMatrix.entry(0, 1);
         expect(dragScaleX, greaterThan(1.14));
         expect(dragScaleY, lessThan(dragScaleX));
-        expect(dragSkew.abs(), greaterThan(0.005));
+        expect(dragSkew.abs(), greaterThan(0.001));
 
         // Release -> springs smoothly back to index 0
         await leftGesture.up();
@@ -335,21 +335,20 @@ void main() {
         }
 
         final downPill = tester.widget<Positioned>(pillFinder);
-        expect(downPill.top!, greaterThan(5.0));
-        expect(downPill.top!, lessThanOrEqualTo(11.0));
+        // Pill stays vertically anchored (`translateY == 0`) so it never pops past bar edges
+        expect(downPill.top!, closeTo(0.0, 0.01));
 
-        // Volume-preserving 2D stretch: pure vertical pull expands scaleY while narrowing scaleX.
         final downMatrix = tester.widget<Transform>(transformFinder).transform;
         final downScaleX = downMatrix.entry(0, 0);
         final downScaleY = downMatrix.entry(1, 1);
-        expect(downScaleY, greaterThan(downScaleX));
-        expect(downScaleY, greaterThan(1.22));
+        expect(downScaleX, greaterThanOrEqualTo(1.08));
+        expect(downScaleY, lessThanOrEqualTo(1.12));
 
-        // Specular highlight shifts downward on the 1px–1.2px stadium rim painter (no top/bottom chord stripe bars).
+        // 1px–1.2px stadium rim painter stays clean without chord stripe bars.
         final downSurface = tester.widget<LiquidGlassPillSurface>(
           find.byType(LiquidGlassPillSurface),
         );
-        expect(downSurface.highlightBias.dy, greaterThan(0.35));
+        expect(downSurface.highlightBias.dy, closeTo(0.0, 0.05));
         expect(
           find.descendant(
             of: find.byType(LiquidGlassPillSurface),
@@ -378,14 +377,14 @@ void main() {
           greaterThan(0.30),
         );
 
-        // Diagonal drag right & upward blends both axes cleanly.
+        // Diagonal drag right & upward slides X smoothly while keeping translateY == 0.
         for (int i = 0; i < 9; i++) {
           await gesture.moveBy(const Offset(8, -16));
           await tester.pump(const Duration(milliseconds: 16));
         }
         final diagPill = tester.widget<Positioned>(pillFinder);
         expect(diagPill.left!, greaterThan(restingLeft + 15.0));
-        expect(diagPill.top!, lessThan(-4.5));
+        expect(diagPill.top!, closeTo(0.0, 0.01));
 
         // Elastic release springs both X and Y back cleanly.
         await gesture.up();
@@ -455,7 +454,7 @@ void main() {
           closeTo(0.0, 0.01),
         );
 
-        // Reset scroll, then hold >= 90ms before dragging vertically -> pill pulls vertically without scrolling ListView.
+        // Hold >= 90ms and drag vertically: translateY remains 0 and ListView stays steady
         scrollCtrl.jumpTo(0.0);
         await tester.pump();
 
@@ -468,7 +467,7 @@ void main() {
           await tester.pump(const Duration(milliseconds: 16));
         }
 
-        expect(tester.widget<Positioned>(pillFinder).top!, greaterThan(5.0));
+        expect(tester.widget<Positioned>(pillFinder).top!, closeTo(0.0, 0.01));
         expect(scrollCtrl.offset, closeTo(0.0, 0.01));
 
         await holdGesture.up();
@@ -477,7 +476,7 @@ void main() {
     );
 
     testWidgets(
-      'Simple tap segment switch injects subtle vertical liquidity wave during horizontal travel',
+      'Simple tap segment switch keeps translateY strictly 0 during horizontal travel and triggers arrival vertical rebound',
       (tester) async {
         int selected = 0;
         await tester.pumpWidget(
@@ -513,23 +512,39 @@ void main() {
             (w) => w is Positioned && w.width != null && w.height != null,
           ),
         );
+        final transformFinder = find.descendant(
+          of: pillFinder,
+          matching: find.byType(Transform),
+        );
         expect(tester.widget<Positioned>(pillFinder).top!, closeTo(0.0, 0.01));
 
         await tester.tap(find.text('Harmadik'));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 55));
-
-        final midFlightPill = tester.widget<Positioned>(pillFinder);
-        expect(midFlightPill.top!, greaterThan(1.5));
-        expect(midFlightPill.top!, lessThan(6.5));
-        final midSurface = tester.widget<LiquidGlassPillSurface>(
-          find.byType(LiquidGlassPillSurface),
-        );
-        expect(midSurface.highlightBias.dy.abs(), greaterThan(0.05));
+        double maxScaleX = 1.0;
+        double minScaleY = 1.0;
+        double maxArrivalScaleY = 1.0;
+        for (int i = 0; i < 28; i++) {
+          await tester.pump(const Duration(milliseconds: 16));
+          final pill = tester.widget<Positioned>(pillFinder);
+          expect(pill.top!, closeTo(0.0, 0.001));
+          final m = tester.widget<Transform>(transformFinder).transform;
+          final sx = m.entry(0, 0);
+          final sy = m.entry(1, 1);
+          if (sx > maxScaleX) maxScaleX = sx;
+          if (sy < minScaleY) minScaleY = sy;
+          if (sy > maxArrivalScaleY) maxArrivalScaleY = sy;
+        }
+        expect(maxScaleX, greaterThan(1.055));
+        expect(maxScaleX, lessThanOrEqualTo(1.10));
+        expect(minScaleY, lessThan(0.975));
+        expect(maxArrivalScaleY, greaterThan(1.035));
+        expect(maxArrivalScaleY, lessThanOrEqualTo(1.07));
 
         await tester.pumpAndSettle();
         expect(selected, 2);
-        expect(tester.widget<Positioned>(pillFinder).top!, closeTo(0.0, 0.05));
+        expect(tester.widget<Positioned>(pillFinder).top!, closeTo(0.0, 0.001));
+        final settled = tester.widget<Transform>(transformFinder).transform;
+        expect(settled.entry(0, 0), closeTo(1.0, 0.001));
+        expect(settled.entry(1, 1), closeTo(1.0, 0.001));
       },
     );
   });
@@ -766,6 +781,94 @@ void main() {
         expect(week3TabBar.items.length, 5);
         expect(find.text('Szo'), findsNothing);
         expect(find.text('Harmadik hét hétfő fizika'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'Tapping week/date chip opens custom Tinta OLED/Liquid Glass calendar modal (not stock CalendarDatePicker) with month nav, weekday columns, and Ma jump',
+      (tester) async {
+        tester.view.physicalSize = const Size(360, 760);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        final mondayNov16 = DateTime(2026, 11, 16);
+        final mondayNov23 = DateTime(2026, 11, 23);
+        final client = _MultiWeekKretaClient(
+          lessonsByWeekMonday: {
+            mondayNov16: [
+              _fakeLesson(
+                uid: 'cal-nov16',
+                lessonNumber: 1,
+                subjectName: 'Hétfő Matek',
+                start: DateTime(2026, 11, 16, 8, 0),
+              ),
+            ],
+            mondayNov23: [
+              _fakeLesson(
+                uid: 'cal-nov24',
+                lessonNumber: 1,
+                subjectName: 'Kedd Irodalom',
+                start: DateTime(2026, 11, 24, 9, 0),
+              ),
+            ],
+          },
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData.dark(useMaterial3: true),
+            home: Scaffold(
+              body: TimetableScreen(
+                session: _fakeSession(),
+                kretaClient: client,
+                initialTodaysLessons: const [],
+                homeworks: const [],
+                prefs: const UserProfilePrefs(
+                  themeStyle: AppThemeStyle.oledPureBlack,
+                  liquidGlassEnabled: true,
+                ),
+                onPrefsChanged: (_) {},
+                clock: () => mondayNov16,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Tap week date range chip -> opens custom Tinta calendar picker
+        await tester.tap(find.byTooltip('Dátum választása'));
+        await tester.pumpAndSettle();
+
+        expect(find.byType(CalendarDatePicker), findsNothing);
+        expect(find.byType(DatePickerDialog), findsNothing);
+        expect(find.text('2026. november'), findsOneWidget);
+        for (final wd in ['H', 'K', 'Sze', 'Cs', 'P', 'Szo', 'V']) {
+          expect(find.text(wd), findsWidgets);
+        }
+
+        // Navigate month forward & back
+        await tester.tap(find.byTooltip('Következő hónap'));
+        await tester.pumpAndSettle();
+        expect(find.text('2026. december'), findsOneWidget);
+
+        await tester.tap(find.byTooltip('Előző hónap'));
+        await tester.pumpAndSettle();
+        expect(find.text('2026. november'), findsOneWidget);
+
+        // Pick day 24 (Tuesday Nov 24) -> jumps to that week/day
+        await tester.tap(find.text('24').last);
+        await tester.pumpAndSettle();
+        expect(find.text('Kedd Irodalom'), findsOneWidget);
+
+        // Reopen and tap header 'Ma' quick-jump pill -> jumps straight back to Nov 16
+        await tester.tap(find.byTooltip('Dátum választása'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Ma').last);
+        await tester.pumpAndSettle();
+        expect(find.text('Hétfő Matek'), findsOneWidget);
       },
     );
   });

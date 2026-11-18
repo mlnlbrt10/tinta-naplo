@@ -163,16 +163,36 @@ class MenetrendHeroCard extends StatelessWidget {
     final onSurface = theme.colorScheme.onSurface;
     final secondaryText =
         isDark ? OledTheme.textSecondary : onSurface.withValues(alpha: 0.72);
-    final isDelayed = trip.delayMinutes > 0 || trip.isCancelled;
-    final delayColor = trip.isCancelled
-        ? const Color(0xFFEF5350)
-        : (trip.delayMinutes >= 5
-            ? const Color(0xFFFFB300)
-            : const Color(0xFF66BB6A));
+    final bool isDelayed = trip.delayMinutes > 0 && !trip.isCancelled;
+    final Color statusColor;
+    final String statusBadgeText;
+    final IconData statusIcon;
+    if (trip.isCancelled) {
+      statusColor = const Color(0xFFEF4444);
+      statusBadgeText = 'Kimarad';
+      statusIcon = Icons.cancel_rounded;
+    } else if (trip.delayMinutes >= 10) {
+      statusColor = const Color(0xFFEF4444);
+      statusBadgeText = '+${trip.delayMinutes} perc késés';
+      statusIcon = Icons.schedule_rounded;
+    } else if (trip.delayMinutes > 0) {
+      statusColor = const Color(0xFFF59E0B);
+      statusBadgeText = '+${trip.delayMinutes} perc késés';
+      statusIcon = Icons.schedule_rounded;
+    } else {
+      statusColor = const Color(0xFF22C55E);
+      statusBadgeText = 'Időben';
+      statusIcon = Icons.check_circle_rounded;
+    }
 
-    final modeBadgeText = evaluation.isMorningMode
-        ? 'REGGELI INGÁZÁS • ISKOLÁBA'
-        : 'DÉLUTÁNI HAZAÚT • OTTHONBA';
+    final Color? arrivalTimeColor = trip.isCancelled
+        ? const Color(0xFFEF4444)
+        : (trip.delayMinutes >= 10
+            ? const Color(0xFFEF4444)
+            : (trip.delayMinutes > 0 ? const Color(0xFFF59E0B) : null));
+    final displayedArrivalTime = isDelayed
+        ? trip.effectiveDestinationArrivalTimeFormatted
+        : trip.destinationArrivalTimeFormatted;
 
     final countdownBadgeText =
         'Indulásig: ${evaluation.minutesUntilDeparture} perc';
@@ -198,114 +218,86 @@ class MenetrendHeroCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Expanded(
-                    flex: 3,
+                  Flexible(
                     child: Align(
                       alignment: Alignment.centerLeft,
-                      child: Hero(
-                        tag: 'menetrend_hero_card',
-                        flightShuttleBuilder: _buildMenetrendHeroShuttle,
-                        child: Material(
-                          type: MaterialType.transparency,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 9,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: primary.withValues(alpha: 0.18),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  _iconForMode(trip.mode),
-                                  size: 14,
-                                  color: primary,
-                                ),
-                                const SizedBox(width: 5),
-                                Flexible(
-                                  child: Text(
-                                    UwuHelper.apply(modeBadgeText),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 10.5,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: 0.6,
-                                      color: primary,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    flex: 2,
-                    child: Align(
-                      alignment: Alignment.centerRight,
                       child: FittedBox(
                         fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerRight,
+                        alignment: Alignment.centerLeft,
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 9,
-                            vertical: 4,
+                            horizontal: 10,
+                            vertical: 4.5,
                           ),
                           decoration: BoxDecoration(
-                            color: delayColor.withValues(alpha: 0.16),
+                            color: statusColor.withValues(alpha: 0.16),
                             borderRadius: BorderRadius.circular(999),
                             border: Border.all(
-                              color: delayColor.withValues(alpha: 0.4),
+                              color: statusColor.withValues(alpha: 0.45),
                             ),
                           ),
-                          child: Text(
-                            trip.isCancelled
-                                ? 'KIMARAD'
-                                : (isDelayed
-                                    ? '+${trip.delayMinutes} perc késés'
-                                    : countdownBadgeText),
-                            maxLines: 1,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                              color: delayColor,
-                            ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                statusIcon,
+                                size: 13.5,
+                                color: statusColor,
+                              ),
+                              const SizedBox(width: 5),
+                              Text(
+                                UwuHelper.apply(statusBadgeText),
+                                maxLines: 1,
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: statusColor,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  Tooltip(
-                    message: 'Megnyitás MenetrendGO-ban',
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(999),
-                      onTap: () => MenetrendService.openInMenetrendGo(
-                        trip: trip,
-                        evaluation: evaluation,
-                        prefs: activePrefs,
+                  const SizedBox(width: 8),
+                  TactileBounce(
+                    pressedScale: 0.95,
+                    onTap: () => MenetrendService.openInMenetrendGo(
+                      trip: trip,
+                      evaluation: evaluation,
+                      prefs: activePrefs,
+                    ),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4.5,
                       ),
-                      child: Container(
-                        padding: const EdgeInsets.all(5),
-                        decoration: BoxDecoration(
-                          color: primary.withValues(alpha: 0.16),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: primary.withValues(alpha: 0.4),
+                      decoration: BoxDecoration(
+                        color: primary.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: primary.withValues(alpha: 0.42),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'MenetrendGO',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w800,
+                              color: primary,
+                            ),
                           ),
-                        ),
-                        child: Icon(
-                          Icons.open_in_new_rounded,
-                          size: 13.5,
-                          color: primary,
-                        ),
+                          const SizedBox(width: 5),
+                          Icon(
+                            Icons.open_in_new_rounded,
+                            size: 13.5,
+                            color: primary,
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -350,26 +342,54 @@ class MenetrendHeroCard extends StatelessWidget {
                       if (trip.legs.length <= 1) ...[
                         ConstrainedBox(
                           constraints: BoxConstraints(maxWidth: maxBadgeW),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: primary.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Text(
-                                safeLine,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 14.5,
-                                  fontWeight: FontWeight.w900,
-                                  color: primary,
+                          child: Hero(
+                            tag: 'menetrend_hero_card',
+                            flightShuttleBuilder: _buildMenetrendHeroShuttle,
+                            child: Material(
+                              type: MaterialType.transparency,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
                                 ),
+                                decoration: BoxDecoration(
+                                  color: primary.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    safeLine,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 14.5,
+                                      fontWeight: FontWeight.w900,
+                                      color: primary,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ] else ...[
+                        Hero(
+                          tag: 'menetrend_hero_card',
+                          flightShuttleBuilder: _buildMenetrendHeroShuttle,
+                          child: Material(
+                            type: MaterialType.transparency,
+                            child: Container(
+                              padding: const EdgeInsets.all(7),
+                              decoration: BoxDecoration(
+                                color: primary.withValues(alpha: 0.16),
+                                borderRadius: BorderRadius.circular(11),
+                              ),
+                              child: Icon(
+                                _iconForMode(trip.mode),
+                                size: 18,
+                                color: primary,
                               ),
                             ),
                           ),
@@ -426,20 +446,22 @@ class MenetrendHeroCard extends StatelessWidget {
                                 ),
                               ),
                               Text(
-                                'Érk: ${trip.destinationArrivalTimeFormatted}',
+                                'Érk: $displayedArrivalTime',
                                 style: TextStyle(
                                   fontSize: 11.5,
-                                  fontWeight: FontWeight.w600,
-                                  color: secondaryText,
+                                  fontWeight: arrivalTimeColor != null
+                                      ? FontWeight.w800
+                                      : FontWeight.w600,
+                                  color: arrivalTimeColor ?? secondaryText,
                                 ),
                               ),
-                              if (trip.delayMinutes > 0 && !trip.isCancelled)
+                              if (isDelayed)
                                 Text(
-                                  'Becsült: ${trip.effectiveDepartureTimeFormatted}',
-                                  style: const TextStyle(
+                                  'Becsült ind.: ${trip.effectiveDepartureTimeFormatted}',
+                                  style: TextStyle(
                                     fontSize: 10.5,
                                     fontWeight: FontWeight.w700,
-                                    color: Color(0xFFFFB300),
+                                    color: statusColor,
                                   ),
                                 ),
                             ],
@@ -558,21 +580,9 @@ class MenetrendHeroCard extends StatelessWidget {
         child: SoftGlassCard(
           prefs: activePrefs,
           padding: const EdgeInsets.symmetric(vertical: 14),
+          borderRadius: OledTheme.largeRadius,
           borderColor: primary.withValues(alpha: 0.35),
-          child: Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  Colors.transparent,
-                  primary.withValues(alpha: isDark ? 0.10 : 0.06),
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: cardContent,
-          ),
+          child: cardContent,
         ),
       ),
     );
@@ -1067,14 +1077,24 @@ class _MenetrendDetailsModalSheetState
                                     _buildTimelineStep(
                                       context: context,
                                       icon: Icons.location_on_rounded,
-                                      time: trip.arrivalTimeFormatted,
+                                      time: (trip.delayMinutes > 0 &&
+                                              !trip.isCancelled)
+                                          ? trip.effectiveArrivalTimeFormatted
+                                          : trip.arrivalTimeFormatted,
+                                      timeColor: trip.isCancelled
+                                          ? const Color(0xFFEF4444)
+                                          : (trip.delayMinutes >= 10
+                                              ? const Color(0xFFEF4444)
+                                              : (trip.delayMinutes > 0
+                                                  ? const Color(0xFFF59E0B)
+                                                  : null)),
                                       title:
                                           'Leszállás: ${HtmlSanitizer.clean(trip.arrivalStation)}',
                                       subtitle: trip.arrivalPlatformCode ??
                                           (trip.mode ==
                                                   MenetrendTransportMode.rail
-                                              ? 'Érkező vágány • jármű érkezése: ${trip.arrivalTimeFormatted}'
-                                              : 'Leszálló megálló • jármű érkezése: ${trip.arrivalTimeFormatted}'),
+                                              ? 'Érkező vágány • jármű érkezése: ${(trip.delayMinutes > 0 && !trip.isCancelled) ? trip.effectiveArrivalTimeFormatted : trip.arrivalTimeFormatted}'
+                                              : 'Leszálló megálló • jármű érkezése: ${(trip.delayMinutes > 0 && !trip.isCancelled) ? trip.effectiveArrivalTimeFormatted : trip.arrivalTimeFormatted}'),
                                       accentColor: const Color(0xFF66BB6A),
                                       isLast: trip.walkToDestinationMinutes <= 0,
                                     ),
@@ -1208,6 +1228,7 @@ class _MenetrendDetailsModalSheetState
     required BuildContext context,
     required IconData icon,
     required String time,
+    Color? timeColor,
     required String title,
     required String subtitle,
     required Color accentColor,
@@ -1255,7 +1276,7 @@ class _MenetrendDetailsModalSheetState
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w800,
-                  color: onSurface,
+                  color: timeColor ?? onSurface,
                 ),
               ),
             ),

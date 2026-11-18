@@ -11,6 +11,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../providers/app_providers.dart';
 import '../services/calendar_sync_service.dart';
+import '../services/demo_data_service.dart';
+import '../services/github_updater_service.dart';
 import '../services/kreta_client.dart';
 import '../services/menetrend_service.dart';
 import '../services/token_storage_service.dart';
@@ -22,7 +24,9 @@ import '../widgets/christmas_snowfall_overlay.dart';
 import '../widgets/edge_fade_horizontal_scroll.dart';
 import '../widgets/frosted_inspection_modal.dart';
 import '../widgets/glass_card.dart';
+import '../widgets/tinta_toast.dart';
 import 'about_app_screen.dart';
+import 'developer_options_screen.dart';
 
 enum _AttendanceFilter {
   all('Összes'),
@@ -658,7 +662,7 @@ class _MoreScreenState extends State<MoreScreen>
       _attendanceFilterFadeCtrl.drive(CurveTween(curve: Curves.easeOutCubic));
   bool _showSentMessages = false;
   bool _isLoadingModules = false;
-  String _appVersion = '1.1.1';
+  String _appVersion = GitHubUpdaterService.fallbackAppVersion;
   bool _initialEntrancePlayed = false;
   bool _entranceActive = false;
 
@@ -756,7 +760,6 @@ class _MoreScreenState extends State<MoreScreen>
 
   Future<void> _syncWithWatch() async {
     if (_isSyncingWear) return;
-    final messenger = ScaffoldMessenger.maybeOf(context);
     setState(() {
       _isSyncingWear = true;
       _wearSyncedRecently = false;
@@ -782,19 +785,13 @@ class _MoreScreenState extends State<MoreScreen>
         _wearStatus = refreshed;
       }
     });
-    if (messenger != null) {
-      messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            ok
-                ? 'Munkamenet szinkronizálva az órával'
-                : 'Nem sikerült szinkronizálni az órával',
-          ),
-          duration: const Duration(seconds: 3),
-        ),
-      );
-    }
+    TintaToast.show(
+      context,
+      ok
+          ? 'Munkamenet szinkronizálva az órával'
+          : 'Nem sikerült szinkronizálni az órával',
+      type: ok ? TintaToastType.success : TintaToastType.error,
+    );
   }
 
   void _loadPersistedReadIds() {
@@ -843,7 +840,15 @@ class _MoreScreenState extends State<MoreScreen>
         }
       });
     }
-    if (widget.initialOmissions.isNotEmpty && _omissions.isEmpty) {
+    if (widget.prefs.demoModeEnabled != oldWidget.prefs.demoModeEnabled ||
+        widget.session.instituteCode != oldWidget.session.instituteCode) {
+      _omissions = List<Omission>.from(widget.initialOmissions);
+      _messages = widget.initialMessages
+          .map(
+            (m) => !m.isRead && _isMessageRead(m) ? m.copyWith(isRead: true) : m,
+          )
+          .toList();
+    } else if (widget.initialOmissions.isNotEmpty && _omissions.isEmpty) {
       _omissions = List<Omission>.from(widget.initialOmissions);
     }
     if (widget.initialMessages != oldWidget.initialMessages &&
@@ -1475,10 +1480,9 @@ class _MoreScreenState extends State<MoreScreen>
 
     if (restoredPrefs != null && mounted) {
       _updatePrefs(restoredPrefs);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(uwu('Beállítások sikeresen visszaállítva!')),
-        ),
+      TintaToast.success(
+        context,
+        uwu('Beállítások sikeresen visszaállítva!'),
       );
     }
   }
@@ -1573,12 +1577,9 @@ class _MoreScreenState extends State<MoreScreen>
       }
     } catch (e) {
       if (feedbackContext.mounted) {
-        ScaffoldMessenger.of(feedbackContext).showSnackBar(
-          SnackBar(
-            content: Text(
-              uwu('Csatolmány megnyitása sikertelen: $e'),
-            ),
-          ),
+        TintaToast.error(
+          feedbackContext,
+          uwu('Csatolmány megnyitása sikertelen: $e'),
         );
       }
     } finally {
@@ -2220,10 +2221,9 @@ class _MoreScreenState extends State<MoreScreen>
         _showSentMessages = true;
       });
       widget.onMessagesChanged?.call(List<KretaMessage>.of(_messages));
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(uwu('Üzenet sikeresen elküldve: ${sent.subject}')),
-        ),
+      TintaToast.success(
+        context,
+        uwu('Üzenet sikeresen elküldve: ${sent.subject}'),
       );
     }
   }
@@ -2282,8 +2282,11 @@ class _MoreScreenState extends State<MoreScreen>
         _SettingsAccordionCard(
           icon: Icons.manage_accounts_rounded,
           title: 'Fiók és munkamenet',
-          subtitle:
-              widget.student?.name ?? widget.session.userName ?? '—',
+          subtitle: (_currentPrefs.demoModeEnabled
+                  ? DemoDataService.demoStudentName
+                  : widget.student?.name) ??
+              widget.session.userName ??
+              '—',
           christmasCap: _currentPrefs.christmasModeEnabled,
           prefs: _currentPrefs,
           stateListenable: _stateVersion,
@@ -2291,30 +2294,39 @@ class _MoreScreenState extends State<MoreScreen>
           childrenBuilder: (subCtx) {
             final theme = Theme.of(subCtx);
             final scheme = theme.colorScheme;
+            final isDemo = _currentPrefs.demoModeEnabled;
+            final displayStudent = isDemo
+                ? DemoDataService.instance.buildDemoStudent()
+                : widget.student;
+            final displaySession = isDemo
+                ? DemoDataService.instance.buildDemoSession()
+                : widget.session;
             return [
             _buildRow(
               scheme,
               'Tanuló neve',
-              widget.student?.name ?? widget.session.userName ?? '—',
+              displayStudent?.name ?? displaySession.userName ?? '—',
             ),
             _buildRow(
               scheme,
               'Beállított becenév',
-              (_currentPrefs.nickname?.trim().isNotEmpty ?? false)
-                  ? _currentPrefs.nickname!
-                  : 'Alapértelmezett',
+              isDemo
+                  ? 'Alapértelmezett'
+                  : ((_currentPrefs.nickname?.trim().isNotEmpty ?? false)
+                      ? _currentPrefs.nickname!
+                      : 'Alapértelmezett'),
             ),
             _buildRow(
               scheme,
               'Intézménykód (iss)',
-              widget.session.instituteCode,
+              displaySession.instituteCode,
             ),
-            if (widget.student != null)
-              _buildRow(scheme, 'Intézmény', widget.student!.instituteName),
+            if (displayStudent != null)
+              _buildRow(scheme, 'Intézmény', displayStudent.instituteName),
             _buildRow(
               scheme,
               'Token lejárat',
-              expFormat.format(widget.session.expiresAt.toLocal()),
+              expFormat.format(displaySession.expiresAt.toLocal()),
             ),
             if (_wearStatus.isConnected) ...[
               _buildRow(
@@ -3183,6 +3195,98 @@ class _MoreScreenState extends State<MoreScreen>
                 ),
               ),
             ),
+            if (_currentPrefs.developerModeUnlocked) ...[
+              const SizedBox(height: 12),
+              TactileBounce(
+                pressedScale: 0.98,
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  Navigator.of(context).push(
+                    SmoothSharedAxisRoute(
+                      page: DeveloperOptionsHubScreen(
+                        prefs: _currentPrefs,
+                        onPrefsChanged: _updatePrefs,
+                        kretaClient: widget.kretaClient,
+                        wearSyncService: widget.wearSyncService,
+                      ),
+                    ),
+                  );
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 12,
+                    horizontal: 14,
+                  ),
+                  decoration: BoxDecoration(
+                    color: OledTheme.uwuPastelPink.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(
+                      color: OledTheme.uwuPastelPink.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const DeveloperIconBubble(
+                        icon: Icons.terminal_rounded,
+                        accentColor: OledTheme.uwuPastelPink,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              uwu('Fejlesztői beállítások'),
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              uwu('Megjelenés, Demó mód, KRÉTA Auth, Wear OS és Cache'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: scheme.onSurface.withValues(alpha: 0.62),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_currentPrefs.demoModeEnabled ||
+                          _currentPrefs.minimalistModeEnabled) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: OledTheme.uwuPastelPink.withValues(
+                              alpha: 0.16,
+                            ),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: const Text(
+                            'Aktív',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w800,
+                              color: OledTheme.uwuPastelPink,
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(width: 6),
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        color: scheme.onSurface.withValues(alpha: 0.72),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ];
           },
         ),
@@ -4468,17 +4572,19 @@ class _AllOmissionsScreenState extends State<AllOmissionsScreen> {
                     : theme.scaffoldBackgroundColor)
                 .withValues(alpha: isDark ? 0.62 : 0.72);
             headerBackdrop = Positioned.fill(
-              child: ClipRect(
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(
-                    sigmaX: blurSigma,
-                    sigmaY: blurSigma,
-                  ),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: tintColor,
-                      border: Border(
-                        bottom: BorderSide(color: borderColor, width: 0.7),
+              child: RepaintBoundary(
+                child: ClipRect(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(
+                      sigmaX: blurSigma,
+                      sigmaY: blurSigma,
+                    ),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: tintColor,
+                        border: Border(
+                          bottom: BorderSide(color: borderColor, width: 0.7),
+                        ),
                       ),
                     ),
                   ),
@@ -4668,9 +4774,16 @@ class _SettingsAccordionCardState extends State<_SettingsAccordionCard> {
                   Container(
                     width: 40,
                     height: 40,
+                    alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: scheme.primary.withValues(alpha: 0.16),
-                      borderRadius: BorderRadius.circular(14),
+                      color: scheme.primary.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(13),
+                      border: Border.all(
+                        color: theme.brightness == Brightness.dark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : scheme.onSurface.withValues(alpha: 0.10),
+                        width: 1,
+                      ),
                     ),
                     child: Icon(widget.icon, size: 20, color: scheme.primary),
                   ),
@@ -5377,14 +5490,11 @@ class _CalendarSyncSettingsSectionState
 
   void _showSnack(String message, {bool isError = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: isError ? Theme.of(context).colorScheme.error : null,
-        ),
-      );
+    TintaToast.show(
+      context,
+      message,
+      type: isError ? TintaToastType.error : TintaToastType.info,
+    );
   }
 
   Future<void> _reloadSettings() async {

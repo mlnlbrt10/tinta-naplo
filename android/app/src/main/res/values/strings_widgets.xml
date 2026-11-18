@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tinta_widget_2x1_label">Órarend • Aktuális óra (2×1)</string>
+    <string name="tinta_widget_2x2_label">Órarend • Aktuális és Következő (2×2)</string>
+    <string name="tinta_widget_2x1_description">Élő óraszám visszaszámláló, tantárgy, terem és hátralévő idő</string>
+    <string name="tinta_widget_2x2_description">Élő visszaszámláló kártya a következő órák és szünetek előnézetével</string>
+</resources>

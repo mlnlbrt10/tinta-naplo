@@ -76,7 +76,7 @@ fun WearLoginScreen(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Image(
-                    painter = painterResource(id = R.mipmap.ic_launcher_round),
+                    painter = painterResource(id = R.drawable.ic_tinta_logo),
                     contentDescription = "Tinta Napló",
                     modifier = Modifier
                         .size(44.dp)

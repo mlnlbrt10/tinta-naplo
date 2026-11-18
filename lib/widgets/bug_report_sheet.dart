@@ -11,6 +11,7 @@ import '../services/github_updater_service.dart';
 import '../services/token_storage_service.dart';
 import '../utils/uwu_helper.dart';
 import 'glass_card.dart';
+import 'tinta_toast.dart';
 
 /// Opens the privacy-masked in-app bug report bottom sheet targeting
 /// `https://ticket.mlnlbrt.hu/api/tickets`.
@@ -76,7 +77,8 @@ class _BugReportModalSheetState extends State<_BugReportModalSheet> {
   final ImagePicker _picker = ImagePicker();
 
   String _selectedCategory = BugReportService.categories.first;
-  String _appVersion = '1.1.1+13';
+  String _appVersion =
+      '${GitHubUpdaterService.fallbackAppVersion}+${GitHubUpdaterService.fallbackBuildNumber}';
   BugAttachment? _attachment;
   String? _attachmentError;
   String? _validationError;
@@ -163,13 +165,10 @@ class _BugReportModalSheetState extends State<_BugReportModalSheet> {
     );
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(uwu('Hibajelentés részletei vágólapra másolva.')),
-        ),
-      );
+    TintaToast.info(
+      context,
+      uwu('Hibajelentés részletei vágólapra másolva.'),
+    );
   }
 
   Future<void> _submit({
@@ -210,17 +209,14 @@ class _BugReportModalSheetState extends State<_BugReportModalSheet> {
 
     if (!mounted) return;
     if (res.success) {
-      final messenger = ScaffoldMessenger.of(context);
+      final rootOverlay = Overlay.maybeOf(context, rootOverlay: true) ??
+          Overlay.maybeOf(context);
+      TintaToast.success(
+        context,
+        uwu('Köszönjük! A hibajelentés sikeresen elküldve.'),
+        overlayOverride: rootOverlay,
+      );
       Navigator.of(context).pop();
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              uwu('Köszönjük! A hibajelentés sikeresen elküldve.'),
-            ),
-          ),
-        );
       return;
     }
 

@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
 import '../providers/app_providers.dart';
+import '../services/demo_data_service.dart';
 import '../services/kreta_client.dart';
 import '../services/token_storage_service.dart';
 import '../services/wear_sync_service.dart';
@@ -16,6 +17,7 @@ import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
 import 'bug_report_sheet.dart';
 import 'glass_card.dart';
+import 'tinta_toast.dart';
 
 /// Sleek top-right CircleAvatar icon for the HomeScreen AppBar.
 /// Wrapped in a `Hero('profile_avatar_hero')` so tapping animates the avatar
@@ -31,6 +33,7 @@ class ProfileTopBarAvatar extends StatelessWidget {
   });
 
   File? _resolveValidPhotoFile() {
+    if (prefs.demoModeEnabled) return null;
     final path = prefs.customPhotoPath;
     if (path == null || path.trim().isEmpty) return null;
     final file = File(path);
@@ -44,6 +47,7 @@ class ProfileTopBarAvatar extends StatelessWidget {
         ? const Color(0xFFD32F2F)
         : scheme.primary;
     final photoFile = _resolveValidPhotoFile();
+    final isDemo = prefs.demoModeEnabled;
 
     return Padding(
       padding: const EdgeInsets.only(right: 14),
@@ -65,19 +69,24 @@ class ProfileTopBarAvatar extends StatelessWidget {
                       width: 2,
                     ),
                   ),
-                  child: CircleAvatar(
-                    radius: 19,
-                    backgroundColor: avatarAccent.withValues(alpha: 0.2),
-                    backgroundImage:
-                        photoFile != null ? FileImage(photoFile) : null,
-                    child: photoFile == null
-                        ? Icon(
-                            Icons.person_rounded,
-                            color: avatarAccent,
-                            size: 20,
-                          )
-                        : null,
-                  ),
+                  child: isDemo
+                      ? DemoStudentAvatar(
+                          size: 38,
+                          accentColor: avatarAccent,
+                        )
+                      : CircleAvatar(
+                          radius: 19,
+                          backgroundColor: avatarAccent.withValues(alpha: 0.2),
+                          backgroundImage:
+                              photoFile != null ? FileImage(photoFile) : null,
+                          child: photoFile == null
+                              ? Icon(
+                                  Icons.person_rounded,
+                                  color: avatarAccent,
+                                  size: 20,
+                                )
+                              : null,
+                        ),
                 ),
               ),
             ),
@@ -242,7 +251,6 @@ class _StreamlinedProfileModalSheetState
     if (_isSyncingWear) return;
     final activePrefs =
         AppProvidersScope.maybeOf(context)?.settings.prefs ?? _prefs;
-    final messenger = ScaffoldMessenger.maybeOf(context);
     setState(() {
       _isSyncingWear = true;
       _wearSyncedRecently = false;
@@ -268,19 +276,13 @@ class _StreamlinedProfileModalSheetState
         _wearStatus = refreshedStatus;
       }
     });
-    if (messenger != null) {
-      messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            ok
-                ? 'Munkamenet szinkronizálva az órával'
-                : 'Nem sikerült szinkronizálni az órával',
-          ),
-          duration: const Duration(seconds: 3),
-        ),
-      );
-    }
+    TintaToast.show(
+      context,
+      ok
+          ? 'Munkamenet szinkronizálva az órával'
+          : 'Nem sikerült szinkronizálni az órával',
+      type: ok ? TintaToastType.success : TintaToastType.error,
+    );
   }
 
   @override
@@ -325,17 +327,41 @@ class _StreamlinedProfileModalSheetState
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Nem sikerült betölteni a képet: $e')),
-      );
+      TintaToast.error(context, 'Nem sikerült betölteni a képet: $e');
     }
   }
 
   File? _resolveValidPhotoFile(UserProfilePrefs prefs) {
+    if (prefs.demoModeEnabled) return null;
     final path = prefs.customPhotoPath;
     if (path == null || path.trim().isEmpty) return null;
     final file = File(path);
     return file.existsSync() ? file : null;
+  }
+
+  Widget _buildMenuIconBubble({
+    required BuildContext context,
+    required IconData icon,
+    required Color tint,
+  }) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    return Container(
+      width: 40,
+      height: 40,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: tint.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.08)
+              : theme.colorScheme.onSurface.withValues(alpha: 0.10),
+          width: 1,
+        ),
+      ),
+      child: Icon(icon, size: 20, color: tint),
+    );
   }
 
   @override
@@ -344,17 +370,28 @@ class _StreamlinedProfileModalSheetState
         AppProvidersScope.maybeOf(context)?.settings.prefs ?? _prefs;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
     final avatarAccent = activePrefs.christmasModeEnabled
         ? const Color(0xFFD32F2F)
         : scheme.primary;
+    final isDemo = activePrefs.demoModeEnabled;
     final photoFile = _resolveValidPhotoFile(activePrefs);
 
-    final displayNick = GreetingUtils.resolveDisplayName(
-      customNickname: activePrefs.nickname,
-      fullStudentName: widget.student?.name,
-    );
+    final displayNick = isDemo
+        ? (widget.student?.name ?? DemoDataService.demoStudentName)
+        : GreetingUtils.resolveDisplayName(
+            customNickname: activePrefs.nickname,
+            fullStudentName: widget.student?.name,
+          );
+
+    final menuTileBg = isDark
+        ? Colors.white.withValues(alpha: 0.04)
+        : scheme.surfaceContainerHigh.withValues(alpha: 0.55);
+    final menuTileBorder = isDark
+        ? Colors.white.withValues(alpha: 0.08)
+        : scheme.onSurface.withValues(alpha: 0.10);
 
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
@@ -369,48 +406,22 @@ class _StreamlinedProfileModalSheetState
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(
-                height: 42,
-                child: Stack(
-                  alignment: Alignment.topCenter,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Container(
-                        width: 42,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: scheme.onSurface.withValues(alpha: 0.24),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 10),
+                  child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: scheme.onSurface.withValues(alpha: 0.24),
+                      borderRadius: BorderRadius.circular(4),
                     ),
-                    Align(
-                      alignment: Alignment.topRight,
-                      child: IconButton(
-                        tooltip: 'Hibajelentés',
-                        iconSize: 20,
-                        visualDensity: VisualDensity.compact,
-                        style: IconButton.styleFrom(
-                          backgroundColor: scheme.surfaceContainerHigh
-                              .withValues(alpha: 0.65),
-                          foregroundColor: scheme.onSurface,
-                        ),
-                        onPressed: () => showBugReportSheet(
-                          context,
-                          student: widget.student,
-                          prefs: activePrefs,
-                        ),
-                        icon: const Icon(Icons.bug_report_outlined),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 4),
               Center(
                 child: GestureDetector(
-                  onTap: _pickCustomPhoto,
+                  onTap: isDemo ? null : _pickCustomPhoto,
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
@@ -427,44 +438,51 @@ class _StreamlinedProfileModalSheetState
                                 width: 2.5,
                               ),
                             ),
-                            child: CircleAvatar(
-                              radius: 40,
-                              backgroundColor:
-                                  avatarAccent.withValues(alpha: 0.2),
-                              backgroundImage: photoFile != null
-                                  ? FileImage(photoFile)
-                                  : null,
-                              child: photoFile == null
-                                  ? Icon(
-                                      Icons.person_rounded,
-                                      color: avatarAccent,
-                                      size: 40,
-                                    )
-                                  : null,
-                            ),
+                            child: isDemo
+                                ? DemoStudentAvatar(
+                                    size: 80,
+                                    accentColor: avatarAccent,
+                                    showClassBadge: true,
+                                  )
+                                : CircleAvatar(
+                                    radius: 40,
+                                    backgroundColor:
+                                        avatarAccent.withValues(alpha: 0.2),
+                                    backgroundImage: photoFile != null
+                                        ? FileImage(photoFile)
+                                        : null,
+                                    child: photoFile == null
+                                        ? Icon(
+                                            Icons.person_rounded,
+                                            color: avatarAccent,
+                                            size: 40,
+                                          )
+                                        : null,
+                                  ),
                           ),
                         ),
                       ),
-                      Positioned(
-                        bottom: -2,
-                        right: -2,
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: scheme.primary,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: theme.scaffoldBackgroundColor,
-                              width: 2,
+                      if (!isDemo)
+                        Positioned(
+                          bottom: -2,
+                          right: -2,
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: scheme.primary,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: theme.scaffoldBackgroundColor,
+                                width: 2,
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.photo_camera_rounded,
+                              size: 14,
+                              color: scheme.onPrimary,
                             ),
                           ),
-                          child: Icon(
-                            Icons.photo_camera_rounded,
-                            size: 14,
-                            color: scheme.onPrimary,
-                          ),
                         ),
-                      ),
                     ],
                   ),
                 ),
@@ -478,103 +496,118 @@ class _StreamlinedProfileModalSheetState
                   color: scheme.onSurface,
                 ),
               ),
-              const SizedBox(height: 12),
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  FilledButton.tonalIcon(
-                    onPressed: _pickCustomPhoto,
-                    icon: const Icon(
-                      Icons.photo_library_rounded,
-                      size: 18,
-                    ),
-                    label: Text(
-                      photoFile != null ? 'Új kép választása' : 'Kép galériából',
-                    ),
+              if (widget.student?.instituteName.isNotEmpty == true) ...[
+                const SizedBox(height: 4),
+                Text(
+                  widget.student!.instituteName,
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: scheme.onSurface.withValues(alpha: 0.65),
                   ),
-                  if (photoFile != null)
-                    OutlinedButton.icon(
-                      onPressed: () => _applyPrefs(
-                        activePrefs.copyWith(clearCustomPhoto: true),
-                      ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              if (!isDemo) ...[
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.tonalIcon(
+                      onPressed: _pickCustomPhoto,
                       icon: const Icon(
-                        Icons.delete_outline_rounded,
+                        Icons.photo_library_rounded,
                         size: 18,
                       ),
-                      label: const Text('Kép törlése'),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _nicknameController,
-                      decoration: InputDecoration(
-                        labelText: uwu('Becenév szerkesztése'),
-                        hintText: 'pl. Alexa',
-                        prefixIcon: const Icon(Icons.person_outline_rounded),
-                        suffixIcon: _nicknameController.text.isNotEmpty
-                            ? IconButton(
-                                tooltip: 'Törlés',
-                                onPressed: () {
-                                  _nicknameController.clear();
-                                  _saveNickname();
-                                },
-                                icon: const Icon(Icons.clear_rounded, size: 18),
-                              )
-                            : null,
-                      ),
-                      onSubmitted: (_) => _saveNickname(),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: avatarAccent,
-                      foregroundColor: scheme.onPrimary,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 15,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(22),
+                      label: Text(
+                        photoFile != null
+                            ? 'Új kép választása'
+                            : 'Kép galériából',
                       ),
                     ),
-                    onPressed: _saveNickname,
-                    child: Text(
-                      uwu('Mentés'),
-                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    if (photoFile != null)
+                      OutlinedButton.icon(
+                        onPressed: () => _applyPrefs(
+                          activePrefs.copyWith(clearCustomPhoto: true),
+                        ),
+                        icon: const Icon(
+                          Icons.delete_outline_rounded,
+                          size: 18,
+                        ),
+                        label: const Text('Kép törlése'),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _nicknameController,
+                        decoration: InputDecoration(
+                          labelText: uwu('Becenév szerkesztése'),
+                          hintText: 'pl. Alexa',
+                          prefixIcon: const Icon(Icons.person_outline_rounded),
+                          suffixIcon: _nicknameController.text.isNotEmpty
+                              ? IconButton(
+                                  tooltip: 'Törlés',
+                                  onPressed: () {
+                                    _nicknameController.clear();
+                                    _saveNickname();
+                                  },
+                                  icon:
+                                      const Icon(Icons.clear_rounded, size: 18),
+                                )
+                              : null,
+                        ),
+                        onSubmitted: (_) => _saveNickname(),
+                      ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
+                    const SizedBox(width: 10),
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: avatarAccent,
+                        foregroundColor: scheme.onPrimary,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 15,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(22),
+                        ),
+                      ),
+                      onPressed: _saveNickname,
+                      child: Text(
+                        uwu('Mentés'),
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+              ],
               if (_wearStatus.isConnected) ...[
                 Container(
                   key: const ValueKey<String>('profile-wear-sync-card'),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 14,
-                    vertical: 10,
+                    vertical: 12,
                   ),
                   decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHigh.withValues(alpha: 0.48),
+                    color: menuTileBg,
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: theme.dividerColor.withValues(alpha: 0.65),
-                    ),
+                    border: Border.all(color: menuTileBorder, width: 1),
                   ),
                   child: Row(
                     children: [
-                      Icon(
-                        Icons.watch_rounded,
-                        size: 18,
-                        color: scheme.primary,
+                      _buildMenuIconBubble(
+                        context: context,
+                        icon: Icons.watch_rounded,
+                        tint: scheme.primary,
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -583,7 +616,7 @@ class _StreamlinedProfileModalSheetState
                               _wearStatus.resolvedDeviceName ?? 'Wear OS óra',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.labelMedium?.copyWith(
+                              style: theme.textTheme.labelLarge?.copyWith(
                                 fontWeight: FontWeight.w800,
                                 color: scheme.onSurface,
                               ),
@@ -638,35 +671,115 @@ class _StreamlinedProfileModalSheetState
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
               ],
               TactileBounce(
+                key: const ValueKey<String>('profile-bug-report-tile'),
+                pressedScale: 0.98,
+                onTap: () => showBugReportSheet(
+                  context,
+                  student: widget.student,
+                  prefs: activePrefs,
+                ),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: menuTileBg,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: menuTileBorder, width: 1),
+                  ),
+                  child: Row(
+                    children: [
+                      _buildMenuIconBubble(
+                        context: context,
+                        icon: Icons.bug_report_rounded,
+                        tint: const Color(0xFFF59E0B),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              uwu('Hibajelentés'),
+                              style: theme.textTheme.labelLarge?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: scheme.onSurface,
+                              ),
+                            ),
+                            Text(
+                              uwu('Hiba vagy visszajelzés küldése'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: scheme.onSurface.withValues(alpha: 0.65),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        color: scheme.onSurface.withValues(alpha: 0.55),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TactileBounce(
+                key: const ValueKey<String>('profile-settings-tile'),
+                pressedScale: 0.98,
                 onTap: widget.onOpenFullSettings,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                    vertical: 15,
-                    horizontal: 18,
+                    horizontal: 14,
+                    vertical: 12,
                   ),
                   decoration: BoxDecoration(
-                    color: scheme.primary,
-                    borderRadius: BorderRadius.circular(24),
+                    color: scheme.primary.withValues(alpha: isDark ? 0.14 : 0.10),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: scheme.primary.withValues(alpha: 0.32),
+                      width: 1,
+                    ),
                   ),
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        Icons.settings_rounded,
-                        size: 20,
-                        color: scheme.onPrimary,
+                      _buildMenuIconBubble(
+                        context: context,
+                        icon: Icons.settings_rounded,
+                        tint: scheme.primary,
                       ),
-                      const SizedBox(width: 10),
-                      Text(
-                        uwu('Alkalmazás beállítások megnyitása'),
-                        style: TextStyle(
-                          color: scheme.onPrimary,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 14,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              uwu('Alkalmazás beállítások'),
+                              style: theme.textTheme.labelLarge?.copyWith(
+                                fontWeight: FontWeight.w900,
+                                color: scheme.onSurface,
+                              ),
+                            ),
+                            Text(
+                              uwu('Témák, értesítések, MenetrendGO és fiók'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: scheme.onSurface.withValues(alpha: 0.68),
+                              ),
+                            ),
+                          ],
                         ),
+                      ),
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        color: scheme.primary,
                       ),
                     ],
                   ),

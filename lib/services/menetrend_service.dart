@@ -498,7 +498,7 @@ class MenetrendService {
         'Content-Type': 'application/json; charset=utf-8',
         'Origin': 'https://mavplusz.hu',
         'Referer': 'https://mavplusz.hu/',
-        'User-Agent': 'MenetrendGO/1.1.1 (Android)',
+        'User-Agent': 'MenetrendGO/1.2.0 (Android)',
       };
 
   /// Snaps any stored walking speed to one of the three supported presets:
@@ -1016,7 +1016,7 @@ class MenetrendService {
         'addressdetails': '1',
       });
       final response = await _http.get(uri, headers: const {
-        'User-Agent': 'TintaNaplo-Android/1.1.1',
+        'User-Agent': 'TintaNaplo-Android/1.2.0',
         'Accept': 'application/json',
       }).timeout(const Duration(seconds: 6));
       if (response.statusCode == 200) {
@@ -1054,7 +1054,7 @@ class MenetrendService {
         'limit': '6',
       });
       final res = await _http
-          .get(photonUri, headers: const {'User-Agent': 'TintaNaplo-Android/1.1.1'})
+          .get(photonUri, headers: const {'User-Agent': 'TintaNaplo-Android/1.2.0'})
           .timeout(const Duration(seconds: 6));
       if (res.statusCode == 200) {
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));
@@ -2023,10 +2023,10 @@ class MenetrendService {
   }
 
   /// Launches the native MenetrendGO Android app (`hu.matepazy.menetrendgo`)
-  /// with pre-filled Origin -> Destination route search parameters (`from`, `to`,
-  /// coordinates, date/time) across `menetrendgo://`, `https://menetrendgo.hu/...`,
-  /// and Android Intent data URI/extras, falling back cleanly to launching the
-  /// app or website normally if parameters are not handled.
+  /// with specific trip parameters (`tripId`, `routeShortName`, origin stop,
+  /// destination stop, departure time) across `menetrendgo://trip`,
+  /// `menetrendgo://route`, `https://menetrendgo.hu/...`, and Android Intent
+  /// extras so MenetrendGO opens that exact trip rather than its home screen.
   static Future<void> openInMenetrendGo({
     MenetrendTripOption? trip,
     CommuteEvaluation? evaluation,
@@ -2053,11 +2053,22 @@ class MenetrendService {
         (isMorning ? prefs?.schoolAddressLon : prefs?.homeAddressLon);
 
     final depDateTime = effectiveTrip?.scheduledDeparture ?? DateTime.now();
+    final arrDateTime = effectiveTrip?.scheduledArrival;
     final timeStr = DateFormat('HH:mm').format(depDateTime);
+    final arrTimeStr =
+        arrDateTime != null ? DateFormat('HH:mm').format(arrDateTime) : '';
     final dateStr = DateFormat('yyyy-MM-dd').format(depDateTime);
-    final routeName = effectiveTrip?.routeShortName ?? '';
+    final routeName = (effectiveTrip?.safeRouteShortName.isNotEmpty == true)
+        ? effectiveTrip!.safeRouteShortName
+        : (effectiveTrip?.routeShortName ?? '').trim();
+    final tripId = effectiveTrip?.tripId.trim() ?? '';
 
     final queryParams = <String, String>{
+      if (tripId.isNotEmpty) ...{
+        'tripId': tripId,
+        'trip_id': tripId,
+        'gtfs_trip_id': tripId,
+      },
       if (fromStation.isNotEmpty) ...{
         'from': fromStation,
         'origin': fromStation,
@@ -2078,16 +2089,42 @@ class MenetrendService {
         'toLon': toLon.toString(),
         'toCoord': '$toLat,$toLon',
       },
+      'dep': timeStr,
       'time': timeStr,
+      'departureTime': timeStr,
+      if (arrTimeStr.isNotEmpty) 'arr': arrTimeStr,
       'date': dateStr,
-      if (routeName.isNotEmpty) 'route': routeName,
+      if (routeName.isNotEmpty) ...{
+        'route': routeName,
+        'line': routeName,
+        'routeShortName': routeName,
+      },
     };
 
     final candidateDeepLinkUris = <String>[
+      if (tripId.isNotEmpty) ...[
+        Uri(
+          scheme: 'menetrendgo',
+          host: 'trip',
+          queryParameters: queryParams,
+        ).toString(),
+        Uri(
+          scheme: 'menetrendgo',
+          host: 'trip',
+          path: '/$tripId',
+          queryParameters: queryParams,
+        ).toString(),
+        Uri(
+          scheme: 'menetrendgo',
+          host: 'route',
+          queryParameters: queryParams,
+        ).toString(),
+        Uri.https('menetrendgo.hu', '/trip', queryParams).toString(),
+      ],
       if (fromStation.isNotEmpty && toStation.isNotEmpty) ...[
         Uri(
           scheme: 'menetrendgo',
-          host: 'search',
+          host: 'timetable',
           queryParameters: queryParams,
         ).toString(),
         Uri(
@@ -2097,7 +2134,7 @@ class MenetrendService {
         ).toString(),
         Uri(
           scheme: 'menetrendgo',
-          host: 'trip',
+          host: 'search',
           queryParameters: queryParams,
         ).toString(),
         Uri.https('menetrendgo.hu', '/search', queryParams).toString(),
@@ -2109,7 +2146,12 @@ class MenetrendService {
       final launched = await _transitChannel.invokeMethod<bool>(
         'launchMenetrendGo',
         {
-          'tab': effectiveTrip != null ? 'trip' : 'search',
+          'tab': tripId.isNotEmpty || effectiveTrip != null ? 'trip' : 'search',
+          if (tripId.isNotEmpty) ...{
+            'tripId': tripId,
+            'trip_id': tripId,
+            'gtfs_trip_id': tripId,
+          },
           if (fromStation.isNotEmpty) ...{
             'from': fromStation,
             'origin': fromStation,
@@ -2138,14 +2180,24 @@ class MenetrendService {
           },
           if (routeName.isNotEmpty) ...{
             'route': routeName,
+            'line': routeName,
+            'lineNumber': routeName,
             'routeShortName': routeName,
+            'route_short_name': routeName,
           },
+          'dep': timeStr,
           'time': timeStr,
           'departureTime': timeStr,
+          'departure_time': timeStr,
+          if (arrTimeStr.isNotEmpty) ...{
+            'arr': arrTimeStr,
+            'arrivalTime': arrTimeStr,
+          },
           'date': dateStr,
           'departureDate': dateStr,
           'departureIso': depDateTime.toIso8601String(),
           'departureEpochMs': depDateTime.millisecondsSinceEpoch.toString(),
+          'departureEpochMillis': depDateTime.millisecondsSinceEpoch,
           'autoSearch': 'true',
           if (candidateDeepLinkUris.isNotEmpty) ...{
             'deepLinkUri': candidateDeepLinkUris.first,

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,6 +8,7 @@ import 'package:kreta_api/kreta_api.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../core/kreta_auth_config.dart';
+import 'demo_data_service.dart';
 import 'token_storage_service.dart';
 
 /// Represents a downloadable file attachment on a Kréta e-Ügyintézés message.
@@ -516,7 +518,7 @@ class KretaClient {
   final String clientId;
 
   StoredSession? _latestSession;
-  Future<StoredSession>? _inFlightRefresh;
+  Completer<bool>? _refreshCompleter;
   final List<KretaMessage> _localSentMessages = [];
 
   KretaClient({
@@ -528,6 +530,10 @@ class KretaClient {
 
   TokenStorageService get storage => _storage;
   StoredSession? get latestSession => _latestSession;
+
+  bool _isDemoActive(StoredSession? session) =>
+      UserProfilePrefs.activeDemoModeEnabled ||
+      DemoDataService.isDemoSession(session);
 
   Map<String, String> get _idpHeaders => const {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -592,31 +598,72 @@ class KretaClient {
   }
 
   /// Refreshes an expired [StoredSession] using `TokenStorageService.refreshToken()`,
-  /// deduplicating concurrent refresh calls across parallel requests.
+  /// enforcing a strict single-flight [Completer] lock across concurrent callers.
   Future<StoredSession> refreshSession(StoredSession current) async {
-    if (_inFlightRefresh != null) {
-      return _inFlightRefresh!;
+    if (_isDemoActive(current)) {
+      return DemoDataService.instance.buildDemoSession();
+    }
+    if (_refreshCompleter != null) {
+      final ok = await _refreshCompleter!.future;
+      StoredSession? storedAfterWait;
+      try {
+        storedAfterWait = await _storage.loadSession();
+      } catch (_) {}
+      final latest = _latestSession ?? storedAfterWait ?? current;
+      if (ok) {
+        return latest;
+      }
+      throw Exception('Concurrent token refresh failed.');
     }
 
-    final future = _storage.refreshToken(
-      session: _latestSession ?? current,
-      httpClient: _http,
-      clientId: clientId,
-    );
-    _inFlightRefresh = future;
+    if (_latestSession != null &&
+        !_latestSession!.isExpired &&
+        _latestSession!.accessToken != current.accessToken) {
+      return _latestSession!;
+    }
+
+    final completer = Completer<bool>();
+    _refreshCompleter = completer;
 
     try {
-      final refreshed = await future;
+      final refreshed = await _storage.refreshToken(
+        session: _latestSession ?? current,
+        httpClient: _http,
+        clientId: clientId,
+      );
       _latestSession = refreshed;
+      completer.complete(true);
       return refreshed;
+    } catch (_) {
+      if (!completer.isCompleted) {
+        completer.complete(false);
+      }
+      rethrow;
     } finally {
-      _inFlightRefresh = null;
+      if (identical(_refreshCompleter, completer)) {
+        _refreshCompleter = null;
+      }
     }
   }
 
   /// Ensures the session has a valid (non-expired) access token, refreshing if needed.
   Future<StoredSession> ensureValidSession(StoredSession session) async {
-    final candidate = _latestSession ?? session;
+    if (_isDemoActive(session)) {
+      return DemoDataService.instance.buildDemoSession();
+    }
+    StoredSession? stored;
+    try {
+      stored = await _storage.loadSession();
+    } catch (_) {
+      stored = null;
+    }
+    var candidate = _latestSession ?? session;
+    if (stored != null &&
+        stored.refreshToken.isNotEmpty &&
+        (stored.expiresAt.isAfter(candidate.expiresAt) ||
+            stored.refreshToken != candidate.refreshToken)) {
+      candidate = stored;
+    }
     if (!candidate.isExpired) {
       _latestSession = candidate;
       return candidate;
@@ -625,11 +672,7 @@ class KretaClient {
   }
 
   /// Transparent Token Refresh Interceptor:
-  /// Wraps any authorized HTTP request. If the token is expired, returns HTTP 401,
-  /// or throws [TokenExpiredException] / [InvalidGrantException], invokes
-  /// `TokenStorageService.refreshToken()` transparently in the background,
-  /// updates the stored access token, and replays the original request once
-  /// before rethrowing.
+  /// Wraps any authorized HTTP request with serialized single-flight token refresh.
   Future<http.Response> _sendWithRetryInterceptor(
     StoredSession session,
     Future<http.Response> Function(String accessToken) sendRequest,
@@ -638,33 +681,30 @@ class KretaClient {
     if (active.isExpired) {
       try {
         active = await refreshSession(active);
+      } on InvalidGrantException {
+        rethrow;
       } catch (_) {
-        // Proceed with current token if pre-emptive refresh fails; 401 handler will retry.
+        // Transient network/5xx error during pre-emptive refresh: keep session
+        // and attempt request so offline errors don't force a logout.
       }
     }
 
-    http.Response response;
-    try {
-      response = await sendRequest(active.accessToken);
-      if (response.statusCode == 401) {
-        throw const TokenExpiredException();
-      }
+    final usedAccessToken = active.accessToken;
+    var response = await sendRequest(usedAccessToken);
+    if (response.statusCode != 401) {
       return response;
-    } on TokenExpiredException {
-      active = await refreshSession(active);
-      final retryResponse = await sendRequest(active.accessToken);
-      if (retryResponse.statusCode == 401) {
-        throw const InvalidGrantException();
-      }
-      return retryResponse;
-    } on InvalidGrantException {
-      active = await refreshSession(active);
-      final retryResponse = await sendRequest(active.accessToken);
-      if (retryResponse.statusCode == 401) {
-        throw const InvalidGrantException();
-      }
-      return retryResponse;
     }
+
+    if (_latestSession != null &&
+        _latestSession!.accessToken != usedAccessToken &&
+        !_latestSession!.isExpired) {
+      active = _latestSession!;
+    } else {
+      active = await refreshSession(active);
+    }
+
+    response = await sendRequest(active.accessToken);
+    return response;
   }
 
   Future<dynamic> _getAuthenticatedJson(
@@ -755,6 +795,9 @@ class KretaClient {
     required DateTime from,
     required DateTime to,
   }) async {
+    if (_isDemoActive(session)) {
+      return DemoDataService.instance.buildTimetableForRange(from, to);
+    }
     final startDay = DateTime(from.year, from.month, from.day);
     final endDay = DateTime(to.year, to.month, to.day);
     final url = KretaEndpoints.getTimeTable(
@@ -808,6 +851,9 @@ class KretaClient {
   /// Fetches all student evaluations via [KretaEndpoints.getGrades] sorted
   /// newest-first by `recordedAt` (`KeszitesDatuma` / `RogzitesDatuma`).
   Future<List<Grade>> fetchAllGrades(StoredSession session) async {
+    if (_isDemoActive(session)) {
+      return DemoDataService.instance.buildDemoGrades();
+    }
     final url = KretaEndpoints.getGrades(session.instituteCode);
     final raw = await _getAuthenticatedJson(session, url);
     if (raw is! List) {
@@ -839,6 +885,9 @@ class KretaClient {
     DateTime? from,
     DateTime? to,
   }) async {
+    if (_isDemoActive(session)) {
+      return DemoDataService.instance.buildDemoHomeworks();
+    }
     try {
       DateTime? effectiveFrom = from;
       final DateTime? effectiveTo = to;
@@ -880,6 +929,12 @@ class KretaClient {
   ) async {
     final trimmed = homeworkUid.trim();
     if (trimmed.isEmpty) return null;
+    if (_isDemoActive(session)) {
+      for (final hw in DemoDataService.instance.buildDemoHomeworks()) {
+        if (hw.uid == trimmed) return hw;
+      }
+      return null;
+    }
     final cleanId = trimmed.split(',').first.trim();
     if (cleanId.isEmpty) return null;
     try {
@@ -942,6 +997,9 @@ class KretaClient {
 
   /// Fetches announced tests/exams via [KretaEndpoints.getTests], sorted newest-first.
   Future<List<Test>> fetchTests(StoredSession session) async {
+    if (_isDemoActive(session)) {
+      return DemoDataService.instance.buildDemoTests();
+    }
     try {
       final url = KretaEndpoints.getTests(session.instituteCode);
       final raw = await _getAuthenticatedJson(session, url);
@@ -968,6 +1026,9 @@ class KretaClient {
 
   /// Fetches student attendance omissions & tardiness via `/ellenorzo/v3/sajat/Mulasztasok`.
   Future<List<Omission>> fetchOmissions(StoredSession session) async {
+    if (_isDemoActive(session)) {
+      return DemoDataService.instance.buildDemoOmissions();
+    }
     try {
       final url = KretaEndpoints.getOmissions(session.instituteCode);
       final raw = await _getAuthenticatedJson(session, url);
@@ -1099,11 +1160,14 @@ class KretaClient {
   /// `Feljegyzesek`), deduplicating, applying local read persistence, and
   /// sorting newest-first chronologically.
   Future<List<KretaMessage>> fetchMessages(StoredSession session) async {
+    if (_isDemoActive(session)) {
+      return DemoDataService.instance.buildDemoMessages();
+    }
     final sources = await Future.wait<List<KretaMessage>>([
       _safeFetchEugyintezesFolder(
         session,
         KretaEndpoints.getEugyintezesSajatMessages(),
-        rethrowAuthErrors: true,
+        rethrowAuthErrors: false,
       ),
       _safeFetchEugyintezesFolder(
         session,
@@ -1168,7 +1232,7 @@ class KretaClient {
     StoredSession session,
     KretaMessage message,
   ) async {
-    if (message.isSystemMessage) {
+    if (message.isSystemMessage || _isDemoActive(session)) {
       return message.copyWith(detailsLoaded: true);
     }
 
@@ -1213,6 +1277,9 @@ class KretaClient {
     StoredSession session,
     KretaMessage message,
   ) async {
+    if (_isDemoActive(session)) {
+      return;
+    }
     final accountKey = TokenStorageService.accountKeyForSession(session);
     final localKeys = <String>[
       message.uid,
@@ -1334,6 +1401,10 @@ class KretaClient {
       'cimzettLista': const [],
       'csatolmanyok': const [],
     };
+    if (_isDemoActive(session)) {
+      _localSentMessages.insert(0, msg);
+      return msg;
+    }
     try {
       final ok = await _postOrPutEugyintezes(
         session,
@@ -1357,6 +1428,9 @@ class KretaClient {
 
   /// Fetches the student profile via [KretaEndpoints.getStudent].
   Future<Student?> fetchStudentProfile(StoredSession session) async {
+    if (_isDemoActive(session)) {
+      return DemoDataService.instance.buildDemoStudent();
+    }
     try {
       final url = KretaEndpoints.getStudent(session.instituteCode);
       final raw = await _getAuthenticatedJson(session, url);
@@ -1376,6 +1450,9 @@ class KretaClient {
     StoredSession initialSession, {
     DateTime? date,
   }) async {
+    if (_isDemoActive(initialSession)) {
+      return DemoDataService.instance.buildDashboardData(nowOverride: date);
+    }
     final session = await ensureValidSession(initialSession);
 
     final results = await Future.wait<Object?>([
@@ -1430,6 +1507,9 @@ class KretaClient {
   /// Loads cached dashboard payload from secure local storage so Főoldal can
   /// render cached cards immediately while background API sync completes.
   Future<DashboardData?> loadCachedDashboard(StoredSession session) async {
+    if (_isDemoActive(session)) {
+      return DemoDataService.instance.buildDashboardData();
+    }
     try {
       final acctKey = TokenStorageService.accountKeyForSession(session);
       final raw = await _storage.loadDashboardCacheJson(acctKey);
@@ -1449,6 +1529,7 @@ class KretaClient {
 
   /// Persists [data] per account for zero-wait startup rendering.
   Future<void> saveCachedDashboard(DashboardData data) async {
+    if (_isDemoActive(data.activeSession)) return;
     try {
       final acctKey =
           TokenStorageService.accountKeyForSession(data.activeSession);

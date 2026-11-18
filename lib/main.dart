@@ -6,14 +6,17 @@ import 'package:kreta_api/kreta_api.dart';
 
 import 'providers/app_providers.dart';
 import 'screens/home_screen.dart';
+import 'screens/login_screen.dart';
 import 'screens/webview_login_screen.dart';
+import 'services/demo_data_service.dart';
 import 'services/dynamic_icon_service.dart';
+import 'services/home_widget_sync_service.dart';
 import 'services/kreta_client.dart';
 import 'services/token_storage_service.dart';
 import 'services/wear_sync_service.dart';
 import 'theme/oled_theme.dart';
-import 'widgets/christmas_snowfall_overlay.dart';
 import 'widgets/tinta_splash_overlay.dart';
+import 'widgets/tinta_toast.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -54,8 +57,6 @@ class _ReKretaAppState extends State<ReKretaApp> {
   bool _showSplashOverlay = true;
   bool _splashIconPrecached = false;
 
-  final TextEditingController _instituteController = TextEditingController();
-  final TextEditingController _usernameController = TextEditingController();
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
       GlobalKey<ScaffoldMessengerState>();
@@ -82,6 +83,7 @@ class _ReKretaAppState extends State<ReKretaApp> {
   void initState() {
     super.initState();
     _settingsProvider.addListener(_onProviderPrefsChanged);
+    HomeWidgetSyncService.instance.initialize();
     WearSyncService.instance.initialize(
       onWatchAuthRequested: () {
         unawaited(_handleWatchAuthRequested());
@@ -111,8 +113,6 @@ class _ReKretaAppState extends State<ReKretaApp> {
     _commuteProvider.dispose();
     _themeProvider.dispose();
     _settingsProvider.dispose();
-    _instituteController.dispose();
-    _usernameController.dispose();
     _rootRevision.dispose();
     super.dispose();
   }
@@ -127,7 +127,8 @@ class _ReKretaAppState extends State<ReKretaApp> {
       final restoredSession = results[0] as StoredSession?;
       final restoredPrefs = results[1] as UserProfilePrefs;
       DashboardData? restoredCache;
-      if (restoredSession != null) {
+      UserProfilePrefs.syncActiveGlobals(restoredPrefs);
+      if (restoredSession != null && !restoredPrefs.demoModeEnabled) {
         restoredCache =
             await _kretaClient.loadCachedDashboard(restoredSession);
         unawaited(
@@ -137,9 +138,10 @@ class _ReKretaAppState extends State<ReKretaApp> {
             nickname: restoredPrefs.nickname,
           ),
         );
+      } else if (restoredPrefs.demoModeEnabled) {
+        restoredCache = DemoDataService.instance.buildDashboardData();
       }
       if (!mounted) return;
-      UserProfilePrefs.syncActiveGlobals(restoredPrefs);
       if (restoredCache != null) {
         _commuteProvider.setLessons(restoredCache.todaysLessons);
       }
@@ -181,14 +183,12 @@ class _ReKretaAppState extends State<ReKretaApp> {
       return;
     }
     _lastWatchSyncFeedbackAt = now;
-    final messenger = _scaffoldMessengerKey.currentState;
-    if (messenger == null) return;
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(seconds: 3),
-      ),
+    final ctx = _navigatorKey.currentContext ?? _scaffoldMessengerKey.currentContext;
+    if (ctx == null) return;
+    TintaToast.info(
+      ctx,
+      message,
+      overlayOverride: _navigatorKey.currentState?.overlay,
     );
   }
 
@@ -206,7 +206,8 @@ class _ReKretaAppState extends State<ReKretaApp> {
       return;
     }
     try {
-      final currentSession = _session;
+      final currentSession =
+          await _tokenStorage.loadSession() ?? _session;
       if (currentSession != null) {
         StoredSession active = currentSession;
         if (active.isExpired) {
@@ -215,10 +216,6 @@ class _ReKretaAppState extends State<ReKretaApp> {
             if (mounted) {
               _set(() => _session = active);
             }
-          } on TokenExpiredException {
-            await _handleLogout();
-            if (mounted) await _openWatchRequestedLogin();
-            return;
           } on InvalidGrantException {
             await _handleLogout();
             if (mounted) await _openWatchRequestedLogin();
@@ -258,11 +255,33 @@ class _ReKretaAppState extends State<ReKretaApp> {
   }
 
   Future<void> _updatePrefs(UserProfilePrefs nextPrefs) async {
-    final prevIcon = _prefs.appIconPreset;
+    final prevPrefs = _prefs;
+    final ctx = _navigatorKey.currentContext;
+    final themeAccent = ctx != null ? Theme.of(ctx).colorScheme.primary : null;
     // Update reactive provider immediately + persist to SharedPreferences & SecureStorage.
     await _settingsProvider.updatePrefs(nextPrefs);
-    if (nextPrefs.appIconPreset != prevIcon) {
+    if (nextPrefs.appIconPreset != prevPrefs.appIconPreset) {
       await DynamicIconService.syncIconWithPrefs(nextPrefs);
+    }
+    final affectsWidgets =
+        nextPrefs.seedColorValue != prevPrefs.seedColorValue ||
+            nextPrefs.themeStyle != prevPrefs.themeStyle ||
+            nextPrefs.uwuModeEnabled != prevPrefs.uwuModeEnabled ||
+            nextPrefs.tsundereModeEnabled != prevPrefs.tsundereModeEnabled ||
+            nextPrefs.liveActivityEnabled != prevPrefs.liveActivityEnabled ||
+            nextPrefs.demoModeEnabled != prevPrefs.demoModeEnabled ||
+            nextPrefs.hideCancelledLessons != prevPrefs.hideCancelledLessons ||
+            nextPrefs.subjectCustomNames.length !=
+                prevPrefs.subjectCustomNames.length ||
+            nextPrefs.teacherCustomNames.length !=
+                prevPrefs.teacherCustomNames.length;
+    if (affectsWidgets) {
+      unawaited(
+        HomeWidgetSyncService.instance.syncPreferencesWithCachedLessons(
+          prefs: nextPrefs,
+          themeAccent: themeAccent,
+        ),
+      );
     }
   }
 
@@ -280,8 +299,6 @@ class _ReKretaAppState extends State<ReKretaApp> {
         MaterialPageRoute(
           builder: (_) => WebViewLoginScreen(
             kretaClient: _kretaClient,
-            initialInstituteCode: _instituteController.text.trim(),
-            initialUsername: _usernameController.text.trim(),
           ),
         ),
       );
@@ -313,6 +330,7 @@ class _ReKretaAppState extends State<ReKretaApp> {
       );
     }
     await _tokenStorage.clearSession();
+    HomeWidgetSyncService.instance.clearMemoryCache();
     unawaited(WearSyncService.instance.clearWatchSession());
     if (!mounted) return;
     _set(() {
@@ -383,9 +401,9 @@ class _ReKretaAppState extends State<ReKretaApp> {
       );
     }
 
-    if (_session != null) {
+    if (_session != null || _prefs.demoModeEnabled) {
       return HomeScreen(
-        initialSession: _session!,
+        initialSession: _session ?? DemoDataService.instance.buildDemoSession(),
         initialCachedData: _cachedDashboard,
         kretaClient: _kretaClient,
         prefs: _prefs,
@@ -396,104 +414,9 @@ class _ReKretaAppState extends State<ReKretaApp> {
 
     return Builder(
       builder: (navContext) {
-        final theme = Theme.of(navContext);
-        final scheme = theme.colorScheme;
-
-        return Scaffold(
-          body: ChristmasAndBackgroundOverlay(
-            prefs: _prefs,
-            child: SafeArea(
-              child: Center(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(24),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 420),
-                    child: ChristmasSnowCap(
-                      enabled: _prefs.christmasModeEnabled,
-                      child: Container(
-                        padding: const EdgeInsets.all(26),
-                        decoration: BoxDecoration(
-                          color: theme.cardTheme.color,
-                          borderRadius: OledTheme.largeRadius,
-                          border: Border.all(color: theme.dividerColor),
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Center(
-                              child: AppBrandIconBadge(
-                                prefs: _prefs,
-                                size: 72,
-                              ),
-                            ),
-                            const SizedBox(height: 18),
-                            Text(
-                              'Tinta Napló',
-                              style: theme.textTheme.headlineMedium?.copyWith(
-                                fontWeight: FontWeight.w900,
-                                color: scheme.onSurface,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Jelentkezz be a hivatalos E-Kréta IDP felületén '
-                              '(OAuth2 PKCE + interaktív reCAPTCHA WebView).',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: scheme.onSurface.withValues(alpha: 0.7),
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 26),
-                            TextField(
-                              controller: _instituteController,
-                              decoration: const InputDecoration(
-                                labelText:
-                                    'Intézményazonosító (opcionális előkitöltés)',
-                                hintText: 'pl. klik035220001',
-                                prefixIcon: Icon(Icons.account_balance_rounded),
-                              ),
-                              textInputAction: TextInputAction.next,
-                            ),
-                            const SizedBox(height: 14),
-                            TextField(
-                              controller: _usernameController,
-                              decoration: const InputDecoration(
-                                labelText:
-                                    'Oktatási azonosító (opcionális előkitöltés)',
-                                hintText: 'pl. 71234567890',
-                                prefixIcon: Icon(Icons.badge_rounded),
-                              ),
-                              textInputAction: TextInputAction.done,
-                            ),
-                            const SizedBox(height: 24),
-                            FilledButton.icon(
-                              style: FilledButton.styleFrom(
-                                backgroundColor: scheme.primary,
-                                foregroundColor: scheme.onPrimary,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 16),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(24),
-                                ),
-                              ),
-                              onPressed: () => _launchWebViewLogin(navContext),
-                              icon: const Icon(Icons.login_rounded),
-                              label: const Text(
-                                'Bejelentkezés E-Kréta WebView-val',
-                                style: TextStyle(fontWeight: FontWeight.w800),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
+        return LoginScreen(
+          prefs: _prefs,
+          onLaunchWebAuth: () => _launchWebViewLogin(navContext),
         );
       },
     );

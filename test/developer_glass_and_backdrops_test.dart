@@ -9,11 +9,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:rekreta_app/providers/app_providers.dart';
 import 'package:rekreta_app/screens/about_app_screen.dart';
+import 'package:rekreta_app/screens/developer_options_screen.dart';
+import 'package:rekreta_app/screens/more_screen.dart';
+import 'package:rekreta_app/services/kreta_client.dart';
 import 'package:rekreta_app/services/token_storage_service.dart';
 import 'package:rekreta_app/theme/oled_theme.dart';
 import 'package:rekreta_app/widgets/animation_helpers.dart';
 import 'package:rekreta_app/widgets/christmas_snowfall_overlay.dart';
 import 'package:rekreta_app/widgets/glass_card.dart';
+import 'package:rekreta_app/widgets/tinta_toast.dart';
 
 Future<Uint8List> _createSolidPngBytes(Color color) async {
   final recorder = ui.PictureRecorder();
@@ -43,6 +47,13 @@ void main() {
     testWidgets(
       '5x version tap unlocks Developer Options and selecting all 5 LiquidGlassModes synchronously updates SettingsProvider & ThemeProvider',
       (tester) async {
+        tester.view.physicalSize = const Size(1080, 2400);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
         final settings = SettingsProvider(
           initialPrefs: const UserProfilePrefs(liquidGlassEnabled: true),
         );
@@ -70,19 +81,69 @@ void main() {
           ),
         );
         await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
+        await tester.pump(const Duration(milliseconds: 500));
 
-        expect(find.text('Liquid Glass Mód (Fizikai optika)'), findsNothing);
+        expect(find.text('Fejlesztői beállítások'), findsNothing);
 
-        // Tap version badge ('v1.1.1') 5 times to unlock Developer Options
-        final versionFinder = find.text('v1.1.1');
+        // Tap version badge ('v1.2.0') 5 times to unlock Developer Options
+        final versionFinder = find.text('v1.2.0');
         for (int i = 0; i < 5; i++) {
           await tester.tap(versionFinder);
           await tester.pump();
         }
-        await tester.pump(const Duration(milliseconds: 300));
+        await tester.pump(const Duration(milliseconds: 500));
+        TintaToast.dismissCurrent(immediate: true);
 
         expect(settings.prefs.developerModeUnlocked, isTrue);
+        // Developer Options are NOT rendered inline inside AboutAppScreen
+        expect(find.text('Fejlesztői beállítások'), findsNothing);
+
+        final fakeSession = StoredSession(
+          accessToken: 'acc',
+          refreshToken: 'ref',
+          idToken: 'id',
+          instituteCode: 'klik001',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        );
+
+        // Mount AppSettingsScreen -> Developer Options is NOT on the Settings root
+        await tester.pumpWidget(
+          AppProvidersScope(
+            settings: settings,
+            theme: theme,
+            commute: commute,
+            child: ListenableBuilder(
+              listenable: Listenable.merge([settings, theme]),
+              builder: (context, _) => MaterialApp(
+                theme: OledTheme.buildTheme(prefs: settings.prefs),
+                home: AppSettingsScreen(
+                  session: fakeSession,
+                  student: null,
+                  kretaClient: KretaClient(),
+                  prefs: settings.prefs,
+                  onPrefsChanged: (_) {},
+                  onLogout: () {},
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Fejlesztői beállítások'), findsNothing);
+
+        // Open "Rendszer / Névjegy" -> Developer Options lives exclusively here
+        await tester.tap(find.text('Rendszer / Névjegy'));
+        await tester.pumpAndSettle();
+        expect(find.text('Fejlesztői beállítások'), findsOneWidget);
+
+        await tester.tap(find.text('Fejlesztői beállítások'));
+        await tester.pumpAndSettle();
+
+        final appearanceTile = find.text('Megjelenés és UI');
+        await tester.ensureVisible(appearanceTile);
+        await tester.tap(appearanceTile);
+        await tester.pumpAndSettle();
+
         expect(find.text('Liquid Glass Mód (Fizikai optika)'), findsOneWidget);
 
         // Select each of the 5 modes and verify immediate synchronous updates
@@ -253,10 +314,17 @@ void main() {
     testWidgets(
       'Custom image backdrop computes 32x32 luminance, renders with ResizeImage(width: 1440), and adapts typography across dim slider changes',
       (tester) async {
-        final tempDir = await Directory.systemTemp.createTemp('tinta_backdrop_');
-        addTearDown(() async {
-          if (await tempDir.exists()) {
-            await tempDir.delete(recursive: true);
+        tester.view.physicalSize = const Size(1080, 2400);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        final tempDir = Directory.systemTemp.createTempSync('tinta_backdrop_');
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
           }
         });
 
@@ -286,7 +354,7 @@ void main() {
               builder: (context, _) => MaterialApp(
                 theme: OledTheme.buildTheme(prefs: settings.prefs),
                 themeAnimationDuration: Duration.zero,
-                home: AboutAppScreen(
+                home: DeveloperOptionsHubScreen(
                   prefs: settings.prefs,
                   onPrefsChanged: (_) {},
                   customImagePicker: () async => brightPng,
@@ -297,7 +365,13 @@ void main() {
           ),
         );
         await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
+        await tester.pump(const Duration(milliseconds: 500));
+
+        // Open Appearance & UI developer sub-page
+        final appearanceTile = find.text('Megjelenés és UI');
+        await tester.ensureVisible(appearanceTile);
+        await tester.tap(appearanceTile);
+        await tester.pumpAndSettle();
 
         // Pick bright custom wallpaper via Developer Options button
         final pickBtn = find.text('Saját háttérkép kiválasztása');

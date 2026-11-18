@@ -6,6 +6,8 @@ import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
 import '../providers/app_providers.dart';
+import '../services/demo_data_service.dart';
+import '../services/home_widget_sync_service.dart';
 import '../services/kreta_client.dart';
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
@@ -15,6 +17,7 @@ import '../widgets/christmas_snowfall_overlay.dart';
 import '../widgets/frosted_inspection_modal.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/period_countdown_badge.dart';
+import '../widgets/tinta_toast.dart';
 
 export '../widgets/period_countdown_badge.dart'
     show
@@ -282,21 +285,17 @@ class _TimetableScreenState extends State<TimetableScreen>
       rawSubj,
       lesson.subject?.uid,
     );
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
+    TintaToast.dismissCurrent();
     if (nextCompleted) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(uwu('Kész: $subjDisplay házi feladat')),
-          duration: const Duration(seconds: 4),
-          action: SnackBarAction(
-            label: uwu('Visszavonás'),
-            onPressed: () {
-              if (!mounted) return;
-              _setLessonHomeworkCompletion(key, false);
-            },
-          ),
-        ),
+      TintaToast.success(
+        context,
+        uwu('Kész: $subjDisplay házi feladat'),
+        duration: const Duration(seconds: 4),
+        actionLabel: uwu('Visszavonás'),
+        onAction: () {
+          if (!mounted) return;
+          _setLessonHomeworkCompletion(key, false);
+        },
       );
     }
   }
@@ -462,7 +461,8 @@ class _TimetableScreenState extends State<TimetableScreen>
         initialDay.month,
         initialDay.day + (8 - initialDay.weekday),
       );
-    } else if (now.hour >= 18 || todaysEnded) {
+    } else if (!widget.prefs.demoModeEnabled &&
+        (now.hour >= 18 || todaysEnded)) {
       // Evening / school day over -> tomorrow (Friday evening -> Monday).
       initialDay = DateTime(
         initialDay.year,
@@ -477,6 +477,7 @@ class _TimetableScreenState extends State<TimetableScreen>
     );
     _currentPage = _basePage + initialDayOffset;
     _pageController = PageController(initialPage: _currentPage);
+    DemoDataService.instance.revision.addListener(_onDemoDataRevised);
     _hydrateFallbackCompletedHomeworkIds();
     _ensureWeekLoaded(0, isInitialLoad: true, prefetchNeighbors: true);
     // Updates only today's scoped lesson/break clock notifier without rebuilding
@@ -490,9 +491,54 @@ class _TimetableScreenState extends State<TimetableScreen>
     });
   }
 
+  void _onDemoDataRevised() {
+    if (!mounted || !widget.prefs.demoModeEnabled) return;
+    _reloadAfterSessionOrDemoSwitch(snapToTodayIfWeekday: true);
+  }
+
+  void _reloadAfterSessionOrDemoSwitch({bool snapToTodayIfWeekday = false}) {
+    setState(() {
+      _weekLessonsCache.clear();
+      _inFlightWeekLoads.clear();
+      _weekErrors.clear();
+    });
+    if (snapToTodayIfWeekday) {
+      final today = DateUtils.dateOnly(_now());
+      if (today.weekday <= 5) {
+        final targetMonday = _mondayOf(today);
+        final weekOffset = _weekOffsetForMonday(targetMonday);
+        final targetPage = _pageForWeekAndDay(weekOffset, today.weekday - 1);
+        _currentPage = targetPage;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _pageController.hasClients) {
+            _pageController.jumpToPage(targetPage);
+          }
+        });
+        _ensureWeekLoaded(
+          weekOffset,
+          forceRefresh: true,
+          prefetchNeighbors: true,
+        );
+        return;
+      }
+    }
+    final pos = _resolvePage(_currentPage);
+    _ensureWeekLoaded(
+      pos.weekOffset,
+      forceRefresh: true,
+      prefetchNeighbors: true,
+    );
+  }
+
   @override
   void didUpdateWidget(covariant TimetableScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.prefs.demoModeEnabled != widget.prefs.demoModeEnabled ||
+        oldWidget.session.instituteCode != widget.session.instituteCode) {
+      _reloadAfterSessionOrDemoSwitch(
+        snapToTodayIfWeekday: widget.prefs.demoModeEnabled,
+      );
+    }
     if (!oldWidget.isActiveTab && widget.isActiveTab) {
       final current = _now();
       if (_isSameDay(_currentDate, current)) {
@@ -536,6 +582,7 @@ class _TimetableScreenState extends State<TimetableScreen>
 
   @override
   void dispose() {
+    DemoDataService.instance.revision.removeListener(_onDemoDataRevised);
     _minuteTicker?.cancel();
     _clockNotifier.dispose();
     _pageController.dispose();
@@ -701,6 +748,16 @@ class _TimetableScreenState extends State<TimetableScreen>
         }
       });
 
+      if (weekOffset == 0 || weekOffset == 1) {
+        unawaited(
+          HomeWidgetSyncService.instance.syncFromLessons(
+            lessons,
+            prefs: widget.prefs,
+            themeAccent: Theme.of(context).colorScheme.primary,
+          ),
+        );
+      }
+
       if (prefetchNeighbors) {
         _prefetchAdjacentWeeks(weekOffset);
       }
@@ -801,14 +858,16 @@ class _TimetableScreenState extends State<TimetableScreen>
 
   Future<void> _openDatePicker() async {
     HapticFeedback.lightImpact();
-    final picked = await showDatePicker(
+    final effectivePrefs =
+        AppProvidersScope.maybeOf(context)?.settings.prefs ?? widget.prefs;
+    final todayNow = _now();
+    final picked = await _showTintaCalendarPicker(
       context: context,
+      prefs: effectivePrefs,
       initialDate: _currentDate,
+      today: DateTime(todayNow.year, todayNow.month, todayNow.day),
       firstDate: DateTime(2023, 9, 1),
       lastDate: DateTime(2030, 8, 31),
-      helpText: 'Ugrás kiválasztott dátumra',
-      cancelText: 'Mégse',
-      confirmText: 'Ugrás',
     );
     if (picked == null || !mounted) return;
 
@@ -1103,26 +1162,19 @@ class _TimetableScreenState extends State<TimetableScreen>
   }) {
     final isDark = theme.brightness == Brightness.dark;
     final liquid = prefs.liquidGlassEnabled;
-    final bubbleFill = liquid
-        ? Colors.white.withValues(alpha: isDark ? 0.11 : 0.45)
-        : scheme.surfaceContainerHigh;
     final bubbleBorder = liquid
-        ? Colors.white.withValues(alpha: isDark ? 0.22 : 0.48)
+        ? Colors.white.withValues(alpha: isDark ? 0.20 : 0.48)
         : theme.dividerColor;
 
     return Tooltip(
       message: tooltip,
       child: TactileBounce(
         onTap: onTap,
-        child: Container(
-          width: 28,
-          height: 28,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: bubbleFill,
-            shape: BoxShape.circle,
-            border: Border.all(color: bubbleBorder, width: 1.0),
-          ),
+        child: SoftGlassCard(
+          prefs: prefs,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: bubbleBorder, width: 1.0),
           child: Icon(
             icon,
             size: 18,
@@ -1150,63 +1202,54 @@ class _TimetableScreenState extends State<TimetableScreen>
     );
     final isViewingToday = _isSameDay(selectedDay, _now());
 
-    final pillBg = liquid
-        ? Colors.white.withValues(alpha: isDark ? 0.09 : 0.40)
-        : scheme.surfaceContainerHigh;
     final pillBorder = liquid
-        ? Colors.white.withValues(alpha: isDark ? 0.18 : 0.42)
+        ? Colors.white.withValues(alpha: isDark ? 0.20 : 0.46)
         : theme.dividerColor;
 
-    return SoftGlassCard(
-      prefs: effectivePrefs,
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
-      borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: pillBorder),
-      child: Row(
-        children: [
-          _buildWeekBubbleButton(
-            theme: theme,
-            scheme: scheme,
-            prefs: effectivePrefs,
-            tooltip: 'Előző hét',
-            icon: Icons.chevron_left_rounded,
-            onTap: () => _shiftWeek(-1),
-          ),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Tooltip(
-              message: uwu('Dátum választása'),
-              child: TactileBounce(
-                onTap: _openDatePicker,
-                child: Container(
-                  height: 28,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: pillBg,
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: pillBorder, width: 0.9),
-                  ),
+    return Row(
+      children: [
+        _buildWeekBubbleButton(
+          theme: theme,
+          scheme: scheme,
+          prefs: effectivePrefs,
+          tooltip: 'Előző hét',
+          icon: Icons.chevron_left_rounded,
+          onTap: () => _shiftWeek(-1),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Tooltip(
+            message: uwu('Dátum választása'),
+            child: TactileBounce(
+              onTap: _openDatePicker,
+              child: SoftGlassCard(
+                prefs: effectivePrefs,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 9,
+                ),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: pillBorder, width: 1.0),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(
                         Icons.date_range_rounded,
-                        size: 13,
+                        size: 14,
                         color: scheme.primary,
                       ),
-                      const SizedBox(width: 4),
-                      Flexible(
-                        child: Text(
-                          _formatCompactWeekRange(monday, endDay),
-                          maxLines: 1,
-                          softWrap: false,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 11.5,
-                            color: scheme.onSurface,
-                          ),
+                      const SizedBox(width: 5),
+                      Text(
+                        _formatCompactWeekRange(monday, endDay),
+                        maxLines: 1,
+                        softWrap: false,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12,
+                          color: scheme.onSurface,
                         ),
                       ),
                     ],
@@ -1215,114 +1258,113 @@ class _TimetableScreenState extends State<TimetableScreen>
               ),
             ),
           ),
-          const SizedBox(width: 4),
-          _buildWeekBubbleButton(
-            theme: theme,
-            scheme: scheme,
-            prefs: effectivePrefs,
-            tooltip: 'Következő hét',
-            icon: Icons.chevron_right_rounded,
-            onTap: () => _shiftWeek(1),
-          ),
-          const SizedBox(width: 5),
-          Tooltip(
-            message: uwu('Ugrás a mai napra'),
-            child: TactileBounce(
-              onTap: _jumpToToday,
-              child: Container(
-                height: 28,
-                padding: const EdgeInsets.symmetric(horizontal: 9),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
+        ),
+        const SizedBox(width: 6),
+        _buildWeekBubbleButton(
+          theme: theme,
+          scheme: scheme,
+          prefs: effectivePrefs,
+          tooltip: 'Következő hét',
+          icon: Icons.chevron_right_rounded,
+          onTap: () => _shiftWeek(1),
+        ),
+        const SizedBox(width: 6),
+        Tooltip(
+          message: uwu('Ugrás a mai napra'),
+          child: TactileBounce(
+            onTap: _jumpToToday,
+            child: SoftGlassCard(
+              prefs: effectivePrefs,
+              color: isViewingToday
+                  ? null
+                  : scheme.primary.withValues(alpha: 0.20),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 9,
+              ),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: isViewingToday
+                    ? pillBorder
+                    : scheme.primary.withValues(alpha: 0.65),
+                width: 1.0,
+              ),
+              child: Text(
+                'Ma',
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  height: 1.15,
                   color: isViewingToday
-                      ? pillBg
-                      : scheme.primary.withValues(alpha: 0.20),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: isViewingToday
-                        ? pillBorder
-                        : scheme.primary.withValues(alpha: 0.65),
-                    width: 0.9,
-                  ),
-                ),
-                child: Text(
-                  'Ma',
-                  maxLines: 1,
-                  softWrap: false,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    color: isViewingToday
-                        ? scheme.onSurface.withValues(alpha: 0.72)
-                        : scheme.primary,
-                  ),
+                      ? scheme.onSurface.withValues(alpha: 0.78)
+                      : scheme.primary,
                 ),
               ),
             ),
           ),
-          const SizedBox(width: 6),
-          Container(
-            height: 28,
-            padding: const EdgeInsets.all(2),
-            decoration: BoxDecoration(
-              color: pillBg,
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: pillBorder, width: 0.9),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildCompactModeSegment(
-                  scheme: scheme,
-                  tooltip: uwu('Napi nézet'),
-                  icon: Icons.view_day_rounded,
-                  selected: !_isWeeklyMode,
-                  onTap: () => _setWeeklyMode(false),
-                ),
-                _buildCompactModeSegment(
-                  scheme: scheme,
-                  tooltip: uwu('Heti nézet'),
-                  icon: Icons.view_week_rounded,
-                  selected: _isWeeklyMode,
-                  onTap: () => _setWeeklyMode(true),
-                ),
-              ],
-            ),
+        ),
+        const SizedBox(width: 6),
+        SoftGlassCard(
+          prefs: effectivePrefs,
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: pillBorder, width: 1.0),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildCompactModeSegment(
+                scheme: scheme,
+                tooltip: uwu('Napi nézet'),
+                icon: Icons.view_day_rounded,
+                selected: !_isWeeklyMode,
+                onTap: () => _setWeeklyMode(false),
+              ),
+              const SizedBox(width: 2),
+              _buildCompactModeSegment(
+                scheme: scheme,
+                tooltip: uwu('Heti nézet'),
+                icon: Icons.view_week_rounded,
+                selected: _isWeeklyMode,
+                onTap: () => _setWeeklyMode(true),
+              ),
+            ],
           ),
-          const SizedBox(width: 4),
-          Tooltip(
-            message: 'Órarend beállítások',
-            child: TactileBounce(
-              onTap: () {
-                HapticFeedback.selectionClick();
-                setState(() => _showFilterPanel = !_showFilterPanel);
-              },
-              child: Container(
-                width: 28,
-                height: 28,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: _showFilterPanel
-                      ? scheme.primary.withValues(alpha: 0.20)
-                      : pillBg,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: _showFilterPanel
-                        ? scheme.primary.withValues(alpha: 0.65)
-                        : pillBorder,
-                    width: 0.9,
-                  ),
-                ),
-                child: Icon(
-                  Icons.tune_rounded,
-                  size: 15,
-                  color: _showFilterPanel ? scheme.primary : scheme.onSurface,
-                ),
+        ),
+        const SizedBox(width: 6),
+        Tooltip(
+          message: 'Órarend beállítások',
+          child: TactileBounce(
+            onTap: () {
+              HapticFeedback.selectionClick();
+              setState(() => _showFilterPanel = !_showFilterPanel);
+            },
+            child: SoftGlassCard(
+              prefs: effectivePrefs,
+              color: _showFilterPanel
+                  ? scheme.primary.withValues(alpha: 0.20)
+                  : null,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 11,
+                vertical: 9,
+              ),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: _showFilterPanel
+                    ? scheme.primary.withValues(alpha: 0.65)
+                    : pillBorder,
+                width: 1.0,
+              ),
+              child: Icon(
+                Icons.tune_rounded,
+                size: 16,
+                color: _showFilterPanel ? scheme.primary : scheme.onSurface,
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -1414,8 +1456,8 @@ class _TimetableScreenState extends State<TimetableScreen>
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutCubic,
-          width: 26,
-          height: 22,
+          width: 28,
+          height: 26,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: selected ? scheme.primary : Colors.transparent,
@@ -1423,7 +1465,7 @@ class _TimetableScreenState extends State<TimetableScreen>
           ),
           child: Icon(
             icon,
-            size: 13.5,
+            size: 15,
             color: selected
                 ? scheme.onPrimary
                 : scheme.onSurface.withValues(alpha: 0.72),
@@ -2413,4 +2455,455 @@ Widget buildOledLessonCard(
       child: card,
     ),
   );
+}
+
+Future<DateTime?> _showTintaCalendarPicker({
+  required BuildContext context,
+  required UserProfilePrefs prefs,
+  required DateTime initialDate,
+  required DateTime today,
+  required DateTime firstDate,
+  required DateTime lastDate,
+}) {
+  return showSoftBlurDialog<DateTime>(
+    context: context,
+    prefs: prefs,
+    maxWidth: 380,
+    borderRadius: BorderRadius.circular(28),
+    contentPadding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+    builder: (dialogContext) => _TintaCalendarPickerContent(
+      initialDate: initialDate,
+      today: today,
+      firstDate: firstDate,
+      lastDate: lastDate,
+    ),
+  );
+}
+
+class _TintaCalendarPickerContent extends StatefulWidget {
+  final DateTime initialDate;
+  final DateTime today;
+  final DateTime firstDate;
+  final DateTime lastDate;
+
+  const _TintaCalendarPickerContent({
+    required this.initialDate,
+    required this.today,
+    required this.firstDate,
+    required this.lastDate,
+  });
+
+  @override
+  State<_TintaCalendarPickerContent> createState() =>
+      _TintaCalendarPickerContentState();
+}
+
+class _TintaCalendarPickerContentState
+    extends State<_TintaCalendarPickerContent> {
+  static const List<String> _monthNames = [
+    'január',
+    'február',
+    'március',
+    'április',
+    'május',
+    'június',
+    'július',
+    'augusztus',
+    'szeptember',
+    'október',
+    'november',
+    'december',
+  ];
+
+  static const List<String> _weekdays = [
+    'H',
+    'K',
+    'Sze',
+    'Cs',
+    'P',
+    'Szo',
+    'V',
+  ];
+
+  late DateTime _visibleMonth;
+  int _monthDirection = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _visibleMonth = DateTime(widget.initialDate.year, widget.initialDate.month);
+  }
+
+  bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  bool get _canGoPrev {
+    final prev = DateTime(_visibleMonth.year, _visibleMonth.month - 1);
+    final minMonth = DateTime(widget.firstDate.year, widget.firstDate.month);
+    return !prev.isBefore(minMonth);
+  }
+
+  bool get _canGoNext {
+    final next = DateTime(_visibleMonth.year, _visibleMonth.month + 1);
+    final maxMonth = DateTime(widget.lastDate.year, widget.lastDate.month);
+    return !next.isAfter(maxMonth);
+  }
+
+  void _stepMonth(int delta) {
+    final target = DateTime(_visibleMonth.year, _visibleMonth.month + delta);
+    final minMonth = DateTime(widget.firstDate.year, widget.firstDate.month);
+    final maxMonth = DateTime(widget.lastDate.year, widget.lastDate.month);
+    if (target.isBefore(minMonth) || target.isAfter(maxMonth)) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _monthDirection = delta;
+      _visibleMonth = target;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final selected = DateTime(
+      widget.initialDate.year,
+      widget.initialDate.month,
+      widget.initialDate.day,
+    );
+    final selectedMonday = DateTime(
+      selected.year,
+      selected.month,
+      selected.day - (selected.weekday - 1),
+    );
+    final selectedSunday = DateTime(
+      selectedMonday.year,
+      selectedMonday.month,
+      selectedMonday.day + 6,
+    );
+
+    final firstOfMonth = DateTime(_visibleMonth.year, _visibleMonth.month, 1);
+    final leadingDays = firstOfMonth.weekday - 1;
+    final daysInMonth =
+        DateUtils.getDaysInMonth(_visibleMonth.year, _visibleMonth.month);
+    final rowCount = ((leadingDays + daysInMonth + 6) ~/ 7);
+    final gridStart = DateTime(
+      firstOfMonth.year,
+      firstOfMonth.month,
+      1 - leadingDays,
+    );
+
+    final monthLabel =
+        '${_visibleMonth.year}. ${_monthNames[_visibleMonth.month - 1]}';
+    final isViewingToday = _sameDay(selected, widget.today);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Month navigation header + Ma quick-jump pill
+        Row(
+          children: [
+            _buildNavIconButton(
+              scheme: scheme,
+              isDark: isDark,
+              icon: Icons.chevron_left_rounded,
+              tooltip: 'Előző hónap',
+              enabled: _canGoPrev,
+              onTap: () => _stepMonth(-1),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 210),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  transitionBuilder: (child, anim) {
+                    final offset = Tween<Offset>(
+                      begin: Offset(_monthDirection >= 0 ? 0.12 : -0.12, 0),
+                      end: Offset.zero,
+                    ).animate(anim);
+                    return FadeTransition(
+                      opacity: anim,
+                      child: SlideTransition(position: offset, child: child),
+                    );
+                  },
+                  child: FittedBox(
+                    key: ValueKey<String>(monthLabel),
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      uwu(monthLabel),
+                      maxLines: 1,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w900,
+                        color: scheme.onSurface,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            _buildNavIconButton(
+              scheme: scheme,
+              isDark: isDark,
+              icon: Icons.chevron_right_rounded,
+              tooltip: 'Következő hónap',
+              enabled: _canGoNext,
+              onTap: () => _stepMonth(1),
+            ),
+            const SizedBox(width: 6),
+            TactileBounce(
+              pressedScale: 0.94,
+              onTap: () {
+                HapticFeedback.lightImpact();
+                Navigator.of(context).pop(widget.today);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(
+                    alpha: isViewingToday ? 0.10 : 0.18,
+                  ),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: scheme.primary.withValues(
+                      alpha: isViewingToday ? 0.35 : 0.65,
+                    ),
+                  ),
+                ),
+                child: Text(
+                  'Ma',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    color: scheme.primary,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+
+        // 7-column weekday header
+        Row(
+          children: List.generate(7, (col) {
+            final isWeekend = col >= 5;
+            return Expanded(
+              child: Center(
+                child: Text(
+                  _weekdays[col],
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: scheme.onSurface.withValues(
+                      alpha: isWeekend ? 0.42 : 0.66,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 6),
+
+        // Tabular day grid with highlighted active week row
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          child: Column(
+            key: ValueKey<String>(
+              'grid-${_visibleMonth.year}-${_visibleMonth.month}',
+            ),
+            mainAxisSize: MainAxisSize.min,
+            children: List.generate(rowCount, (row) {
+              final rowStart = DateTime(
+                gridStart.year,
+                gridStart.month,
+                gridStart.day + (row * 7),
+              );
+              final rowEnd = DateTime(
+                rowStart.year,
+                rowStart.month,
+                rowStart.day + 6,
+              );
+              final isSelectedWeekRow = !rowEnd.isBefore(selectedMonday) &&
+                  !rowStart.isAfter(selectedSunday);
+
+              final weekRow = Row(
+                children: List.generate(7, (col) {
+                  final day = DateTime(
+                    rowStart.year,
+                    rowStart.month,
+                    rowStart.day + col,
+                  );
+                  final inMonth = day.month == _visibleMonth.month &&
+                      day.year == _visibleMonth.year;
+                  final inBounds = !day.isBefore(widget.firstDate) &&
+                      !day.isAfter(widget.lastDate);
+                  final isSelected = _sameDay(day, selected);
+                  final isToday = _sameDay(day, widget.today);
+                  final isWeekend = col >= 5;
+
+                  return Expanded(
+                    child: _buildDayCell(
+                      scheme: scheme,
+                      isDark: isDark,
+                      day: day,
+                      inMonth: inMonth,
+                      inBounds: inBounds,
+                      isSelected: isSelected,
+                      isToday: isToday,
+                      isWeekend: isWeekend,
+                    ),
+                  );
+                }),
+              );
+
+              return Container(
+                margin: const EdgeInsets.symmetric(vertical: 1.5),
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                decoration: isSelectedWeekRow
+                    ? BoxDecoration(
+                        color: scheme.primary.withValues(
+                          alpha: isDark ? 0.14 : 0.10,
+                        ),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: scheme.primary.withValues(alpha: 0.25),
+                          width: 1.0,
+                        ),
+                      )
+                    : null,
+                child: weekRow,
+              );
+            }),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton(
+              onPressed: () {
+                HapticFeedback.selectionClick();
+                Navigator.of(context).pop();
+              },
+              child: Text(
+                uwu('Mégse'),
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: scheme.onSurface.withValues(alpha: 0.72),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNavIconButton({
+    required ColorScheme scheme,
+    required bool isDark,
+    required IconData icon,
+    required String tooltip,
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: TactileBounce(
+        pressedScale: 0.92,
+        onTap: enabled ? onTap : null,
+        child: Container(
+          width: 34,
+          height: 34,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: scheme.onSurface.withValues(alpha: isDark ? 0.08 : 0.05),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: scheme.outlineVariant.withValues(alpha: 0.45),
+            ),
+          ),
+          child: Icon(
+            icon,
+            size: 20,
+            color: enabled
+                ? scheme.onSurface
+                : scheme.onSurface.withValues(alpha: 0.25),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDayCell({
+    required ColorScheme scheme,
+    required bool isDark,
+    required DateTime day,
+    required bool inMonth,
+    required bool inBounds,
+    required bool isSelected,
+    required bool isToday,
+    required bool isWeekend,
+  }) {
+    final textColor = !inBounds
+        ? scheme.onSurface.withValues(alpha: 0.18)
+        : isSelected
+            ? scheme.onPrimary
+            : isToday
+                ? scheme.primary
+                : inMonth
+                    ? scheme.onSurface.withValues(alpha: isWeekend ? 0.65 : 1.0)
+                    : scheme.onSurface.withValues(alpha: 0.28);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: inBounds
+          ? () {
+              HapticFeedback.selectionClick();
+              Navigator.of(context).pop(day);
+            }
+          : null,
+      child: SizedBox(
+        height: 36,
+        child: Center(
+          child: Container(
+            width: 32,
+            height: 32,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isSelected
+                  ? scheme.primary
+                  : (isToday
+                      ? scheme.primary.withValues(alpha: isDark ? 0.14 : 0.10)
+                      : Colors.transparent),
+              border: !isSelected && isToday
+                  ? Border.all(color: scheme.primary, width: 1.5)
+                  : null,
+            ),
+            child: Text(
+              '${day.day}',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: isSelected || isToday
+                    ? FontWeight.w900
+                    : (inMonth ? FontWeight.w700 : FontWeight.w500),
+                color: textColor,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
