@@ -85,8 +85,8 @@ void main() {
 
         expect(find.text('Fejlesztői beállítások'), findsNothing);
 
-        // Tap version badge ('v2.0.1') 5 times to unlock Developer Options
-        final versionFinder = find.text('v2.0.1');
+        // Tap version badge ('v2.0.2') 5 times to unlock Developer Options
+        final versionFinder = find.text('v2.0.2');
         for (int i = 0; i < 5; i++) {
           await tester.tap(versionFinder);
           await tester.pump();

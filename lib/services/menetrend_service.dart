@@ -498,7 +498,7 @@ class MenetrendService {
         'Content-Type': 'application/json; charset=utf-8',
         'Origin': 'https://mavplusz.hu',
         'Referer': 'https://mavplusz.hu/',
-        'User-Agent': 'MenetrendGO/2.0.1 (Android)',
+        'User-Agent': 'MenetrendGO/2.0.2 (Android)',
       };
 
   /// Snaps any stored walking speed to one of the three supported presets:
@@ -1016,7 +1016,7 @@ class MenetrendService {
         'addressdetails': '1',
       });
       final response = await _http.get(uri, headers: const {
-        'User-Agent': 'TintaNaplo-Android/2.0.1',
+        'User-Agent': 'TintaNaplo-Android/2.0.2',
         'Accept': 'application/json',
       }).timeout(const Duration(seconds: 6));
       if (response.statusCode == 200) {
@@ -1054,7 +1054,7 @@ class MenetrendService {
         'limit': '6',
       });
       final res = await _http
-          .get(photonUri, headers: const {'User-Agent': 'TintaNaplo-Android/2.0.1'})
+          .get(photonUri, headers: const {'User-Agent': 'TintaNaplo-Android/2.0.2'})
           .timeout(const Duration(seconds: 6));
       if (res.statusCode == 200) {
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));

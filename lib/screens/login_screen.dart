@@ -46,25 +46,25 @@ class _LoginScreenState extends State<LoginScreen>
 
   static const List<_ShowcaseSlideSpec> _screenshotSlides = [
     _ShowcaseSlideSpec(
-      assetPath: 'assets/images/showcase/showcase_1_lesson.jpg',
+      assetPath: 'assets/images/showcase/showcase_1_lesson.webp',
       aspectRatio: 1440 / 860,
       caption:
           'Kövesd az órád, lásd a következőt. Mindig képben lehetsz a napod menetével.',
     ),
     _ShowcaseSlideSpec(
-      assetPath: 'assets/images/showcase/showcase_2_scholarship.jpg',
+      assetPath: 'assets/images/showcase/showcase_2_scholarship.webp',
       aspectRatio: 1438 / 2527,
       caption:
           'Tűzd ki, érd el. Az ösztöndíj-kalkulátorral semmi se lehetetlen.',
     ),
     _ShowcaseSlideSpec(
-      assetPath: 'assets/images/showcase/showcase_3_timetable.jpg',
+      assetPath: 'assets/images/showcase/showcase_3_timetable.webp',
       aspectRatio: 1440 / 2373,
       caption:
           'Egyből csak a lényeg. Lásd könnyen, milyen órád marad el, és melyik lesz helyettesítve.',
     ),
     _ShowcaseSlideSpec(
-      assetPath: 'assets/images/showcase/showcase_4_themes.jpg',
+      assetPath: 'assets/images/showcase/showcase_4_themes.webp',
       aspectRatio: 1440 / 3002,
       caption:
           'A végtelen személyre szabásnak köszönhetően igazán olyan lehet az app, amilyennek Te elképzelted.',

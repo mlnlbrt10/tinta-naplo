@@ -227,34 +227,34 @@ void main() {
       GitHubUpdaterService.latestReleaseApiUrl,
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest',
     );
-    expect(GitHubUpdaterService.fallbackAppVersion, '2.0.1');
-    expect(GitHubUpdaterService.fallbackBuildNumber, '16');
+    expect(GitHubUpdaterService.fallbackAppVersion, '2.0.2');
+    expect(GitHubUpdaterService.fallbackBuildNumber, '17');
     expect(
       GitHubUpdaterService.defaultApkFileName,
-      'tinta-naplo-v2.0.1-arm64-v8a.apk',
+      'tinta-naplo-v2.0.2-arm64-v8a.apk',
     );
     expect(
-      GitHubUpdaterService.apkFileNameForTag('v2.0.1'),
-      'tinta-naplo-v2.0.1-arm64-v8a.apk',
+      GitHubUpdaterService.apkFileNameForTag('v2.0.2'),
+      'tinta-naplo-v2.0.2-arm64-v8a.apk',
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('2.0.1', 'v2.0.2'),
+      GitHubUpdaterService.isRemoteVersionNewer('2.0.2', 'v2.0.3'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('2.0.1', 'v2.0.1'),
+      GitHubUpdaterService.isRemoteVersionNewer('2.0.2', 'v2.0.2'),
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('2.0.1-alpha', 'v2.0.1'),
+      GitHubUpdaterService.isRemoteVersionNewer('2.0.2-alpha', 'v2.0.2'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('2.0.1-alpha', 'v2.0.1-alpha'),
+      GitHubUpdaterService.isRemoteVersionNewer('2.0.2-alpha', 'v2.0.2-alpha'),
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('2.0.1', 'v1.2.0'),
+      GitHubUpdaterService.isRemoteVersionNewer('2.0.2', 'v1.2.0'),
       isFalse,
     );
     // Legacy pre-rebrand v1.2.x / v1.1.x tags must not prompt updates on v1.0.0.
@@ -275,17 +275,17 @@ void main() {
     );
     expect(
       GitHubUpdaterService.isRemoteVersionNewer(
-        '2.0.1',
+        '2.0.2',
         'v2.9.9',
         release: unbrandedRelease,
       ),
       isFalse,
     );
     final brandedFutureRelease = GitHubReleaseInfo.fromJson({
-      'tag_name': 'v2.0.1',
-      'name': 'Tinta Napló v2.0.1',
+      'tag_name': 'v2.0.2',
+      'name': 'Tinta Napló v2.0.2',
       'body': 'Újdonságok',
-      'html_url': 'https://github.com/mlnlbrt10/tinta-naplo/releases/tag/v2.0.1',
+      'html_url': 'https://github.com/mlnlbrt10/tinta-naplo/releases/tag/v2.0.2',
       'assets': [
         {
           'name': 'app-release.apk',
@@ -296,18 +296,18 @@ void main() {
           'browser_download_url': 'https://example.com/app-armeabi-v7a-release.apk',
         },
         {
-          'name': 'tinta-naplo-v2.0.1-arm64-v8a.apk',
-          'browser_download_url': 'https://example.com/tinta-naplo-v2.0.1-arm64-v8a.apk',
+          'name': 'tinta-naplo-v2.0.2-arm64-v8a.apk',
+          'browser_download_url': 'https://example.com/tinta-naplo-v2.0.2-arm64-v8a.apk',
         },
       ],
     });
     expect(
       brandedFutureRelease.apkDownloadUrl,
-      'https://example.com/tinta-naplo-v2.0.1-arm64-v8a.apk',
+      'https://example.com/tinta-naplo-v2.0.2-arm64-v8a.apk',
     );
     final splitArm64FallbackRelease = GitHubReleaseInfo.fromJson({
-      'tag_name': 'v2.0.2',
-      'name': 'Tinta Napló v2.0.2',
+      'tag_name': 'v2.0.3',
+      'name': 'Tinta Napló v2.0.3',
       'assets': [
         {
           'name': 'app-armeabi-v7a-release.apk',
@@ -326,7 +326,7 @@ void main() {
     expect(
       GitHubUpdaterService.isRemoteVersionNewer(
         '1.0.0',
-        'v2.0.1',
+        'v2.0.2',
         release: brandedFutureRelease,
       ),
       isTrue,

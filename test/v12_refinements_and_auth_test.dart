@@ -170,7 +170,7 @@ void main() {
         UserProfilePrefs.syncActiveGlobals(fitymaPrefs);
         expect(UwuHelper.isFitymaEnabled, isTrue);
         expect(uwu('Tinta Napló'), 'Fityma Napló');
-        expect(uwu('Tinta Napló v2.0.1'), 'Fityma Napló v2.0.1');
+        expect(uwu('Tinta Napló v2.0.2'), 'Fityma Napló v2.0.2');
 
         await tester.pumpWidget(
           MaterialApp(

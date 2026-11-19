@@ -415,7 +415,7 @@ void main() {
         reporter: 'A. Milán',
         category: 'UI / Megjelenés',
         description: 'Gomb igazítás hiba az órarendben',
-        appVersion: '2.0.1+16',
+        appVersion: '2.0.2+17',
         osVersion: 'Android (14)',
         themeMode: 'OLED Fekete • Liquid Glass',
         attachment: BugAttachment(
@@ -446,7 +446,7 @@ void main() {
         reporter: 'A. Milán',
         category: 'Hiba / Bug',
         description: 'Progress test',
-        appVersion: '2.0.1+16',
+        appVersion: '2.0.2+17',
         osVersion: 'Android (14)',
         themeMode: 'OLED Fekete',
         attachment: BugAttachment(
@@ -548,7 +548,7 @@ void main() {
                       prefs: const UserProfilePrefs(),
                       httpClient: mockClient,
                       pickImageOverride: () async => XFile(tempImg.path),
-                      appVersionLoader: () async => '2.0.1+16',
+                      appVersionLoader: () async => '2.0.2+17',
                     ),
                     child: const Text('OpenBug'),
                   ),
@@ -564,7 +564,7 @@ void main() {
 
         expect(find.text('Hibajelentés küldése'), findsOneWidget);
         expect(find.text('Beküldő: N. Anna Eszter'), findsOneWidget);
-        expect(find.text('Verzió: 2.0.1+16'), findsOneWidget);
+        expect(find.text('Verzió: 2.0.2+17'), findsOneWidget);
 
         await tester.tap(find.text('Képernyőkép csatolása'));
         await tester.runAsync(
@@ -575,7 +575,7 @@ void main() {
 
         await tester.enterText(
           find.byType(TextField),
-          'Teszt hibaleírás v2.0.1',
+          'Teszt hibaleírás v2.0.2',
         );
         await tester.tap(find.text('UI / Megjelenés'));
         await tester.pump();
@@ -801,13 +801,13 @@ void main() {
                       onPressed: () => GitHubUpdaterService.showFrostedUpdateDialog(
                         context,
                         release: const GitHubReleaseInfo(
-                          tagName: 'v2.0.2',
-                          title: 'v2.0.2',
+                          tagName: 'v2.0.3',
+                          title: 'v2.0.3',
                           releaseNotes: 'Teszt frissítés',
                           htmlUrl: 'https://github.com/mlnlbrt10/tinta-naplo',
                           apkDownloadUrl: 'https://example.com/app.apk',
                         ),
-                        currentVersion: '2.0.1+16',
+                        currentVersion: '2.0.2+17',
                       ),
                       child: const Text('ShowUpdate'),
                     ),

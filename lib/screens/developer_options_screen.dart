@@ -2403,16 +2403,16 @@ class _DeveloperSystemCacheSubPageState
                       context,
                       currentVersion: _version,
                       release: const GitHubReleaseInfo(
-                        tagName: 'v2.0.1',
-                        title: 'Tinta Napló v2.0.1 — OTA Frissítő Előnézet',
+                        tagName: 'v2.0.2',
+                        title: 'Tinta Napló v2.0.2 — OTA Frissítő Előnézet',
                         releaseNotes:
                             '• 120Hz-es fizikai animációk és Hero átmenetek\n'
                             '• MenetrendGO reggeli/délutáni helyreállítás és Szünet visszaszámláló\n'
                             '• Többoldalas Fejlesztői Központ, elszigetelt Demó mód és Minimalista javítások\n'
-                            '• Közvetlen GitHub Releases APK letöltés és telepítés (tinta-naplo-v2.0.1-arm64-v8a.apk)',
+                            '• Közvetlen GitHub Releases APK letöltés és telepítés (tinta-naplo-v2.0.2-arm64-v8a.apk)',
                         htmlUrl: GitHubUpdaterService.repoUrl,
                         apkDownloadUrl:
-                            '${GitHubUpdaterService.repoUrl}/releases/latest/download/tinta-naplo-v2.0.1-arm64-v8a.apk',
+                            '${GitHubUpdaterService.repoUrl}/releases/latest/download/tinta-naplo-v2.0.2-arm64-v8a.apk',
                       ),
                     );
                   },

@@ -104,7 +104,7 @@ void main() {
 
       // Slide 1
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_1_lesson.jpg'),
+        hasShowcaseImage('assets/images/showcase/showcase_1_lesson.webp'),
         isTrue,
       );
       expect(
@@ -118,7 +118,7 @@ void main() {
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
       await tester.pumpAndSettle();
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_2_scholarship.jpg'),
+        hasShowcaseImage('assets/images/showcase/showcase_2_scholarship.webp'),
         isTrue,
       );
       expect(
@@ -132,7 +132,7 @@ void main() {
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
       await tester.pumpAndSettle();
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_3_timetable.jpg'),
+        hasShowcaseImage('assets/images/showcase/showcase_3_timetable.webp'),
         isTrue,
       );
       expect(
@@ -146,7 +146,7 @@ void main() {
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
       await tester.pumpAndSettle();
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_4_themes.jpg'),
+        hasShowcaseImage('assets/images/showcase/showcase_4_themes.webp'),
         isTrue,
       );
       expect(
