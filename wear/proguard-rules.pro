@@ -1,0 +1,2 @@
+-keep class hu.rekreta.rekreta_app.shared.** { *; }
+-keep class hu.rekreta.rekreta_app.wear.data.** { *; }

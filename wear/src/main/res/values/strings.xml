@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tinta Napló</string>
+    <string name="tile_label">Tinta Órarend</string>
+    <string name="tile_description">Aktuális és következő órák az óralapon</string>
+</resources>

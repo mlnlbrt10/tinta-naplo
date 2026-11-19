@@ -1,0 +1,314 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
+import '../theme/oled_theme.dart';
+import 'token_storage_service.dart';
+
+/// Metadata describing an optional screenshot or screen recording attached to a
+/// bug report.
+class BugAttachment {
+  final String path;
+  final String name;
+  final int sizeBytes;
+  final bool isVideo;
+
+  const BugAttachment({
+    required this.path,
+    required this.name,
+    required this.sizeBytes,
+    required this.isVideo,
+  });
+
+  String get formattedSizeMb =>
+      '${(sizeBytes / (1024 * 1024)).toStringAsFixed(2)} MB';
+}
+
+/// Outcome of validating an optional media attachment on the client.
+class AttachmentValidationResult {
+  final BugAttachment? attachment;
+  final String? errorMessage;
+
+  const AttachmentValidationResult._({this.attachment, this.errorMessage});
+
+  const AttachmentValidationResult.ok(BugAttachment value)
+      : this._(attachment: value);
+
+  const AttachmentValidationResult.error(String message)
+      : this._(errorMessage: message);
+
+  bool get isValid => attachment != null && errorMessage == null;
+}
+
+/// Outcome of submitting a bug report to `https://ticket.mlnlbrt.hu/api/tickets`.
+class BugReportSubmitResult {
+  final bool success;
+  final int? statusCode;
+  final String? errorMessage;
+
+  const BugReportSubmitResult._({
+    required this.success,
+    this.statusCode,
+    this.errorMessage,
+  });
+
+  const BugReportSubmitResult.ok({int? statusCode})
+      : this._(success: true, statusCode: statusCode);
+
+  const BugReportSubmitResult.failure(
+    String message, {
+    int? statusCode,
+  }) : this._(
+          success: false,
+          statusCode: statusCode,
+          errorMessage: message,
+        );
+}
+
+class _ProgressForwardingRequest extends http.BaseRequest {
+  final Stream<List<int>> _stream;
+
+  _ProgressForwardingRequest(
+    super.method,
+    super.url, {
+    required Map<String, String> headers,
+    required Stream<List<int>> stream,
+    required int contentLength,
+  }) : _stream = stream {
+    this.headers.addAll(headers);
+    this.contentLength = contentLength;
+  }
+
+  @override
+  http.ByteStream finalize() {
+    super.finalize();
+    return http.ByteStream(_stream);
+  }
+}
+
+/// Privacy-first bug report serializer & uploader for `ticket.mlnlbrt.hu`.
+class BugReportService {
+  BugReportService._();
+
+  static const String endpointUrl = 'https://ticket.mlnlbrt.hu/api/tickets';
+
+  static const List<String> categories = <String>[
+    'Hiba / Bug',
+    'UI / Megjelenés',
+    'Ötlet / Javaslat',
+  ];
+
+  static const int maxImageBytes = 10 * 1024 * 1024;
+  static const int maxVideoBytes = 25 * 1024 * 1024;
+
+  /// Privacy-masks the KRÉTA full student name so full surname and student
+  /// identifiers are never sent: `"Albert Milán"` -> `"A. Milán"`,
+  /// `"Nagy Anna Eszter"` -> `"N. Anna Eszter"`.
+  static String maskReporterName(String? fullName) {
+    final raw = fullName?.trim() ?? '';
+    if (raw.isEmpty) return 'Névtelen felhasználó';
+    final parts = raw.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return 'Névtelen felhasználó';
+
+    final firstRunes = parts.first.runes;
+    if (firstRunes.isEmpty) return 'Névtelen felhasználó';
+    final firstInitial = String.fromCharCode(firstRunes.first).toUpperCase();
+    if (parts.length == 1) {
+      return '$firstInitial.';
+    }
+    final givenNames = parts.sublist(1).join(' ');
+    return '$firstInitial. $givenNames';
+  }
+
+  /// Concise description of the active theme, backdrop, and Liquid Glass mode.
+  static String describeThemeMode(
+    UserProfilePrefs prefs, {
+    Brightness? platformBrightness,
+  }) {
+    final styleLabel = switch (prefs.themeStyle) {
+      AppThemeStyle.oledPureBlack => 'OLED Fekete',
+      AppThemeStyle.standardDark => 'Sötét',
+      AppThemeStyle.light => 'Világos',
+    };
+    final glassPart = prefs.liquidGlassEnabled
+        ? 'Liquid Glass (${prefs.liquidGlassMode.label})'
+        : 'Material mód';
+    if (prefs.hasAnimatedBackdrop) {
+      return '$styleLabel • $glassPart • ${prefs.animatedBackdropPreset.label}';
+    }
+    if (prefs.hasCustomBackdrop) {
+      return '$styleLabel • $glassPart • Saját háttér';
+    }
+    final preset = BackgroundPresetInfo.resolve(prefs);
+    if (preset.id != 'pure_oled') {
+      return '$styleLabel • $glassPart • ${preset.label}';
+    }
+    return '$styleLabel • $glassPart';
+  }
+
+  /// Human-readable OS version label without collecting device serials or IDs.
+  static String resolveOsVersionLabel() {
+    final osVer = Platform.operatingSystemVersion.trim();
+    if (Platform.isAndroid) {
+      return osVer.isNotEmpty ? 'Android ($osVer)' : 'Android';
+    }
+    if (Platform.isIOS) {
+      return osVer.isNotEmpty ? 'iOS ($osVer)' : 'iOS';
+    }
+    final osName = Platform.operatingSystem;
+    return osVer.isNotEmpty ? '$osName ($osVer)' : osName;
+  }
+
+  /// Validates client-side size caps (`10 MB` images / `25 MB` videos).
+  static AttachmentValidationResult validateAttachment({
+    required String path,
+    required String name,
+    required int sizeBytes,
+    required bool isVideo,
+  }) {
+    final limit = isVideo ? maxVideoBytes : maxImageBytes;
+    final limitMb = isVideo ? 25 : 10;
+    if (sizeBytes > limit) {
+      final actualMb = (sizeBytes / (1024 * 1024)).toStringAsFixed(1);
+      final mediaWord = isVideo ? 'videó' : 'kép';
+      return AttachmentValidationResult.error(
+        'A kiválasztott $mediaWord túl nagy ($actualMb MB). Maximum $limitMb MB csatolható.',
+      );
+    }
+    return AttachmentValidationResult.ok(
+      BugAttachment(
+        path: path,
+        name: name,
+        sizeBytes: sizeBytes,
+        isVideo: isVideo,
+      ),
+    );
+  }
+
+  /// Builds a clipboard-ready fallback summary if the user is offline or upload fails.
+  static String buildCopyableDetails({
+    required String reporter,
+    required String category,
+    required String description,
+    required String appVersion,
+    required String osVersion,
+    required String themeMode,
+    BugAttachment? attachment,
+  }) {
+    final buf = StringBuffer()
+      ..writeln('Tinta Napló — Hibajelentés')
+      ..writeln('Kategória: $category')
+      ..writeln('Beküldő: $reporter')
+      ..writeln('Verzió: $appVersion')
+      ..writeln('Rendszer: $osVersion')
+      ..writeln('Téma: $themeMode');
+    if (attachment != null) {
+      buf.writeln(
+        'Csatolmány: ${attachment.name} (${attachment.formattedSizeMb})',
+      );
+    }
+    buf
+      ..writeln()
+      ..writeln('Leírás:')
+      ..writeln(description.trim());
+    return buf.toString();
+  }
+
+  /// Submits the bug report as `multipart/form-data` to [endpointUrl].
+  static Future<BugReportSubmitResult> submitTicket({
+    required String reporter,
+    required String category,
+    required String description,
+    required String appVersion,
+    required String osVersion,
+    required String themeMode,
+    BugAttachment? attachment,
+    void Function(double progress)? onProgress,
+    http.Client? client,
+    Duration timeout = const Duration(seconds: 25),
+    http.MultipartFile? attachmentFileOverride,
+  }) async {
+    final ownClient = client == null;
+    final httpClient = client ?? http.Client();
+    try {
+      final request = http.MultipartRequest('POST', Uri.parse(endpointUrl))
+        ..fields['reporter'] = reporter
+        ..fields['category'] = category
+        ..fields['description'] = description.trim()
+        ..fields['app_version'] = appVersion
+        ..fields['os_version'] = osVersion
+        ..fields['theme_mode'] = themeMode;
+
+      if (attachmentFileOverride != null) {
+        request.files.add(attachmentFileOverride);
+      } else if (attachment != null) {
+        request.files.add(
+          await http.MultipartFile.fromPath(
+            'attachment',
+            attachment.path,
+            filename: attachment.name,
+          ),
+        );
+      }
+
+      final http.StreamedResponse streamed;
+      if (onProgress != null && request.files.isNotEmpty) {
+        final totalBytes = request.contentLength;
+        final baseStream = request.finalize();
+        var sentBytes = 0;
+        final trackedStream = baseStream.transform(
+          StreamTransformer<List<int>, List<int>>.fromHandlers(
+            handleData: (chunk, sink) {
+              sentBytes += chunk.length;
+              if (totalBytes > 0) {
+                onProgress((sentBytes / totalBytes).clamp(0.0, 1.0));
+              }
+              sink.add(chunk);
+            },
+          ),
+        );
+        final forwarded = _ProgressForwardingRequest(
+          request.method,
+          request.url,
+          headers: request.headers,
+          stream: trackedStream,
+          contentLength: totalBytes,
+        );
+        streamed = await httpClient.send(forwarded).timeout(timeout);
+      } else {
+        streamed = await httpClient.send(request).timeout(timeout);
+      }
+
+      await streamed.stream.drain<void>();
+      if (streamed.statusCode >= 200 && streamed.statusCode < 300) {
+        return BugReportSubmitResult.ok(statusCode: streamed.statusCode);
+      }
+      return BugReportSubmitResult.failure(
+        'A szerver hibát jelzett (HTTP ${streamed.statusCode}). Próbáld meg később, vagy másold ki a részleteket.',
+        statusCode: streamed.statusCode,
+      );
+    } on TimeoutException {
+      return const BugReportSubmitResult.failure(
+        'A beküldés időtúllépés miatt megszakadt. Ellenőrizd az internetkapcsolatot.',
+      );
+    } on SocketException {
+      return const BugReportSubmitResult.failure(
+        'Nincs internetkapcsolat vagy a hibajelentő szerver nem elérhető.',
+      );
+    } on http.ClientException {
+      return const BugReportSubmitResult.failure(
+        'Hálózati hiba a beküldés közben. Másold ki a részleteket, hogy ne vesszen el.',
+      );
+    } catch (e) {
+      return BugReportSubmitResult.failure(
+        'Váratlan hiba történt: $e',
+      );
+    } finally {
+      if (ownClient) {
+        httpClient.close();
+      }
+    }
+  }
+}
