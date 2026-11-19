@@ -25,7 +25,7 @@ android {
         applicationId = "hu.mlnlbrt.tintanaplo"
         minSdk = 30
         targetSdk = 34
-        versionCode = 4
+        versionCode = 5
         versionName = "2.0.2"
     }
 

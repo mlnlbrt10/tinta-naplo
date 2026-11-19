@@ -228,7 +228,7 @@ void main() {
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest',
     );
     expect(GitHubUpdaterService.fallbackAppVersion, '2.0.2');
-    expect(GitHubUpdaterService.fallbackBuildNumber, '17');
+    expect(GitHubUpdaterService.fallbackBuildNumber, '18');
     expect(
       GitHubUpdaterService.defaultApkFileName,
       'tinta-naplo-v2.0.2-arm64-v8a.apk',

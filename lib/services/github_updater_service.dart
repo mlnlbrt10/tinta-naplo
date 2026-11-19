@@ -114,7 +114,7 @@ class GitHubUpdaterService {
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest';
   static const String fallbackAppVersion = '2.0.2';
-  static const String fallbackBuildNumber = '17';
+  static const String fallbackBuildNumber = '18';
   static const String defaultApkFileName = 'tinta-naplo-v2.0.2-arm64-v8a.apk';
 
   static bool _hasCheckedOnStartup = false;

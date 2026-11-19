@@ -415,7 +415,7 @@ void main() {
         reporter: 'A. Milán',
         category: 'UI / Megjelenés',
         description: 'Gomb igazítás hiba az órarendben',
-        appVersion: '2.0.2+17',
+        appVersion: '2.0.2+18',
         osVersion: 'Android (14)',
         themeMode: 'OLED Fekete • Liquid Glass',
         attachment: BugAttachment(
@@ -446,7 +446,7 @@ void main() {
         reporter: 'A. Milán',
         category: 'Hiba / Bug',
         description: 'Progress test',
-        appVersion: '2.0.2+17',
+        appVersion: '2.0.2+18',
         osVersion: 'Android (14)',
         themeMode: 'OLED Fekete',
         attachment: BugAttachment(
@@ -548,7 +548,7 @@ void main() {
                       prefs: const UserProfilePrefs(),
                       httpClient: mockClient,
                       pickImageOverride: () async => XFile(tempImg.path),
-                      appVersionLoader: () async => '2.0.2+17',
+                      appVersionLoader: () async => '2.0.2+18',
                     ),
                     child: const Text('OpenBug'),
                   ),
@@ -564,7 +564,7 @@ void main() {
 
         expect(find.text('Hibajelentés küldése'), findsOneWidget);
         expect(find.text('Beküldő: N. Anna Eszter'), findsOneWidget);
-        expect(find.text('Verzió: 2.0.2+17'), findsOneWidget);
+        expect(find.text('Verzió: 2.0.2+18'), findsOneWidget);
 
         await tester.tap(find.text('Képernyőkép csatolása'));
         await tester.runAsync(
@@ -807,7 +807,7 @@ void main() {
                           htmlUrl: 'https://github.com/mlnlbrt10/tinta-naplo',
                           apkDownloadUrl: 'https://example.com/app.apk',
                         ),
-                        currentVersion: '2.0.2+17',
+                        currentVersion: '2.0.2+18',
                       ),
                       child: const Text('ShowUpdate'),
                     ),
