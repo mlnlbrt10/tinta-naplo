@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kreta_api/kreta_api.dart';
-import 'package:rekreta_app/core/kreta_auth_config.dart';
+import 'package:tinta_naplo/core/kreta_auth_config.dart';
 
 void main() {
   test('shared/kreta_config.json stays in exact sync with Dart KretaAuthConfig and KretaEndpoints', () {

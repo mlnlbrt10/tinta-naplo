@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:kreta_api/kreta_api.dart';
@@ -79,10 +80,11 @@ class WearConnectionStatus {
 }
 
 /// Bridges the Flutter phone app (`:app`) with the native Android Wearable
-/// Data Layer (`WearSessionBridge`) to push active KRÉTA sessions and student
-/// profile metadata to the paired Wear OS watch over `/tinta/auth_session`.
+/// Data Layer (`WearSessionBridge`) to push active KRÉTA sessions, student
+/// profile metadata, recent grades (~5), and upcoming exams (~3) to the paired
+/// Wear OS watch over `/tinta/auth_session` and `/tinta/dashboard_sync`.
 class WearSyncService {
-  static const String channelName = 'hu.rekreta.rekreta_app/wear_sync';
+  static const String channelName = 'hu.mlnlbrt.tintanaplo/wear_sync';
   static const MethodChannel defaultChannel = MethodChannel(channelName);
 
   static final WearSyncService instance = WearSyncService();
@@ -137,11 +139,47 @@ class WearSyncService {
     return WearConnectionStatus.disconnected;
   }
 
+  /// Selects the latest [limit] grades sorted newest-first and serializes them
+  /// using KRÉTA JSON fields for the Wear OS companion cache.
+  static String serializeRecentGradesJson(
+    List<Grade> grades, {
+    int limit = 5,
+  }) {
+    final sorted = List<Grade>.from(grades)
+      ..sort((a, b) => b.recordedAt.compareTo(a.recordedAt));
+    final recent = sorted.take(limit).map((g) => g.toJson()).toList();
+    return jsonEncode(recent);
+  }
+
+  /// Selects the nearest [limit] upcoming exams (today or future) sorted
+  /// chronologically and serializes them using KRÉTA JSON fields.
+  static String serializeUpcomingExamsJson(
+    List<Test> tests, {
+    DateTime? now,
+    int limit = 3,
+  }) {
+    final localNow = (now ?? DateTime.now()).toLocal();
+    final today = DateTime(localNow.year, localNow.month, localNow.day);
+    final upcoming = tests.where((t) {
+      final d = t.date.toLocal();
+      final day = DateTime(d.year, d.month, d.day);
+      return !day.isBefore(today);
+    }).toList()
+      ..sort((a, b) {
+        final cmp = a.date.compareTo(b.date);
+        if (cmp != 0) return cmp;
+        return a.lessonNumber.compareTo(b.lessonNumber);
+      });
+    return jsonEncode(upcoming.take(limit).map((t) => t.toJson()).toList());
+  }
+
   Map<String, Object?> _buildSessionPayload({
     required StoredSession session,
     Student? student,
     String? nickname,
     bool forceSync = false,
+    List<Grade>? recentGrades,
+    List<Test>? upcomingExams,
   }) {
     final resolvedStudentName = (student?.name.trim().isNotEmpty ?? false)
         ? student!.name.trim()
@@ -158,6 +196,10 @@ class WearSyncService {
       'instituteName': student?.instituteName ?? '',
       'schoolYearUid': student?.schoolYearUID ?? '',
       'forceSync': forceSync,
+      if (recentGrades != null)
+        'recentGradesJson': serializeRecentGradesJson(recentGrades),
+      if (upcomingExams != null)
+        'upcomingExamsJson': serializeUpcomingExamsJson(upcomingExams),
     };
   }
 
@@ -165,6 +207,8 @@ class WearSyncService {
     required StoredSession session,
     Student? student,
     String? nickname,
+    List<Grade>? recentGrades,
+    List<Test>? upcomingExams,
   }) async {
     try {
       final ok = await _channel.invokeMethod<bool>(
@@ -173,6 +217,8 @@ class WearSyncService {
           session: session,
           student: student,
           nickname: nickname,
+          recentGrades: recentGrades,
+          upcomingExams: upcomingExams,
         ),
       );
       return ok == true;
@@ -186,6 +232,8 @@ class WearSyncService {
     Student? student,
     String? nickname,
     bool forceSync = false,
+    List<Grade>? recentGrades,
+    List<Test>? upcomingExams,
   }) async {
     try {
       final ok = await _channel.invokeMethod<bool>(
@@ -195,6 +243,32 @@ class WearSyncService {
           student: student,
           nickname: nickname,
           forceSync: forceSync,
+          recentGrades: recentGrades,
+          upcomingExams: upcomingExams,
+        ),
+      );
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> syncDashboardToWatch({
+    required StoredSession session,
+    Student? student,
+    String? nickname,
+    required List<Grade> recentGrades,
+    required List<Test> upcomingExams,
+  }) async {
+    try {
+      final ok = await _channel.invokeMethod<bool>(
+        'pushDashboardToWatch',
+        _buildSessionPayload(
+          session: session,
+          student: student,
+          nickname: nickname,
+          recentGrades: recentGrades,
+          upcomingExams: upcomingExams,
         ),
       );
       return ok == true;

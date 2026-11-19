@@ -486,7 +486,7 @@ class MenetrendService {
       'menetrend_notified_delay_keys_v1';
 
   static const MethodChannel _transitChannel =
-      MethodChannel('hu.rekreta.rekreta_app/transit');
+      MethodChannel('hu.mlnlbrt.tintanaplo/transit');
 
   final http.Client _http;
 
@@ -498,7 +498,7 @@ class MenetrendService {
         'Content-Type': 'application/json; charset=utf-8',
         'Origin': 'https://mavplusz.hu',
         'Referer': 'https://mavplusz.hu/',
-        'User-Agent': 'MenetrendGO/1.2.0 (Android)',
+        'User-Agent': 'MenetrendGO/2.0.1 (Android)',
       };
 
   /// Snaps any stored walking speed to one of the three supported presets:
@@ -1016,7 +1016,7 @@ class MenetrendService {
         'addressdetails': '1',
       });
       final response = await _http.get(uri, headers: const {
-        'User-Agent': 'TintaNaplo-Android/1.2.0',
+        'User-Agent': 'TintaNaplo-Android/2.0.1',
         'Accept': 'application/json',
       }).timeout(const Duration(seconds: 6));
       if (response.statusCode == 200) {
@@ -1054,7 +1054,7 @@ class MenetrendService {
         'limit': '6',
       });
       final res = await _http
-          .get(photonUri, headers: const {'User-Agent': 'TintaNaplo-Android/1.2.0'})
+          .get(photonUri, headers: const {'User-Agent': 'TintaNaplo-Android/2.0.1'})
           .timeout(const Duration(seconds: 6));
       if (res.statusCode == 200) {
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));

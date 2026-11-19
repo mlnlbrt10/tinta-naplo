@@ -6,16 +6,16 @@ import 'package:http/testing.dart';
 import 'package:kreta_api/kreta_api.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:rekreta_app/providers/app_providers.dart';
-import 'package:rekreta_app/screens/developer_options_screen.dart';
-import 'package:rekreta_app/screens/grades_screen.dart';
-import 'package:rekreta_app/services/demo_data_service.dart';
-import 'package:rekreta_app/services/kreta_client.dart';
-import 'package:rekreta_app/services/token_storage_service.dart';
-import 'package:rekreta_app/widgets/expandable_profile_card.dart';
-import 'package:rekreta_app/widgets/frosted_inspection_modal.dart';
-import 'package:rekreta_app/widgets/period_countdown_badge.dart';
-import 'package:rekreta_app/widgets/tinta_toast.dart';
+import 'package:tinta_naplo/providers/app_providers.dart';
+import 'package:tinta_naplo/screens/developer_options_screen.dart';
+import 'package:tinta_naplo/screens/grades_screen.dart';
+import 'package:tinta_naplo/services/demo_data_service.dart';
+import 'package:tinta_naplo/services/kreta_client.dart';
+import 'package:tinta_naplo/services/token_storage_service.dart';
+import 'package:tinta_naplo/widgets/expandable_profile_card.dart';
+import 'package:tinta_naplo/widgets/frosted_inspection_modal.dart';
+import 'package:tinta_naplo/widgets/period_countdown_badge.dart';
+import 'package:tinta_naplo/widgets/tinta_toast.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -218,7 +218,7 @@ void main() {
       final week = service.buildTimetableForRange(mon, fri, nowOverride: now);
       expect(week.map((l) => l.start.weekday).toSet(), {1, 2, 3, 4, 5});
 
-      expect(dashboard.tests.length, 4);
+      expect(dashboard.tests.length, 1);
       expect(dashboard.homeworks.length, 4);
       expect(dashboard.omissions.length, 2);
       expect(

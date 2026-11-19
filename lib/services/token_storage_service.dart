@@ -8,6 +8,7 @@ import 'package:kreta_api/kreta_api.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/kreta_auth_config.dart';
+import '../theme/custom_skin_config.dart';
 import '../utils/uwu_helper.dart';
 
 /// Supported visual theme styles in Tinta Napló.
@@ -278,6 +279,8 @@ class UserProfilePrefs {
   static double activeSoftBlurSigma = 4.0;
   static bool activeMinimalistModeEnabled = false;
   static bool activeDemoModeEnabled = false;
+  static bool activeFitymaModeEnabled = false;
+  static CustomSkinConfig activeCustomSkin = const CustomSkinConfig();
 
   static void syncActiveGlobals(UserProfilePrefs prefs) {
     activeModalCloseMode = prefs.modalCloseMode;
@@ -286,6 +289,9 @@ class UserProfilePrefs {
     activeSoftBlurSigma = prefs.cardBlurSigma;
     activeMinimalistModeEnabled = prefs.minimalistModeEnabled;
     activeDemoModeEnabled = prefs.demoModeEnabled;
+    activeFitymaModeEnabled = prefs.fitymaModeEnabled;
+    activeCustomSkin = prefs.customSkinConfig;
+    UwuHelper.isFitymaEnabled = prefs.fitymaModeEnabled;
   }
 
   static bool _parseBool(dynamic value) => value == true || value == 'true';
@@ -435,6 +441,35 @@ class UserProfilePrefs {
 
   UserProfilePrefs withLiveActivityEnabled(bool enabled) =>
       withExtra('liveActivityEnabled', enabled);
+
+  /// Developer Options: Easter-egg "Fityma Napló" branding & cartoon mascot mode.
+  bool get fitymaModeEnabled => extras['fitymaModeEnabled'] == true;
+
+  UserProfilePrefs withFitymaMode(bool enabled) =>
+      withExtra('fitymaModeEnabled', enabled);
+
+  /// Developer Options: CSS-style Custom Skin Engine toggle & raw CSS variables.
+  bool get customSkinEnabled => extras['customSkinEnabled'] == true;
+
+  String get customSkinCss {
+    final raw = extras['customSkinCss'];
+    if (raw is String && raw.trim().isNotEmpty) return raw;
+    return CustomSkinConfig.defaultTemplateCss;
+  }
+
+  CustomSkinConfig get customSkinConfig =>
+      CustomSkinConfig.parse(customSkinCss, enabled: customSkinEnabled);
+
+  UserProfilePrefs withCustomSkin({bool? enabled, String? css}) {
+    final updatedExtras = Map<String, dynamic>.from(extras);
+    if (enabled != null) {
+      updatedExtras['customSkinEnabled'] = enabled;
+    }
+    if (css != null) {
+      updatedExtras['customSkinCss'] = css;
+    }
+    return copyWith(extras: updatedExtras);
+  }
 
   /// `true` => "Ágazati alapoktatás (9–10. évf.)", `false` => "Szakirányú oktatás".
   bool get scholarshipBasicEducation => extras['scholarshipBasic'] == true;
@@ -991,10 +1026,16 @@ class StoredSession {
   factory StoredSession.fromTokenGrant(
     TokenGrantResponse grant, {
     String? fallbackInstituteCode,
+    String? fallbackIdToken,
+    String? fallbackUserName,
   }) {
+    final effectiveIdToken = grant.idToken.trim().isNotEmpty
+        ? grant.idToken.trim()
+        : (fallbackIdToken?.trim() ?? '');
+    final accessClaims = KretaAuthConfig.decodeJwtPayload(grant.accessToken);
     final claims = <String, dynamic>{
-      ...KretaAuthConfig.decodeJwtPayload(grant.idToken),
-      ...KretaAuthConfig.decodeJwtPayload(grant.accessToken),
+      ...KretaAuthConfig.decodeJwtPayload(effectiveIdToken),
+      ...accessClaims,
     };
 
     final claimIss =
@@ -1013,19 +1054,30 @@ class StoredSession {
 
     final claimUser =
         (claims['kreta:user_name'] ?? claims['sub'])?.toString().trim();
+    final resolvedUser = (claimUser != null && claimUser.isNotEmpty)
+        ? claimUser
+        : (fallbackUserName?.trim().isNotEmpty == true
+            ? fallbackUserName!.trim()
+            : null);
 
-    DateTime expiresAt = DateTime.now().add(Duration(seconds: grant.expiresIn));
-    final expClaim = claims['exp'];
-    if (expClaim is int) {
-      expiresAt = DateTime.fromMillisecondsSinceEpoch(expClaim * 1000);
+    final fallbackDuration =
+        Duration(seconds: grant.expiresIn > 0 ? grant.expiresIn : 1800);
+    DateTime expiresAt = DateTime.now().add(fallbackDuration);
+    final accessExpClaim = accessClaims['exp'];
+    if (accessExpClaim is num) {
+      final parsedExp =
+          DateTime.fromMillisecondsSinceEpoch(accessExpClaim.toInt() * 1000);
+      if (parsedExp.isAfter(DateTime.now())) {
+        expiresAt = parsedExp;
+      }
     }
 
     return StoredSession(
       accessToken: grant.accessToken,
       refreshToken: refreshTokenOrEmpty(grant.refreshToken),
-      idToken: grant.idToken,
+      idToken: effectiveIdToken,
       instituteCode: resolvedIss,
-      userName: claimUser,
+      userName: resolvedUser,
       expiresAt: expiresAt,
     );
   }
@@ -1095,9 +1147,31 @@ class TokenStorageService {
   static const _keyReadMessageIds = 'kreta_read_message_ids';
   static const _keyDashboardCachePrefix = 'kreta_dashboard_cache_v1_';
   static const String sharedPrefsProfileKey = 'tinta_profile_prefs_v1';
+  static const String _keySharedPrefsSessionBackup = 'kreta_session_backup_v2';
 
   static Completer<bool>? _refreshCompleter;
   static StoredSession? _lastRefreshedSession;
+  static StoredSession? get latestSession => _lastRefreshedSession;
+  static final ValueNotifier<StoredSession?> sessionNotifier =
+      ValueNotifier<StoredSession?>(null);
+
+  /// Picks the valid [StoredSession] with non-empty credentials and the latest
+  /// [StoredSession.expiresAt].
+  static StoredSession? pickNewestSession(Iterable<StoredSession?> candidates) {
+    StoredSession? best;
+    for (final c in candidates) {
+      if (c == null ||
+          c.accessToken.trim().isEmpty ||
+          c.refreshToken.trim().isEmpty ||
+          c.instituteCode.trim().isEmpty) {
+        continue;
+      }
+      if (best == null || c.expiresAt.isAfter(best.expiresAt)) {
+        best = c;
+      }
+    }
+    return best;
+  }
 
   final FlutterSecureStorage _storage;
 
@@ -1107,50 +1181,118 @@ class TokenStorageService {
               aOptions: AndroidOptions(encryptedSharedPreferences: true),
             );
 
+  Future<void> _saveSessionBackupToSharedPrefs(StoredSession session) async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString(
+        _keySharedPrefsSessionBackup,
+        jsonEncode({
+          'accessToken': session.accessToken,
+          'refreshToken': session.refreshToken,
+          'idToken': session.idToken,
+          'instituteCode': session.instituteCode,
+          'userName': session.userName ?? '',
+          'expiresAt': session.expiresAt.toIso8601String(),
+        }),
+      );
+    } catch (_) {
+      // Ignore in unmocked unit tests or platform failures.
+    }
+  }
+
+  Future<StoredSession?> _loadSessionBackupFromSharedPrefs() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final raw = sp.getString(_keySharedPrefsSessionBackup);
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final accessToken = decoded['accessToken']?.toString() ?? '';
+      final refreshToken = decoded['refreshToken']?.toString() ?? '';
+      final instituteCode = decoded['instituteCode']?.toString() ?? '';
+      if (accessToken.isEmpty || refreshToken.isEmpty || instituteCode.isEmpty) {
+        return null;
+      }
+      final userName = decoded['userName']?.toString();
+      final expiresAt = DateTime.tryParse(
+            decoded['expiresAt']?.toString() ?? '',
+          ) ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      return StoredSession(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+        idToken: decoded['idToken']?.toString() ?? '',
+        instituteCode: instituteCode,
+        userName: (userName != null && userName.isNotEmpty) ? userName : null,
+        expiresAt: expiresAt,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> saveSession(StoredSession session) async {
     _lastRefreshedSession = session;
-    await Future.wait([
-      _storage.write(key: _keyAccessToken, value: session.accessToken),
-      _storage.write(key: _keyRefreshToken, value: session.refreshToken),
-      _storage.write(key: _keyIdToken, value: session.idToken),
-      _storage.write(key: _keyInstituteCode, value: session.instituteCode),
-      _storage.write(key: _keyUserName, value: session.userName ?? ''),
-      _storage.write(
-        key: _keyExpiresAt,
-        value: session.expiresAt.toIso8601String(),
-      ),
-    ]);
+    sessionNotifier.value = session;
+    await _saveSessionBackupToSharedPrefs(session);
+    // Write sequentially to avoid Android EncryptedSharedPreferences concurrency races.
+    final entries = <MapEntry<String, String>>[
+      MapEntry(_keyAccessToken, session.accessToken),
+      MapEntry(_keyRefreshToken, session.refreshToken),
+      MapEntry(_keyIdToken, session.idToken),
+      MapEntry(_keyInstituteCode, session.instituteCode),
+      MapEntry(_keyUserName, session.userName ?? ''),
+      MapEntry(_keyExpiresAt, session.expiresAt.toIso8601String()),
+    ];
+    for (final entry in entries) {
+      try {
+        await _storage.write(key: entry.key, value: entry.value);
+      } catch (_) {}
+    }
   }
 
   Future<StoredSession?> loadSession() async {
-    final values = await _storage.readAll();
-    final accessToken = values[_keyAccessToken];
-    final refreshToken = values[_keyRefreshToken];
-    final instituteCode = values[_keyInstituteCode];
+    StoredSession? fromSecure;
+    try {
+      final values = await _storage.readAll();
+      final accessToken = values[_keyAccessToken];
+      final refreshToken = values[_keyRefreshToken];
+      final instituteCode = values[_keyInstituteCode];
 
-    if (accessToken == null ||
-        accessToken.isEmpty ||
-        refreshToken == null ||
-        refreshToken.isEmpty ||
-        instituteCode == null ||
-        instituteCode.isEmpty) {
-      return null;
+      if (accessToken != null &&
+          accessToken.isNotEmpty &&
+          refreshToken != null &&
+          refreshToken.isNotEmpty &&
+          instituteCode != null &&
+          instituteCode.isNotEmpty) {
+        final expiresRaw = values[_keyExpiresAt];
+        final expiresAt =
+            (expiresRaw != null ? DateTime.tryParse(expiresRaw) : null) ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+        final userName = values[_keyUserName];
+        fromSecure = StoredSession(
+          accessToken: accessToken,
+          refreshToken: refreshToken,
+          idToken: values[_keyIdToken] ?? '',
+          instituteCode: instituteCode,
+          userName: (userName != null && userName.isNotEmpty) ? userName : null,
+          expiresAt: expiresAt,
+        );
+      }
+    } catch (_) {
+      fromSecure = null;
     }
 
-    final expiresRaw = values[_keyExpiresAt];
-    final expiresAt =
-        (expiresRaw != null ? DateTime.tryParse(expiresRaw) : null) ??
-            DateTime.fromMillisecondsSinceEpoch(0);
-
-    final userName = values[_keyUserName];
-    return StoredSession(
-      accessToken: accessToken,
-      refreshToken: refreshToken,
-      idToken: values[_keyIdToken] ?? '',
-      instituteCode: instituteCode,
-      userName: (userName != null && userName.isNotEmpty) ? userName : null,
-      expiresAt: expiresAt,
-    );
+    final fromBackup = await _loadSessionBackupFromSharedPrefs();
+    final chosen = pickNewestSession([
+      fromSecure,
+      _lastRefreshedSession,
+      fromBackup,
+    ]);
+    if (chosen != null) {
+      _lastRefreshedSession = chosen;
+    }
+    return chosen;
   }
 
   /// Transparently refreshes the OAuth2 access & refresh tokens using a strict
@@ -1168,8 +1310,15 @@ class TokenStorageService {
       try {
         storedAfterWait = await loadSession();
       } catch (_) {}
-      final latest = storedAfterWait ?? _lastRefreshedSession ?? session;
-      if (succeeded && latest != null && latest.refreshToken.isNotEmpty) {
+      final latest = pickNewestSession([
+        storedAfterWait,
+        _lastRefreshedSession,
+        session,
+      ]);
+      if (succeeded && latest != null) {
+        return latest;
+      }
+      if (latest != null && !latest.isExpired) {
         return latest;
       }
       throw Exception('Concurrent token refresh did not succeed.');
@@ -1186,49 +1335,70 @@ class TokenStorageService {
         stored = null;
       }
 
-      // If another caller already rotated and saved a fresh session while we
-      // were scheduling, return it immediately without calling /connect/token.
-      if (stored != null &&
-          session != null &&
-          stored.refreshToken.isNotEmpty &&
-          stored.refreshToken != session.refreshToken &&
-          !stored.isExpired) {
-        _lastRefreshedSession = stored;
-        completer.complete(true);
-        return stored;
-      }
+      final active = pickNewestSession([
+        stored,
+        _lastRefreshedSession,
+        session,
+      ]);
 
-      final sameIdentityCached = _lastRefreshedSession != null &&
-              session != null &&
-              _lastRefreshedSession!.instituteCode == session.instituteCode &&
-              _lastRefreshedSession!.userName == session.userName
-          ? _lastRefreshedSession
-          : null;
-      final active = (stored != null && stored.refreshToken.isNotEmpty)
-          ? stored
-          : (sameIdentityCached ?? session ?? _lastRefreshedSession);
+      // If another caller already rotated and persisted a non-expired session with a
+      // newer refresh/access token while we waited, return it cleanly.
+      if (active != null &&
+          session != null &&
+          (active.accessToken != session.accessToken ||
+              active.refreshToken != session.refreshToken) &&
+          !active.isExpired) {
+        _lastRefreshedSession = active;
+        sessionNotifier.value = active;
+        completer.complete(true);
+        return active;
+      }
 
       if (active == null || active.refreshToken.trim().isEmpty) {
         throw const InvalidGrantException();
       }
 
       final client = httpClient ?? http.Client();
-      final response = await client
-          .post(
-            Uri.parse(KretaAuthConfig.tokenEndpoint),
-            headers: const {
-              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-              'Accept': '*/*',
-              'User-Agent': KretaAuthConfig.userAgent,
-            },
-            body: {
-              'institute_code': active.instituteCode,
-              'refresh_token': active.refreshToken,
-              'grant_type': 'refresh_token',
-              'client_id': clientId,
-            },
-          )
-          .timeout(const Duration(seconds: 20));
+
+      Future<http.Response> postRefresh(String refreshTokenStr) {
+        return client
+            .post(
+              Uri.parse(KretaAuthConfig.tokenEndpoint),
+              headers: const {
+                'Content-Type':
+                    'application/x-www-form-urlencoded; charset=UTF-8',
+                'Accept': '*/*',
+                'User-Agent': KretaAuthConfig.userAgent,
+              },
+              body: {
+                'institute_code': active.instituteCode,
+                'refresh_token': refreshTokenStr,
+                'grant_type': 'refresh_token',
+                'client_id': clientId,
+              },
+            )
+            .timeout(const Duration(seconds: 20));
+      }
+
+      var effectiveActive = active;
+      var response = await postRefresh(effectiveActive.refreshToken);
+
+      if (response.statusCode == 400 || response.statusCode == 401) {
+        // Before declaring invalid_grant, check if another caller / background isolate
+        // rotated and saved a newer refresh_token in the meantime.
+        final latestCheck = await loadSession();
+        if (latestCheck != null &&
+            latestCheck.refreshToken != effectiveActive.refreshToken) {
+          if (!latestCheck.isExpired) {
+            _lastRefreshedSession = latestCheck;
+            sessionNotifier.value = latestCheck;
+            completer.complete(true);
+            return latestCheck;
+          }
+          effectiveActive = latestCheck;
+          response = await postRefresh(effectiveActive.refreshToken);
+        }
+      }
 
       if (response.statusCode == 400 || response.statusCode == 401) {
         String? errorCode;
@@ -1239,12 +1409,8 @@ class TokenStorageService {
           }
         } catch (_) {}
         final bodyLower = response.body.toLowerCase();
-        final isExplicitInvalidGrant = errorCode == 'invalid_grant' ||
-            errorCode == 'invalid_client' ||
-            errorCode == 'unauthorized_client' ||
-            bodyLower.contains('invalid_grant') ||
-            (response.statusCode == 400 &&
-                (errorCode == null || errorCode.isEmpty));
+        final isExplicitInvalidGrant =
+            errorCode == 'invalid_grant' || bodyLower.contains('invalid_grant');
         if (isExplicitInvalidGrant) {
           throw const InvalidGrantException();
         }
@@ -1267,16 +1433,17 @@ class TokenStorageService {
               accessToken: rawGrant.accessToken,
               expiresIn: rawGrant.expiresIn,
               tokenType: rawGrant.tokenType,
-              refreshToken: active.refreshToken,
+              refreshToken: effectiveActive.refreshToken,
               scope: rawGrant.scope,
             )
           : rawGrant;
       final refreshed = StoredSession.fromTokenGrant(
         effectiveGrant,
-        fallbackInstituteCode: active.instituteCode,
+        fallbackInstituteCode: effectiveActive.instituteCode,
+        fallbackIdToken: effectiveActive.idToken,
+        fallbackUserName: effectiveActive.userName,
       );
       await saveSession(refreshed);
-      _lastRefreshedSession = refreshed;
       completer.complete(true);
       return refreshed;
     } catch (_) {
@@ -1295,14 +1462,24 @@ class TokenStorageService {
   /// preferences, colors, nicknames, subject renames, and rounding configs.
   Future<void> clearSession() async {
     _lastRefreshedSession = null;
-    await Future.wait([
-      _storage.delete(key: _keyAccessToken),
-      _storage.delete(key: _keyRefreshToken),
-      _storage.delete(key: _keyIdToken),
-      _storage.delete(key: _keyInstituteCode),
-      _storage.delete(key: _keyUserName),
-      _storage.delete(key: _keyExpiresAt),
-    ]);
+    sessionNotifier.value = null;
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.remove(_keySharedPrefsSessionBackup);
+    } catch (_) {}
+    final keys = [
+      _keyAccessToken,
+      _keyRefreshToken,
+      _keyIdToken,
+      _keyInstituteCode,
+      _keyUserName,
+      _keyExpiresAt,
+    ];
+    for (final k in keys) {
+      try {
+        await _storage.delete(key: k);
+      } catch (_) {}
+    }
   }
 
   static Future<SharedPreferences?> _safeSharedPrefs() async {

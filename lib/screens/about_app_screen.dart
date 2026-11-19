@@ -14,7 +14,7 @@ import '../widgets/christmas_snowfall_overlay.dart';
 import '../widgets/tinta_toast.dart';
 
 /// Dedicated "Az alkalmazásról" (About App / Rendszer & Névjegy) screen with:
-/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v1.2.0'),
+/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v2.0.1'),
 ///   and developer credits.
 /// - Direct link to `https://github.com/mlnlbrt10/tinta-naplo`.
 /// - Manual "Frissítések keresése" button (GitHub Releases OTA updater).
@@ -227,16 +227,20 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
               ),
             ),
             clipBehavior: Clip.antiAlias,
-            child: Image.asset(
-              'assets/images/tinta_icon.png',
-              width: 88,
-              height: 88,
-              fit: BoxFit.cover,
-            ),
+            child: _currentPrefs.fitymaModeEnabled
+                ? const FitymaBrandIcon(size: 88)
+                : Image.asset(
+                    'assets/images/tinta_icon.png',
+                    width: 88,
+                    height: 88,
+                    fit: BoxFit.cover,
+                  ),
           ),
           const SizedBox(height: 16),
           Text(
-            _currentPrefs.uwuModeEnabled ? 'Tinta Nyapló uwu' : 'Tinta Napló',
+            _currentPrefs.uwuModeEnabled
+                ? uwu('Tinta Nyapló uwu')
+                : uwu('Tinta Napló'),
             style: theme.textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.w900,
               color: scheme.onSurface,

@@ -13,17 +13,17 @@ import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:rekreta_app/providers/app_providers.dart';
-import 'package:rekreta_app/screens/home_screen.dart';
-import 'package:rekreta_app/screens/timetable_screen.dart';
-import 'package:rekreta_app/services/bug_report_service.dart';
-import 'package:rekreta_app/services/github_updater_service.dart';
-import 'package:rekreta_app/services/kreta_client.dart';
-import 'package:rekreta_app/services/token_storage_service.dart';
-import 'package:rekreta_app/theme/oled_theme.dart';
-import 'package:rekreta_app/widgets/bug_report_sheet.dart';
-import 'package:rekreta_app/widgets/expandable_profile_card.dart';
-import 'package:rekreta_app/widgets/glass_card.dart';
+import 'package:tinta_naplo/providers/app_providers.dart';
+import 'package:tinta_naplo/screens/home_screen.dart';
+import 'package:tinta_naplo/screens/timetable_screen.dart';
+import 'package:tinta_naplo/services/bug_report_service.dart';
+import 'package:tinta_naplo/services/github_updater_service.dart';
+import 'package:tinta_naplo/services/kreta_client.dart';
+import 'package:tinta_naplo/services/token_storage_service.dart';
+import 'package:tinta_naplo/theme/oled_theme.dart';
+import 'package:tinta_naplo/widgets/bug_report_sheet.dart';
+import 'package:tinta_naplo/widgets/expandable_profile_card.dart';
+import 'package:tinta_naplo/widgets/glass_card.dart';
 
 class _FakeKretaClient extends KretaClient {
   final DashboardData dashboard;
@@ -415,7 +415,7 @@ void main() {
         reporter: 'A. Milán',
         category: 'UI / Megjelenés',
         description: 'Gomb igazítás hiba az órarendben',
-        appVersion: '1.2.0+15',
+        appVersion: '2.0.1+16',
         osVersion: 'Android (14)',
         themeMode: 'OLED Fekete • Liquid Glass',
         attachment: BugAttachment(
@@ -446,7 +446,7 @@ void main() {
         reporter: 'A. Milán',
         category: 'Hiba / Bug',
         description: 'Progress test',
-        appVersion: '1.2.0+15',
+        appVersion: '2.0.1+16',
         osVersion: 'Android (14)',
         themeMode: 'OLED Fekete',
         attachment: BugAttachment(
@@ -548,7 +548,7 @@ void main() {
                       prefs: const UserProfilePrefs(),
                       httpClient: mockClient,
                       pickImageOverride: () async => XFile(tempImg.path),
-                      appVersionLoader: () async => '1.2.0+15',
+                      appVersionLoader: () async => '2.0.1+16',
                     ),
                     child: const Text('OpenBug'),
                   ),
@@ -564,7 +564,7 @@ void main() {
 
         expect(find.text('Hibajelentés küldése'), findsOneWidget);
         expect(find.text('Beküldő: N. Anna Eszter'), findsOneWidget);
-        expect(find.text('Verzió: 1.2.0+15'), findsOneWidget);
+        expect(find.text('Verzió: 2.0.1+16'), findsOneWidget);
 
         await tester.tap(find.text('Képernyőkép csatolása'));
         await tester.runAsync(
@@ -575,7 +575,7 @@ void main() {
 
         await tester.enterText(
           find.byType(TextField),
-          'Teszt hibaleírás v1.2.0',
+          'Teszt hibaleírás v2.0.1',
         );
         await tester.tap(find.text('UI / Megjelenés'));
         await tester.pump();
@@ -801,13 +801,13 @@ void main() {
                       onPressed: () => GitHubUpdaterService.showFrostedUpdateDialog(
                         context,
                         release: const GitHubReleaseInfo(
-                          tagName: 'v1.2.1',
-                          title: 'v1.2.1',
+                          tagName: 'v2.0.2',
+                          title: 'v2.0.2',
                           releaseNotes: 'Teszt frissítés',
                           htmlUrl: 'https://github.com/mlnlbrt10/tinta-naplo',
                           apkDownloadUrl: 'https://example.com/app.apk',
                         ),
-                        currentVersion: '1.2.0+15',
+                        currentVersion: '2.0.1+16',
                       ),
                       child: const Text('ShowUpdate'),
                     ),

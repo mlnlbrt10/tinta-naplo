@@ -667,7 +667,7 @@ class _MoreScreenState extends State<MoreScreen>
   bool _entranceActive = false;
 
   static const MethodChannel _fileChannel =
-      MethodChannel('hu.rekreta.rekreta_app/updater');
+      MethodChannel('hu.mlnlbrt.tintanaplo/updater');
 
   late List<Omission> _omissions;
   late List<KretaMessage> _messages;
@@ -775,6 +775,8 @@ class _MoreScreenState extends State<MoreScreen>
       student: widget.student,
       nickname: _currentPrefs.nickname,
       forceSync: true,
+      recentGrades: widget.dashboardData?.allGrades,
+      upcomingExams: widget.dashboardData?.tests,
     );
     final refreshed = await _wearService.getConnectionStatus();
     if (!mounted) return;
@@ -3129,7 +3131,7 @@ class _MoreScreenState extends State<MoreScreen>
         _SettingsAccordionCard(
           icon: Icons.info_outline_rounded,
           title: uwu('Rendszer / Névjegy'),
-          subtitle: 'Tinta Napló v$_appVersion • GitHub OTA frissítő',
+          subtitle: uwu('Tinta Napló v$_appVersion • GitHub OTA frissítő'),
           christmasCap: _currentPrefs.christmasModeEnabled,
           prefs: _currentPrefs,
           stateListenable: _stateVersion,

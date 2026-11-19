@@ -599,7 +599,10 @@ class KretaClient {
 
   /// Refreshes an expired [StoredSession] using `TokenStorageService.refreshToken()`,
   /// enforcing a strict single-flight [Completer] lock across concurrent callers.
-  Future<StoredSession> refreshSession(StoredSession current) async {
+  Future<StoredSession> refreshSession(
+    StoredSession current, {
+    bool force = false,
+  }) async {
     if (_isDemoActive(current)) {
       return DemoDataService.instance.buildDemoSession();
     }
@@ -609,25 +612,45 @@ class KretaClient {
       try {
         storedAfterWait = await _storage.loadSession();
       } catch (_) {}
-      final latest = _latestSession ?? storedAfterWait ?? current;
-      if (ok) {
+      final latest = TokenStorageService.pickNewestSession([
+            storedAfterWait,
+            TokenStorageService.latestSession,
+            _latestSession,
+            current,
+          ]) ??
+          current;
+      if (ok || !latest.isExpired) {
+        _latestSession = latest;
         return latest;
       }
       throw Exception('Concurrent token refresh failed.');
     }
 
-    if (_latestSession != null &&
-        !_latestSession!.isExpired &&
-        _latestSession!.accessToken != current.accessToken) {
-      return _latestSession!;
+    if (!force) {
+      final newer = TokenStorageService.pickNewestSession([
+        TokenStorageService.latestSession,
+        _latestSession,
+      ]);
+      if (newer != null &&
+          !newer.isExpired &&
+          newer.accessToken != current.accessToken) {
+        _latestSession = newer;
+        return newer;
+      }
     }
 
     final completer = Completer<bool>();
     _refreshCompleter = completer;
 
     try {
+      final newestInput = TokenStorageService.pickNewestSession([
+            TokenStorageService.latestSession,
+            _latestSession,
+            current,
+          ]) ??
+          current;
       final refreshed = await _storage.refreshToken(
-        session: _latestSession ?? current,
+        session: newestInput,
         httpClient: _http,
         clientId: clientId,
       );
@@ -657,13 +680,13 @@ class KretaClient {
     } catch (_) {
       stored = null;
     }
-    var candidate = _latestSession ?? session;
-    if (stored != null &&
-        stored.refreshToken.isNotEmpty &&
-        (stored.expiresAt.isAfter(candidate.expiresAt) ||
-            stored.refreshToken != candidate.refreshToken)) {
-      candidate = stored;
-    }
+    final candidate = TokenStorageService.pickNewestSession([
+          stored,
+          TokenStorageService.latestSession,
+          _latestSession,
+          session,
+        ]) ??
+        session;
     if (!candidate.isExpired) {
       _latestSession = candidate;
       return candidate;
@@ -677,12 +700,20 @@ class KretaClient {
     StoredSession session,
     Future<http.Response> Function(String accessToken) sendRequest,
   ) async {
-    StoredSession active = _latestSession ?? session;
+    StoredSession active = TokenStorageService.pickNewestSession([
+          TokenStorageService.latestSession,
+          _latestSession,
+          session,
+        ]) ??
+        session;
     if (active.isExpired) {
       try {
-        active = await refreshSession(active);
+        active = await ensureValidSession(active);
       } on InvalidGrantException {
-        rethrow;
+        if (DateTime.now().isAfter(active.expiresAt)) {
+          rethrow;
+        }
+        // Still within nominal pre-expiry margin: try current token cleanly first.
       } catch (_) {
         // Transient network/5xx error during pre-emptive refresh: keep session
         // and attempt request so offline errors don't force a logout.
@@ -695,12 +726,16 @@ class KretaClient {
       return response;
     }
 
-    if (_latestSession != null &&
-        _latestSession!.accessToken != usedAccessToken &&
-        !_latestSession!.isExpired) {
-      active = _latestSession!;
+    final concurrentLatest = TokenStorageService.pickNewestSession([
+      TokenStorageService.latestSession,
+      _latestSession,
+    ]);
+    if (concurrentLatest != null &&
+        concurrentLatest.accessToken != usedAccessToken &&
+        !concurrentLatest.isExpired) {
+      active = concurrentLatest;
     } else {
-      active = await refreshSession(active);
+      active = await refreshSession(active, force: true);
     }
 
     response = await sendRequest(active.accessToken);

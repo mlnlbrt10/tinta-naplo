@@ -6,6 +6,14 @@ class UwuHelper {
   /// Synchronized with `UserProfilePrefs.tsundereModeEnabled`.
   static bool isTsundereEnabled = false;
 
+  /// Synchronized with `UserProfilePrefs.fitymaModeEnabled`.
+  static bool isFitymaEnabled = false;
+
+  /// Returns `"Fityma Napló"` when Easter-egg branding mode is enabled, or
+  /// `"Tinta Napló"` otherwise.
+  static String brandName([bool? fityma]) =>
+      (fityma ?? isFitymaEnabled) ? 'Fityma Napló' : 'Tinta Napló';
+
   static const List<String> _suffixes = [
     'uwu',
     ':3',
@@ -59,18 +67,25 @@ class UwuHelper {
       return input;
     }
 
+    var source = input;
+    if (isFitymaEnabled) {
+      source = source
+          .replaceAll('Tinta Napló', 'Fityma Napló')
+          .replaceAll('Tinta Nyapló', 'Fityma Nyapló');
+    }
+
     final tsundereActive = tsundere ?? isTsundereEnabled;
     if (tsundereActive && enabled != true) {
-      return _transformTsundere(input);
+      return _transformTsundere(source);
     }
 
     final active = enabled ?? isEnabled;
     if (!active) {
-      return input;
+      return source;
     }
 
     // Specific phrase overrides requested in spec
-    String out = input
+    String out = source
         .replaceAll('Szép napot', 'Szép nyapot')
         .replaceAll('szép napot', 'szép nyapot')
         .replaceAll('Jó éjszakát', 'Jó éccakát')

@@ -3,12 +3,12 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:rekreta_app/providers/app_providers.dart';
-import 'package:rekreta_app/screens/about_app_screen.dart';
-import 'package:rekreta_app/services/token_storage_service.dart';
-import 'package:rekreta_app/theme/oled_theme.dart';
-import 'package:rekreta_app/widgets/animation_helpers.dart';
-import 'package:rekreta_app/widgets/christmas_snowfall_overlay.dart';
+import 'package:tinta_naplo/providers/app_providers.dart';
+import 'package:tinta_naplo/screens/about_app_screen.dart';
+import 'package:tinta_naplo/services/token_storage_service.dart';
+import 'package:tinta_naplo/theme/oled_theme.dart';
+import 'package:tinta_naplo/widgets/animation_helpers.dart';
+import 'package:tinta_naplo/widgets/christmas_snowfall_overlay.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

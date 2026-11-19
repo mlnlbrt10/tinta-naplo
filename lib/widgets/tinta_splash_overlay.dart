@@ -2,6 +2,9 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 
+import '../services/token_storage_service.dart';
+import 'christmas_snowfall_overlay.dart';
+
 /// Full-screen pure OLED `#000000` splash overlay displayed on frame 1 above
 /// the root navigator.
 ///
@@ -206,25 +209,45 @@ class _TintaSplashOverlayState extends State<TintaSplashOverlay>
                         );
                       },
                       child: RepaintBoundary(
-                        child: ShaderMask(
-                          blendMode: BlendMode.dstIn,
-                          shaderCallback: (rect) => const RadialGradient(
-                            colors: [
-                              Colors.white,
-                              Colors.white,
-                              Colors.transparent,
-                            ],
-                            stops: [0.0, 0.89, 0.99],
-                          ).createShader(rect),
-                          child: Image.asset(
-                            'assets/images/tinta_icon.png',
-                            width: 192,
-                            height: 192,
-                            fit: BoxFit.contain,
-                            gaplessPlayback: true,
-                            filterQuality: FilterQuality.medium,
-                          ),
-                        ),
+                        child: UserProfilePrefs.activeFitymaModeEnabled
+                            ? Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(42),
+                                    child: const FitymaBrandIcon(size: 164),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  const Text(
+                                    'Fityma Napló',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: -0.4,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : ShaderMask(
+                                blendMode: BlendMode.dstIn,
+                                shaderCallback: (rect) => const RadialGradient(
+                                  colors: [
+                                    Colors.white,
+                                    Colors.white,
+                                    Colors.transparent,
+                                  ],
+                                  stops: [0.0, 0.89, 0.99],
+                                ).createShader(rect),
+                                child: Image.asset(
+                                  'assets/images/tinta_icon.png',
+                                  width: 192,
+                                  height: 192,
+                                  fit: BoxFit.contain,
+                                  gaplessPlayback: true,
+                                  filterQuality: FilterQuality.medium,
+                                ),
+                              ),
                       ),
                     ),
                     const SizedBox(height: 28),

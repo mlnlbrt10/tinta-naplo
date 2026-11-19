@@ -793,8 +793,14 @@ class _TimetableScreenState extends State<TimetableScreen>
     } catch (e) {
       _inFlightWeekLoads.remove(weekOffset);
       if (!mounted) return;
+      final cachedLessons = _weekLessonsCache[weekOffset];
+      final hasCached = cachedLessons != null && cachedLessons.isNotEmpty;
       setState(() {
-        _weekErrors[weekOffset] = e.toString();
+        if (!hasCached) {
+          _weekErrors[weekOffset] = e.toString();
+        } else {
+          _weekErrors.remove(weekOffset);
+        }
         if (isInitialLoad || !_isInitialLoadComplete) {
           _isInitialLoadComplete = true;
           _isLoading = false;
@@ -973,7 +979,13 @@ class _TimetableScreenState extends State<TimetableScreen>
                     ? const Center(child: CircularProgressIndicator())
                     : currentWeekError != null &&
                             !_inFlightWeekLoads.containsKey(pos.weekOffset)
-                        ? Center(child: _buildErrorCard(theme, currentWeekError))
+                        ? Center(
+                            child: _buildErrorCard(
+                              theme,
+                              currentWeekError,
+                              weekOffset: pos.weekOffset,
+                            ),
+                          )
                         : _buildWeeklyLandscapeBoard(
                             theme,
                             scheme,
@@ -1060,7 +1072,11 @@ class _TimetableScreenState extends State<TimetableScreen>
                       currentWeekError != null
                   ? Padding(
                       padding: const EdgeInsets.all(16),
-                      child: _buildErrorCard(theme, currentWeekError),
+                      child: _buildErrorCard(
+                        theme,
+                        currentWeekError,
+                        weekOffset: pos.weekOffset,
+                      ),
                     )
                   : PageView.builder(
                       controller: _pageController,
@@ -1112,7 +1128,13 @@ class _TimetableScreenState extends State<TimetableScreen>
                                       16,
                                       100,
                                     ),
-                                    children: [_buildErrorCard(theme, pageError)],
+                                    children: [
+                                      _buildErrorCard(
+                                        theme,
+                                        pageError,
+                                        weekOffset: pagePos.weekOffset,
+                                      ),
+                                    ],
                                   )
                                 : ListView(
                                     key: PageStorageKey<int>(pageIdx),
@@ -1927,18 +1949,14 @@ class _TimetableScreenState extends State<TimetableScreen>
     );
   }
 
-  Widget _buildErrorCard(ThemeData theme, String error) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2B1111),
-        borderRadius: OledTheme.cardRadius,
-        border: Border.all(color: Colors.redAccent),
-      ),
-      child: Text(
-        error,
-        style: const TextStyle(color: Colors.white),
-      ),
+  Widget _buildErrorCard(ThemeData theme, String error, {int? weekOffset}) {
+    return TintaErrorState(
+      error: error,
+      prefs: widget.prefs,
+      onRetry: () {
+        final targetWeek = weekOffset ?? _resolvePage(_currentPage).weekOffset;
+        unawaited(_ensureWeekLoaded(targetWeek, forceRefresh: true));
+      },
     );
   }
 }

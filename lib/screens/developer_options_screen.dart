@@ -11,12 +11,14 @@ import 'package:path_provider/path_provider.dart';
 import '../core/kreta_auth_config.dart';
 import '../providers/app_providers.dart';
 import '../services/demo_data_service.dart';
+import '../services/dynamic_icon_service.dart';
 import '../services/github_updater_service.dart';
 import '../services/home_widget_sync_service.dart';
 import '../services/kreta_client.dart';
 import '../services/menetrend_service.dart';
 import '../services/token_storage_service.dart';
 import '../services/wear_sync_service.dart';
+import '../theme/custom_skin_config.dart';
 import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
@@ -95,7 +97,9 @@ class DeveloperOptionsMenuList extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final appearanceActive = prefs.minimalistModeEnabled ||
         prefs.uwuModeEnabled ||
-        prefs.tsundereModeEnabled;
+        prefs.tsundereModeEnabled ||
+        prefs.customSkinEnabled ||
+        prefs.fitymaModeEnabled;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -445,12 +449,22 @@ class DeveloperAppearanceSubPage extends StatefulWidget {
 class _DeveloperAppearanceSubPageState
     extends State<DeveloperAppearanceSubPage> {
   late UserProfilePrefs _localPrefs;
+  late final TextEditingController _cssSkinController;
   bool _isPickingBackdrop = false;
 
   @override
   void initState() {
     super.initState();
     _localPrefs = widget.initialPrefs;
+    _cssSkinController = TextEditingController(
+      text: widget.initialPrefs.customSkinCss,
+    );
+  }
+
+  @override
+  void dispose() {
+    _cssSkinController.dispose();
+    super.dispose();
   }
 
   UserProfilePrefs _activePrefs(BuildContext context) =>
@@ -764,12 +778,15 @@ class _DeveloperAppearanceSubPageState
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        uwu('Háttér sötétítés / kontraszt'),
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
+                      Expanded(
+                        child: Text(
+                          uwu('Háttér sötétítés / kontraszt'),
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
+                      const SizedBox(width: 8),
                       Text(
                         '${(activePrefs.customBackdropDim.clamp(0.0, 0.75) * 100).round()}%',
                         style: theme.textTheme.labelMedium?.copyWith(
@@ -942,6 +959,180 @@ class _DeveloperAppearanceSubPageState
                     _update(activePrefs.copyWith(tsundereModeEnabled: val));
                   },
                 ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Material(
+              color: const Color(0xFFFFB74D).withValues(alpha: 0.14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(22),
+                side: BorderSide(
+                  color: const Color(0xFFFFB74D).withValues(alpha: 0.45),
+                ),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                child: SwitchListTile.adaptive(
+                  key: const ValueKey<String>('dev-fityma-mode-switch'),
+                  contentPadding: EdgeInsets.zero,
+                  activeThumbColor: const Color(0xFFFFB74D),
+                  title: const Text(
+                    'Fityma Napló mód',
+                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                  ),
+                  subtitle: Text(
+                    'Lecseréli az alkalmazás nevét és logóját a játékos „Fityma Napló” kiadásra.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSurface.withValues(alpha: 0.75),
+                    ),
+                  ),
+                  value: activePrefs.fitymaModeEnabled,
+                  onChanged: (val) {
+                    HapticFeedback.mediumImpact();
+                    _update(activePrefs.withFitymaMode(val));
+                    unawaited(
+                      DynamicIconService.setAppIcon(
+                        val ? 'icon_fityma' : activePrefs.appIconPreset,
+                      ),
+                    );
+                    TintaToast.info(
+                      context,
+                      val
+                          ? 'Fityma Napló mód aktiválva (indítóikon frissítve)'
+                          : 'Tinta Napló alapállapot visszaállítva',
+                    );
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            SoftGlassCard(
+              prefs: activePrefs,
+              padding: const EdgeInsets.all(18),
+              borderRadius: OledTheme.largeRadius,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SwitchListTile.adaptive(
+                    key: const ValueKey<String>('dev-custom-skin-switch'),
+                    contentPadding: EdgeInsets.zero,
+                    activeThumbColor: scheme.primary,
+                    title: const Text(
+                      'Egyéni CSS Skin',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Élő CSS-változó alapú felület- és témaszerkesztő (:root { --bg, --surface, --accent, --card-radius... }).',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: scheme.onSurface.withValues(alpha: 0.72),
+                      ),
+                    ),
+                    value: activePrefs.customSkinEnabled,
+                    onChanged: (val) {
+                      HapticFeedback.selectionClick();
+                      _update(
+                        activePrefs.withCustomSkin(
+                          enabled: val,
+                          css: _cssSkinController.text,
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    key: const ValueKey<String>('dev-custom-skin-editor'),
+                    controller: _cssSkinController,
+                    minLines: 7,
+                    maxLines: 12,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      height: 1.38,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: CustomSkinConfig.defaultTemplateCss,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      contentPadding: const EdgeInsets.all(12),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.icon(
+                        key: const ValueKey<String>('dev-custom-skin-apply'),
+                        onPressed: () {
+                          HapticFeedback.lightImpact();
+                          _update(
+                            activePrefs.withCustomSkin(
+                              enabled: true,
+                              css: _cssSkinController.text,
+                            ),
+                          );
+                          TintaToast.success(
+                            context,
+                            'Egyéni CSS Skin alkalmazva',
+                          );
+                        },
+                        icon: const Icon(Icons.check_rounded, size: 17),
+                        label: const Text('Alkalmaz'),
+                      ),
+                      OutlinedButton.icon(
+                        key: const ValueKey<String>('dev-custom-skin-reset'),
+                        onPressed: () {
+                          HapticFeedback.lightImpact();
+                          _cssSkinController.text =
+                              CustomSkinConfig.defaultTemplateCss;
+                          _update(
+                            activePrefs.withCustomSkin(
+                              enabled: false,
+                              css: CustomSkinConfig.defaultTemplateCss,
+                            ),
+                          );
+                          TintaToast.info(
+                            context,
+                            'Egyéni CSS Skin alaphelyzetbe állítva',
+                          );
+                        },
+                        icon: const Icon(Icons.restart_alt_rounded, size: 17),
+                        label: const Text('Alaphelyzet'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () async {
+                          await Clipboard.setData(
+                            ClipboardData(text: _cssSkinController.text),
+                          );
+                          if (!context.mounted) return;
+                          TintaToast.info(context, 'CSS vágólapra másolva');
+                        },
+                        icon: const Icon(Icons.copy_rounded, size: 16),
+                        label: const Text('Másolás'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () async {
+                          final clip = await Clipboard.getData('text/plain');
+                          final pasted = clip?.text;
+                          if (pasted == null || pasted.trim().isEmpty) return;
+                          _cssSkinController.text = pasted;
+                          if (!context.mounted) return;
+                          TintaToast.info(context, 'CSS beillesztve');
+                        },
+                        icon: const Icon(Icons.paste_rounded, size: 16),
+                        label: const Text('Beillesztés'),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ],
@@ -1787,6 +1978,54 @@ class _DeveloperIntegrationsSubPageState
                       ),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  Container(
+                    key: const ValueKey<String>(
+                      'dev-live-activity-tutorial-card',
+                    ),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHigh.withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: theme.dividerColor.withValues(alpha: 0.6),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.info_outline_rounded,
+                              size: 16,
+                              color: scheme.primary,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                'Bekapcsolási útmutató (Samsung / Android 16+):',
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: scheme.onSurface,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Beállítások → Fejlesztői beállítások → További beállítások (More settings) → Élő tevékenységek engedélyezése minden alkalmazáshoz (Allow Live Activities for all apps)',
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.4,
+                            color: scheme.onSurface.withValues(alpha: 0.78),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -2066,16 +2305,16 @@ class _DeveloperSystemCacheSubPageState
                       context,
                       currentVersion: _version,
                       release: const GitHubReleaseInfo(
-                        tagName: 'v1.2.0',
-                        title: 'Tinta Napló v1.2.0 — OTA Frissítő Előnézet',
+                        tagName: 'v2.0.1',
+                        title: 'Tinta Napló v2.0.1 — OTA Frissítő Előnézet',
                         releaseNotes:
                             '• 120Hz-es fizikai animációk és Hero átmenetek\n'
                             '• MenetrendGO reggeli/délutáni helyreállítás és Szünet visszaszámláló\n'
                             '• Többoldalas Fejlesztői Központ, elszigetelt Demó mód és Minimalista javítások\n'
-                            '• Közvetlen GitHub Releases APK letöltés és telepítés (tinta-naplo-v1.2.0.apk)',
+                            '• Közvetlen GitHub Releases APK letöltés és telepítés (tinta-naplo-v2.0.1-arm64-v8a.apk)',
                         htmlUrl: GitHubUpdaterService.repoUrl,
                         apkDownloadUrl:
-                            '${GitHubUpdaterService.repoUrl}/releases/latest/download/tinta-naplo-v1.2.0.apk',
+                            '${GitHubUpdaterService.repoUrl}/releases/latest/download/tinta-naplo-v2.0.1-arm64-v8a.apk',
                       ),
                     );
                   },

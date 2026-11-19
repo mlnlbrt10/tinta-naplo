@@ -4,6 +4,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../core/kreta_auth_config.dart';
 import '../services/kreta_client.dart';
 import '../services/token_storage_service.dart';
+import '../widgets/tinta_error_state.dart';
 
 /// Interactive in-app WebView screen that runs the OAuth2 Authorization Code +
 /// PKCE login flow on `https://idp.e-kreta.hu`, allowing the user to solve any

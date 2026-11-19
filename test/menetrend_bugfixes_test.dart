@@ -6,15 +6,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:kreta_api/kreta_api.dart';
-import 'package:rekreta_app/providers/app_providers.dart';
-import 'package:rekreta_app/screens/home_screen.dart';
-import 'package:rekreta_app/screens/more_screen.dart';
-import 'package:rekreta_app/services/kreta_client.dart';
-import 'package:rekreta_app/services/menetrend_service.dart';
-import 'package:rekreta_app/services/token_storage_service.dart';
-import 'package:rekreta_app/theme/oled_theme.dart';
-import 'package:rekreta_app/widgets/glass_card.dart';
-import 'package:rekreta_app/widgets/menetrend_hero_card.dart';
+import 'package:tinta_naplo/providers/app_providers.dart';
+import 'package:tinta_naplo/screens/home_screen.dart';
+import 'package:tinta_naplo/screens/more_screen.dart';
+import 'package:tinta_naplo/services/kreta_client.dart';
+import 'package:tinta_naplo/services/menetrend_service.dart';
+import 'package:tinta_naplo/services/token_storage_service.dart';
+import 'package:tinta_naplo/theme/oled_theme.dart';
+import 'package:tinta_naplo/widgets/glass_card.dart';
+import 'package:tinta_naplo/widgets/menetrend_hero_card.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Lesson _lesson({

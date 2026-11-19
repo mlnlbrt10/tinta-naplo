@@ -2,10 +2,10 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:rekreta_app/screens/login_screen.dart';
-import 'package:rekreta_app/services/token_storage_service.dart';
-import 'package:rekreta_app/theme/oled_theme.dart';
-import 'package:rekreta_app/widgets/tinta_toast.dart';
+import 'package:tinta_naplo/screens/login_screen.dart';
+import 'package:tinta_naplo/services/token_storage_service.dart';
+import 'package:tinta_naplo/theme/oled_theme.dart';
+import 'package:tinta_naplo/widgets/tinta_toast.dart';
 
 void main() {
   testWidgets(

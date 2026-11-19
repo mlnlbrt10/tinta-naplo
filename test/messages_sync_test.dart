@@ -5,8 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:kreta_api/kreta_api.dart';
-import 'package:rekreta_app/services/kreta_client.dart';
-import 'package:rekreta_app/services/token_storage_service.dart';
+import 'package:tinta_naplo/services/kreta_client.dart';
+import 'package:tinta_naplo/services/token_storage_service.dart';
 
 StoredSession _buildSession({
   String inst = 'klik-test-001',

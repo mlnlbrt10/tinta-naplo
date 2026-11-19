@@ -266,7 +266,7 @@ class _LoginScreenState extends State<LoginScreen>
         const SizedBox(width: 12),
         Expanded(
           child: Text(
-            'Tinta Napló',
+            uwu('Tinta Napló'),
             style: theme.textTheme.titleLarge?.copyWith(
               fontWeight: FontWeight.w900,
               color: _crispOffWhite,
@@ -470,11 +470,12 @@ class _LoginScreenState extends State<LoginScreen>
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
+              Colors.transparent,
               Colors.black,
               Colors.black,
               Colors.transparent,
             ],
-            stops: [0.0, 0.85, 1.0],
+            stops: [0.0, 0.12, 0.85, 1.0],
           ).createShader(bounds),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(18),

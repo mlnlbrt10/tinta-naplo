@@ -15,29 +15,30 @@ import 'services/kreta_client.dart';
 import 'services/token_storage_service.dart';
 import 'services/wear_sync_service.dart';
 import 'theme/oled_theme.dart';
+import 'utils/uwu_helper.dart';
 import 'widgets/tinta_splash_overlay.dart';
 import 'widgets/tinta_toast.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const ReKretaApp());
+  runApp(const TintaNaploApp());
 }
 
-class ReKretaApp extends StatefulWidget {
+class TintaNaploApp extends StatefulWidget {
   final TokenStorageService? tokenStorage;
   final KretaClient? kretaClient;
 
-  const ReKretaApp({
+  const TintaNaploApp({
     super.key,
     this.tokenStorage,
     this.kretaClient,
   });
 
   @override
-  State<ReKretaApp> createState() => _ReKretaAppState();
+  State<TintaNaploApp> createState() => _TintaNaploAppState();
 }
 
-class _ReKretaAppState extends State<ReKretaApp> {
+class _TintaNaploAppState extends State<TintaNaploApp> {
   late final TokenStorageService _tokenStorage =
       widget.tokenStorage ?? const TokenStorageService();
   late final KretaClient _kretaClient =
@@ -83,6 +84,7 @@ class _ReKretaAppState extends State<ReKretaApp> {
   void initState() {
     super.initState();
     _settingsProvider.addListener(_onProviderPrefsChanged);
+    TokenStorageService.sessionNotifier.addListener(_onGlobalSessionChanged);
     HomeWidgetSyncService.instance.initialize();
     WearSyncService.instance.initialize(
       onWatchAuthRequested: () {
@@ -90,6 +92,14 @@ class _ReKretaAppState extends State<ReKretaApp> {
       },
     );
     _restoreSavedSessionAndPrefs();
+  }
+
+  void _onGlobalSessionChanged() {
+    if (!mounted || _prefs.demoModeEnabled) return;
+    final next = TokenStorageService.sessionNotifier.value;
+    if (next != null && next.accessToken != _session?.accessToken) {
+      setState(() => _session = next);
+    }
   }
 
   void _onProviderPrefsChanged() {
@@ -108,6 +118,7 @@ class _ReKretaAppState extends State<ReKretaApp> {
 
   @override
   void dispose() {
+    TokenStorageService.sessionNotifier.removeListener(_onGlobalSessionChanged);
     WearSyncService.instance.disposeListener();
     _settingsProvider.removeListener(_onProviderPrefsChanged);
     _commuteProvider.dispose();
@@ -136,6 +147,8 @@ class _ReKretaAppState extends State<ReKretaApp> {
             session: restoredSession,
             student: restoredCache?.student,
             nickname: restoredPrefs.nickname,
+            recentGrades: restoredCache?.allGrades,
+            upcomingExams: restoredCache?.tests,
           ),
         );
       } else if (restoredPrefs.demoModeEnabled) {
@@ -155,15 +168,18 @@ class _ReKretaAppState extends State<ReKretaApp> {
       _set(() => _isRestoringSession = false);
     }
 
-    // Dismiss the splash overlay right after the first real screen frame builds
-    // and paints underneath so the 450ms easeOutCubic dissolve stays smooth.
+    // Dismiss the splash overlay only after the real HomeScreen/LoginScreen frame
+    // has built and painted its first frame underneath so zero white/blank flicker occurs.
     if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (_isSplashLoading) {
-        _set(() => _isSplashLoading = false);
-      }
-      unawaited(_checkPendingWatchAuthOnStartup());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (_isSplashLoading) {
+          _set(() => _isSplashLoading = false);
+        }
+        unawaited(_checkPendingWatchAuthOnStartup());
+      });
     });
   }
 
@@ -230,6 +246,8 @@ class _ReKretaAppState extends State<ReKretaApp> {
           student: _cachedDashboard?.student,
           nickname: _prefs.nickname,
           forceSync: true,
+          recentGrades: _cachedDashboard?.allGrades,
+          upcomingExams: _cachedDashboard?.tests,
         );
         if (pushed && mounted) {
           _showWatchSyncFeedback('Munkamenet szinkronizálva az órával');
@@ -359,7 +377,7 @@ class _ReKretaAppState extends State<ReKretaApp> {
               return MaterialApp(
                 navigatorKey: _navigatorKey,
                 scaffoldMessengerKey: _scaffoldMessengerKey,
-                title: 'Tinta Napló',
+                title: uwu('Tinta Napló'),
                 debugShowCheckedModeBanner: false,
                 theme: activeTheme,
                 darkTheme: activeTheme,

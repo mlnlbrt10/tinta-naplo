@@ -1,2 +1,2 @@
--keep class hu.rekreta.rekreta_app.shared.** { *; }
--keep class hu.rekreta.rekreta_app.wear.data.** { *; }
+-keep class hu.mlnlbrt.tintanaplo.shared.** { *; }
+-keep class hu.mlnlbrt.tintanaplo.wear.data.** { *; }

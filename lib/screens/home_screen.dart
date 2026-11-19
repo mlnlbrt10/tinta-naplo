@@ -24,6 +24,7 @@ import '../widgets/frosted_inspection_modal.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/menetrend_hero_card.dart';
 import '../widgets/skeleton_shimmer.dart';
+import '../widgets/tinta_error_state.dart';
 import '../widgets/tinta_toast.dart';
 import 'grades_screen.dart';
 import 'more_screen.dart';
@@ -676,6 +677,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   DateTime _lastCommuteSyncAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _hasInitialCommuteSynced = false;
   bool _hasPushedWearProfileMetadata = false;
+  String? _lastWearDashboardDigest;
   Set<String> _fallbackCompletedHomeworkIds = <String>{};
 
   final DateFormat _timeFormat = DateFormat('HH:mm');
@@ -706,6 +708,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _data = widget.initialCachedData;
     }
     _isLoading = _data == null;
+    if (_data != null) {
+      // Cached or demo data is already mounted cleanly; never replay entrance
+      // opacity fades on background sync completion after splash exit.
+      _homeInitialEntrancePlayed = true;
+      _homeEntranceActive = false;
+    }
+    TokenStorageService.sessionNotifier.addListener(_onGlobalSessionChanged);
     DemoDataService.instance.revision.addListener(_onDemoRevisionChanged);
     HomeWidgetSyncService.instance.openTimetableSignal
         .addListener(_onOpenTimetableSignal);
@@ -756,6 +765,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final enabled = _activePrefs.demoModeEnabled;
     if (enabled != _lastDemoModeActive) {
       _applyDemoModeTransition(enabled);
+    }
+  }
+
+  void _onGlobalSessionChanged() {
+    if (!mounted || _activePrefs.demoModeEnabled) return;
+    final next = TokenStorageService.sessionNotifier.value;
+    if (next != null && next.accessToken != _session.accessToken) {
+      setState(() => _session = next);
     }
   }
 
@@ -1067,6 +1084,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    TokenStorageService.sessionNotifier.removeListener(_onGlobalSessionChanged);
     DemoDataService.instance.revision.removeListener(_onDemoRevisionChanged);
     HomeWidgetSyncService.instance.openTimetableSignal
         .removeListener(_onOpenTimetableSignal);
@@ -1198,9 +1216,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     try {
       final previousRefreshToken = _session.refreshToken;
+      final hadExistingData = _data != null;
       final result = await widget.kretaClient.fetchDashboardData(_session);
       if (!mounted) return;
-      final playInitialEntrance = !_homeInitialEntrancePlayed;
+      final playInitialEntrance =
+          !_homeInitialEntrancePlayed && !silentIfCached && !hadExistingData;
       setState(() {
         _session = result.activeSession;
         _data = result;
@@ -1228,6 +1248,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           session: result.activeSession,
           student: result.student,
           nickname: _activePrefs.nickname,
+          recentGrades: result.allGrades,
+          upcomingExams: result.tests,
         ),
       );
       if (result.activeSession.refreshToken != previousRefreshToken) {
@@ -1237,11 +1259,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             student: result.student,
             nickname: _activePrefs.nickname,
             forceSync: false,
+            recentGrades: result.allGrades,
+            upcomingExams: result.tests,
           ),
         );
       }
-      if (result.student != null && !_hasPushedWearProfileMetadata) {
+      final dashboardDigest =
+          '${WearSyncService.serializeRecentGradesJson(result.allGrades)}|${WearSyncService.serializeUpcomingExamsJson(result.tests)}';
+      if ((result.student != null && !_hasPushedWearProfileMetadata) ||
+          dashboardDigest != _lastWearDashboardDigest) {
         _hasPushedWearProfileMetadata = true;
+        _lastWearDashboardDigest = dashboardDigest;
         unawaited(_syncWearStudentMetadataIfConnected(result));
       }
       unawaited(
@@ -1256,12 +1284,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       widget.onLogout();
     } catch (e) {
       if (!mounted) return;
+      final hasCached = _data != null;
       setState(() {
         _isLoading = false;
-        if (!silentIfCached || _data == null) {
+        if (!hasCached) {
           _error = e.toString();
+        } else {
+          _error = null;
         }
       });
+      if (hasCached && !silentIfCached) {
+        TintaToast.error(context, TintaErrorState.friendlyTitleFor(e));
+      }
     }
   }
 
@@ -1273,6 +1307,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       student: data.student,
       nickname: _activePrefs.nickname,
       forceSync: false,
+      recentGrades: data.allGrades,
+      upcomingExams: data.tests,
+    );
+    await WearSyncService.instance.syncDashboardToWatch(
+      session: data.activeSession,
+      student: data.student,
+      nickname: _activePrefs.nickname,
+      recentGrades: data.allGrades,
+      upcomingExams: data.tests,
     );
   }
 
@@ -1829,7 +1872,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final lessons = _data?.todaysLessons ?? const <Lesson>[];
       final allFeedItems = _buildAllFeedItems();
       final today = DateUtils.dateOnly(DateTime.now());
-      final allDayGroups = _groupFeedItemsByDay(allFeedItems, today);
+      final upcomingExamItems = <HomeActivityItem>[];
+      final regularFeedItems = <HomeActivityItem>[];
+      for (final item in allFeedItems) {
+        if (item.test != null &&
+            DateUtils.dateOnly(item.sortDate.toLocal()).isAfter(today)) {
+          upcomingExamItems.add(item);
+        } else {
+          regularFeedItems.add(item);
+        }
+      }
+      upcomingExamItems.sort((a, b) {
+        final cmp = a.sortDate.compareTo(b.sortDate);
+        if (cmp != 0) return cmp;
+        final aLesson = a.test?.lessonNumber ?? 0;
+        final bLesson = b.test?.lessonNumber ?? 0;
+        return aLesson.compareTo(bLesson);
+      });
+
+      final allDayGroups = _groupFeedItemsByDay(regularFeedItems, today);
       bool isFeedItemVisible(HomeActivityItem item) {
         if (!item.matchesFilter(_feedFilter)) return false;
         // On Főoldal ('Összes'), automatically hide completed homeworks so only
@@ -1843,16 +1904,49 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
       final feedRows = <_HomeFeedRow>[];
       int visibleGroupOrdinal = 0;
+      if (upcomingExamItems.isNotEmpty) {
+        final matchingExamCount =
+            upcomingExamItems.where(isFeedItemVisible).length;
+        final examHeaderVisible = matchingExamCount > 0;
+        feedRows.add(
+          _HomeFeedHeaderRow(
+            day: today.add(const Duration(days: 1)),
+            matchingCount: matchingExamCount,
+            groupIndex: 0,
+            isVisible: examHeaderVisible,
+            topSpacing: 0.0,
+            customTitle: 'Közelgő számonkérések',
+            isUpcomingExamsHeader: true,
+          ),
+        );
+        int visibleItemIdx = 0;
+        for (final item in upcomingExamItems) {
+          final itemVisible = isFeedItemVisible(item);
+          feedRows.add(
+            _HomeFeedItemRow(
+              item: item,
+              itemIndex: itemVisible ? visibleItemIdx++ : 0,
+              groupIndex: 0,
+              isVisible: itemVisible,
+            ),
+          );
+        }
+        if (examHeaderVisible) {
+          visibleGroupOrdinal++;
+        }
+      }
+
       for (int gIdx = 0; gIdx < allDayGroups.length; gIdx++) {
         final group = allDayGroups[gIdx];
         final matchingCount = group.items.where(isFeedItemVisible).length;
         final headerVisible = matchingCount > 0;
         final isFirstVisibleGroup = headerVisible && visibleGroupOrdinal == 0;
+        final effectiveGroupIdx = upcomingExamItems.isNotEmpty ? gIdx + 1 : gIdx;
         feedRows.add(
           _HomeFeedHeaderRow(
             day: group.day,
             matchingCount: matchingCount,
-            groupIndex: gIdx,
+            groupIndex: effectiveGroupIdx,
             isVisible: headerVisible,
             topSpacing: (headerVisible && !isFirstVisibleGroup) ? 20.0 : 0.0,
           ),
@@ -1865,7 +1959,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             _HomeFeedItemRow(
               item: item,
               itemIndex: itemVisible ? visibleItemIdx++ : 0,
-              groupIndex: gIdx,
+              groupIndex: effectiveGroupIdx,
               isVisible: itemVisible,
             ),
           );
@@ -2031,15 +2125,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         row.matchingCount,
         today,
         topSpacing: row.topSpacing,
+        customTitle: row.customTitle,
+        isUpcomingExamsHeader: row.isUpcomingExamsHeader,
       );
       return RepaintBoundary(
-        key: ValueKey('day-boundary-${row.day.toIso8601String()}'),
+        key: ValueKey(
+          row.isUpcomingExamsHeader
+              ? 'day-boundary-upcoming-exams'
+              : 'day-boundary-${row.day.toIso8601String()}',
+        ),
         child: _CollapsibleFeedItem(
           visible: row.isVisible,
           child: _maybeHomeEntrance(
             header,
             row.groupIndex < 6 ? row.groupIndex + 2 : 8,
-            key: ValueKey('day-${row.day.toIso8601String()}'),
+            key: ValueKey(
+              row.isUpcomingExamsHeader
+                  ? 'day-upcoming-exams'
+                  : 'day-${row.day.toIso8601String()}',
+            ),
           ),
         ),
       );
@@ -2070,10 +2174,53 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     int matchingCount,
     DateTime today, {
     double topSpacing = 0,
+    String? customTitle,
+    bool isUpcomingExamsHeader = false,
   }) {
+    if (isUpcomingExamsHeader) {
+      const subtleAmber = Color(0xFFF59E0B);
+      return Padding(
+        padding: EdgeInsets.fromLTRB(4, topSpacing, 4, 8),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.event_note_rounded,
+              size: 16,
+              color: subtleAmber,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              uwu(customTitle ?? 'Közelgő számonkérések'),
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontSize: 14.5,
+                fontWeight: FontWeight.w800,
+                color: scheme.onSurface,
+                letterSpacing: 0.1,
+              ),
+            ),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+              decoration: BoxDecoration(
+                color: subtleAmber.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                '$matchingCount',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: subtleAmber,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     final isUpcomingDay = day.isAfter(today);
     final isTomorrow = day == today.add(const Duration(days: 1));
-    final title = _formatDaySectionTitle(day, today);
+    final title = customTitle ?? _formatDaySectionTitle(day, today);
     final weekday = _weekdayNamesHu[day.weekday.clamp(1, 7)];
     // For later future days ("Nov. 16. • Hétfő"), weekday is already in title;
     // for tomorrow ("Holnap • Nov. 13.") and today/past, show weekday alongside.
@@ -2087,7 +2234,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             const Icon(
               Icons.upcoming_rounded,
               size: 16,
-              color: Color(0xFFFF7043),
+              color: Color(0xFFF59E0B),
             ),
             const SizedBox(width: 6),
           ],
@@ -2097,7 +2244,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               fontSize: 15,
               fontWeight: FontWeight.w900,
               color:
-                  isUpcomingDay ? const Color(0xFFFF7043) : scheme.onSurface,
+                  isUpcomingDay ? const Color(0xFFF59E0B) : scheme.onSurface,
               letterSpacing: 0.2,
             ),
           ),
@@ -2116,7 +2263,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
             decoration: BoxDecoration(
               color: isUpcomingDay
-                  ? const Color(0xFFFF7043).withValues(alpha: 0.18)
+                  ? const Color(0xFFF59E0B).withValues(alpha: 0.14)
                   : scheme.surfaceContainerHigh.withValues(alpha: 0.65),
               borderRadius: BorderRadius.circular(999),
             ),
@@ -2124,7 +2271,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               '$matchingCount',
               style: theme.textTheme.labelSmall?.copyWith(
                 color: isUpcomingDay
-                    ? const Color(0xFFFF7043)
+                    ? const Color(0xFFF59E0B)
                     : scheme.onSurface.withValues(alpha: 0.72),
                 fontWeight: FontWeight.w800,
               ),
@@ -3162,26 +3309,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  /// Announced exam / test card with clean line break between weekday and date
-  /// (`Part B #25`) and boomerang Hero transition (`Part B #1`).
+  /// Announced exam / test card redesigned to stay compact and scannable
+  /// with soft amber accents, a concise date pill ("Nov. 25., Sze"), and a
+  /// single muted subtitle line.
   Widget _buildTestFeedCard(
     ThemeData theme,
     ColorScheme scheme,
     Test test,
   ) {
-    const testColor = Color(0xFFFF7043);
-    const weekdayNames = [
-      '',
-      'Hétfő',
-      'Kedd',
-      'Szerda',
-      'Csütörtök',
-      'Péntek',
-      'Szombat',
-      'Vasárnap',
-    ];
+    const testColor = Color(0xFFF59E0B);
+    const shortWeekdaysHu = ['', 'H', 'K', 'Sze', 'Cs', 'P', 'Szo', 'V'];
     final testLocal = test.date.toLocal();
-    final weekdayName = weekdayNames[testLocal.weekday.clamp(1, 7)];
+    final monthStr = _shortMonthsHu[(testLocal.month - 1).clamp(0, 11)];
+    final weekdayShort = shortWeekdaysHu[testLocal.weekday.clamp(1, 7)];
+    final conciseDatePill = '$monthStr ${testLocal.day}., $weekdayShort';
     final rawSubjectTitle =
         test.subject.name.isNotEmpty ? test.subject.name : test.subjectName;
     final subjectTitle = widget.prefs.resolveSubjectName(
@@ -3189,9 +3330,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       test.subject.uid,
     );
     final heroTag = 'home_test_${test.uid}';
+    final lessonPart =
+        test.lessonNumber > 0 ? ' (${test.lessonNumber}. óra)' : '';
+    final trimmedTheme = test.theme?.trim() ?? '';
+    final themePart = trimmedTheme.isNotEmpty ? ' • $trimmedTheme' : '';
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 6),
       child: TactileBounce(
         pressedScale: 0.97,
         onTap: () => showTestInspectionModal(
@@ -3204,8 +3349,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           enabled: widget.prefs.christmasModeEnabled,
           child: SoftGlassCard(
             prefs: _activePrefs,
-            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-            borderRadius: BorderRadius.circular(18),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            borderRadius: BorderRadius.circular(16),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -3214,33 +3359,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   child: Material(
                     type: MaterialType.transparency,
                     child: Container(
-                      width: 38,
-                      height: 38,
+                      width: 34,
+                      height: 34,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: testColor.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(11),
-                        border: Border.all(color: testColor),
+                        color: testColor.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: testColor.withValues(alpha: 0.35),
+                        ),
                       ),
                       child: const Icon(
-                        Icons.assignment_late_rounded,
+                        Icons.event_note_rounded,
                         color: testColor,
-                        size: 20,
+                        size: 18,
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 11),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Expanded(
                             child: Text(
                               subjectTitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontSize: 13.5,
                                 fontWeight: FontWeight.w800,
@@ -3248,27 +3397,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          Text(
-                            '$weekdayName, ${_formatFeedCardDate(testLocal)}',
-                            textAlign: TextAlign.right,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: testColor,
-                              fontWeight: FontWeight.w700,
-                              height: 1.25,
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2.5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: testColor.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              conciseDatePill,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                fontSize: 10.5,
+                                color: testColor,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '${test.method.description} (${test.lessonNumber}. óra)'
-                        '${test.theme != null && test.theme!.trim().isNotEmpty ? ' • ${test.theme!.trim()}' : ''}',
+                        '${test.method.description}$lessonPart$themePart',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
-                          color: testColor,
-                          fontWeight: FontWeight.w600,
+                          color: scheme.onSurface.withValues(alpha: 0.68),
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ],
@@ -3283,25 +3440,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildErrorCard(ThemeData theme, String error) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2B1111),
-        borderRadius: OledTheme.cardRadius,
-        border: Border.all(color: Colors.redAccent),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.error_outline_rounded, color: Colors.redAccent),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              error,
-              style: const TextStyle(color: Colors.white),
-            ),
-          ),
-        ],
-      ),
+    return TintaErrorState(
+      error: error,
+      prefs: _activePrefs,
+      compact: _data != null,
+      onRetry: () => _loadDashboard(silentIfCached: false),
     );
   }
 
@@ -3387,6 +3530,8 @@ class _HomeFeedHeaderRow extends _HomeFeedRow {
     required this.groupIndex,
     required this.isVisible,
     required this.topSpacing,
+    this.customTitle,
+    this.isUpcomingExamsHeader = false,
   });
 
   final DateTime day;
@@ -3394,6 +3539,8 @@ class _HomeFeedHeaderRow extends _HomeFeedRow {
   final int groupIndex;
   final bool isVisible;
   final double topSpacing;
+  final String? customTitle;
+  final bool isUpcomingExamsHeader;
 }
 
 class _HomeFeedItemRow extends _HomeFeedRow {

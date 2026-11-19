@@ -7,11 +7,16 @@
 .pub/
 build/
 
+# logs
+*.log
+
 # android
 android/**/gradle-wrapper.jar
 android/.gradle
 android/captures/
 android/local.properties
+android/key.properties
+key.properties
 android/**/GeneratedPluginRegistrant.java
 
 # ide & os
@@ -23,6 +28,8 @@ android/**/GeneratedPluginRegistrant.java
 # secrets & keys
 *.env
 *.keystore
+**/*.keystore
 *.jks
+**/*.jks
 __pycache__/
 *.pyc

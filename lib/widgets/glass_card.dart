@@ -16,7 +16,13 @@ bool resolveLiquidGlassEnabled([UserProfilePrefs? prefs]) {
 bool resolveSoftBlurEnabled([UserProfilePrefs? prefs]) =>
     resolveLiquidGlassEnabled(prefs);
 
-double resolveSoftBlurBackdropSigma([UserProfilePrefs? prefs]) => 10.0;
+double resolveSoftBlurBackdropSigma([UserProfilePrefs? prefs]) {
+  final skin = prefs?.customSkinConfig ?? UserProfilePrefs.activeCustomSkin;
+  if (skin.enabled && skin.glassBlur != null) {
+    return skin.glassBlur!;
+  }
+  return 10.0;
+}
 
 /// Returns a lighter scrim behind frosted glass modals and dialogs when Liquid
 /// Glass is enabled so blurred underlying content shines cleanly through.
@@ -82,13 +88,23 @@ class LiquidGlassSurface extends StatelessWidget {
     final isDark = theme.brightness == Brightness.dark;
     final effectivePrefs =
         prefs ?? AppProvidersScope.maybeOf(context)?.settings.prefs;
+    final skin = effectivePrefs?.customSkinConfig ?? UserProfilePrefs.activeCustomSkin;
     final liquidGlassEnabled = resolveLiquidGlassEnabled(effectivePrefs);
+    final effectiveRadius = (skin.enabled &&
+            skin.cardRadius != null &&
+            borderRadius.topLeft.x >= 16.0)
+        ? BorderRadius.circular(skin.cardRadius!)
+        : borderRadius;
+    final effectiveBorderWidth = skin.enabled ? (skin.borderWidth ?? 1.0) : 1.0;
+    final effectiveSolidColor = skin.enabled && skin.surface != null
+        ? skin.surface!.withValues(alpha: skin.cardOpacity ?? 1.0)
+        : solidColor;
     final resolvedSolidColor = highContrastExpanded && liquidGlassEnabled
-        ? (solidColor ??
+        ? (effectiveSolidColor ??
             (isDark
                 ? const Color(0xF5141820)
                 : Colors.white.withValues(alpha: 0.97)))
-        : (solidColor ?? scheme.surfaceContainerHigh).withValues(alpha: 1.0);
+        : (effectiveSolidColor ?? scheme.surfaceContainerHigh).withValues(alpha: 1.0);
     final rawContent = Material(
       type: MaterialType.transparency,
       child: child,
@@ -103,16 +119,18 @@ class LiquidGlassSurface extends StatelessWidget {
     if (!liquidGlassEnabled || (highContrastExpanded && !isDockStyle)) {
       final resolvedBorder = border ??
           Border.all(
-            color: liquidGlassEnabled
-                ? Colors.white.withValues(alpha: isDark ? 0.14 : 0.24)
-                : scheme.outlineVariant,
-            width: 1.0,
+            color: (skin.enabled && skin.borderColor != null)
+                ? skin.borderColor!
+                : (liquidGlassEnabled
+                    ? Colors.white.withValues(alpha: isDark ? 0.14 : 0.24)
+                    : scheme.outlineVariant),
+            width: effectiveBorderWidth,
           );
       final solidBox = Container(
         padding: padding,
         decoration: BoxDecoration(
           color: resolvedSolidColor,
-          borderRadius: borderRadius,
+          borderRadius: effectiveRadius,
           border: resolvedBorder,
           boxShadow: boxShadow,
         ),
@@ -137,6 +155,10 @@ class LiquidGlassSurface extends StatelessWidget {
       bottomTint = glassTintColor!.withValues(
         alpha: (glassTintColor!.a * 0.55).clamp(0.0, 1.0),
       );
+    } else if (skin.enabled && skin.surface != null) {
+      final op = skin.cardOpacity ?? 0.85;
+      topTint = skin.surface!.withValues(alpha: (0.45 * op).clamp(0.05, 0.9));
+      bottomTint = skin.surface!.withValues(alpha: (0.28 * op).clamp(0.03, 0.85));
     } else {
       // Crystal-clear optical glass: near-zero dark tint with zero white haze
       // so the wallpaper or underlying UI shines cleanly through the blur.
@@ -146,8 +168,10 @@ class LiquidGlassSurface extends StatelessWidget {
 
     final specularBorder = border ??
         Border.all(
-          color: Colors.white.withValues(alpha: isDark ? 0.14 : 0.24),
-          width: 1.0,
+          color: (skin.enabled && skin.borderColor != null)
+              ? skin.borderColor!
+              : Colors.white.withValues(alpha: isDark ? 0.14 : 0.24),
+          width: effectiveBorderWidth,
         );
 
     final baseOuterShadows = (boxShadow == null || boxShadow!.isEmpty)
@@ -188,7 +212,7 @@ class LiquidGlassSurface extends StatelessWidget {
               child: IgnorePointer(
                 child: RepaintBoundary(
                   child: ClipRRect(
-                    borderRadius: borderRadius,
+                    borderRadius: effectiveRadius,
                     child: BackdropFilter(
                       filter: ImageFilter.blur(
                         sigmaX: animatedSigma,
@@ -201,7 +225,7 @@ class LiquidGlassSurface extends StatelessWidget {
                             end: Alignment.bottomRight,
                             colors: [animTopTint, animBottomTint],
                           ),
-                          borderRadius: borderRadius,
+                          borderRadius: effectiveRadius,
                           border: animBorder,
                         ),
                       ),
@@ -219,7 +243,7 @@ class LiquidGlassSurface extends StatelessWidget {
       } else {
         glassContent = RepaintBoundary(
           child: ClipRRect(
-            borderRadius: borderRadius,
+            borderRadius: effectiveRadius,
             child: BackdropFilter(
               filter: ImageFilter.blur(
                 sigmaX: animatedSigma,
@@ -233,7 +257,7 @@ class LiquidGlassSurface extends StatelessWidget {
                     end: Alignment.bottomRight,
                     colors: [animTopTint, animBottomTint],
                   ),
-                  borderRadius: borderRadius,
+                  borderRadius: effectiveRadius,
                   border: animBorder,
                 ),
                 child: innerChild,
@@ -265,7 +289,7 @@ class LiquidGlassSurface extends StatelessWidget {
 
       return Container(
         decoration: BoxDecoration(
-          borderRadius: borderRadius,
+          borderRadius: effectiveRadius,
           boxShadow: outerShadows,
         ),
         child: glassContent,
@@ -431,6 +455,13 @@ class SoftGlassCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final activePrefs =
         AppProvidersScope.maybeOf(context)?.settings.prefs ?? prefs;
+    final skin = activePrefs.customSkinConfig;
+    final effectiveRadius = (skin.enabled &&
+            skin.cardRadius != null &&
+            borderRadius.topLeft.x >= 16.0)
+        ? BorderRadius.circular(skin.cardRadius!)
+        : borderRadius;
+    final effectiveBorderWidth = skin.enabled ? (skin.borderWidth ?? 1.0) : 1.0;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final activePreset = BackgroundPresetInfo.resolve(activePrefs);
@@ -439,11 +470,13 @@ class SoftGlassCard extends StatelessWidget {
         activePreset.id != 'pure_oled';
     final contrast = AdaptiveContrastTokens.resolve(activePrefs);
     final resolvedBorderColor = borderColor ??
-        (hasStudioOrCustomBackdrop
-            ? contrast.cardBorder
-            : scheme.outlineVariant);
-    final borderSide =
-        border ?? Border.all(color: resolvedBorderColor, width: 1.0);
+        (skin.enabled && skin.borderColor != null
+            ? skin.borderColor!
+            : (hasStudioOrCustomBackdrop
+                ? contrast.cardBorder
+                : scheme.outlineVariant));
+    final borderSide = border ??
+        Border.all(color: resolvedBorderColor, width: effectiveBorderWidth);
     final Widget themedChild = hasStudioOrCustomBackdrop
         ? DefaultTextStyle.merge(
             style: TextStyle(color: contrast.primaryText),
@@ -459,15 +492,17 @@ class SoftGlassCard extends StatelessWidget {
     );
 
     if (!activePrefs.liquidGlassEnabled) {
-      final baseSolid = hasStudioOrCustomBackdrop
-          ? (color ?? contrast.cardFill.withValues(alpha: 0.94))
-          : (color ?? scheme.surfaceContainer).withValues(alpha: 1.0);
+      final baseSolid = (skin.enabled && skin.surface != null)
+          ? (color ?? skin.surface!).withValues(alpha: skin.cardOpacity ?? 1.0)
+          : (hasStudioOrCustomBackdrop
+              ? (color ?? contrast.cardFill.withValues(alpha: 0.94))
+              : (color ?? scheme.surfaceContainer).withValues(alpha: 1.0));
       return RepaintBoundary(
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
             color: baseSolid,
-            borderRadius: borderRadius,
+            borderRadius: effectiveRadius,
             border: borderSide,
           ),
           child: contentChild,
@@ -479,22 +514,26 @@ class SoftGlassCard extends StatelessWidget {
     final glassBorder = border ??
         Border.all(
           color: borderColor ??
-              (hasStudioOrCustomBackdrop
-                  ? contrast.cardBorder
-                  : Colors.white.withValues(alpha: isDark ? 0.14 : 0.34)),
-          width: 1.0,
+              (skin.enabled && skin.borderColor != null
+                  ? skin.borderColor!
+                  : (hasStudioOrCustomBackdrop
+                      ? contrast.cardBorder
+                      : Colors.white.withValues(alpha: isDark ? 0.14 : 0.34))),
+          width: effectiveBorderWidth,
         );
 
     if (isExpanded) {
-      final expandedFill = hasStudioOrCustomBackdrop
-          ? (color ?? contrast.cardFill.withValues(alpha: 0.95))
-          : (color ?? scheme.surfaceContainerHigh).withValues(alpha: 0.96);
+      final expandedFill = (skin.enabled && skin.surface != null)
+          ? (color ?? skin.surface!).withValues(alpha: skin.cardOpacity ?? 0.95)
+          : (hasStudioOrCustomBackdrop
+              ? (color ?? contrast.cardFill.withValues(alpha: 0.95))
+              : (color ?? scheme.surfaceContainerHigh).withValues(alpha: 0.96));
       return RepaintBoundary(
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
             color: expandedFill,
-            borderRadius: borderRadius,
+            borderRadius: effectiveRadius,
             border: glassBorder,
           ),
           child: contentChild,
@@ -502,9 +541,13 @@ class SoftGlassCard extends StatelessWidget {
       );
     }
 
-    final opacityScale = activePrefs.cardOpacity.clamp(0.55, 0.95);
-    final surfaceBase =
-        color ?? (isDark ? const Color(0xFF141820) : Colors.white);
+    final opacityScale = (skin.enabled && skin.cardOpacity != null)
+        ? skin.cardOpacity!.clamp(0.15, 1.0)
+        : activePrefs.cardOpacity.clamp(0.55, 0.95);
+    final surfaceBase = color ??
+        (skin.enabled && skin.surface != null
+            ? skin.surface!
+            : (isDark ? const Color(0xFF141820) : Colors.white));
     final Color topHighlightStop;
     final Color midBodyStop;
     final Color bottomDepthStop;
@@ -553,7 +596,7 @@ class SoftGlassCard extends StatelessWidget {
 
     return RepaintBoundary(
       child: ClipRRect(
-        borderRadius: borderRadius,
+        borderRadius: effectiveRadius,
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
@@ -563,11 +606,11 @@ class SoftGlassCard extends StatelessWidget {
               stops: const [0.0, 0.35, 1.0],
               colors: [topHighlightStop, midBodyStop, bottomDepthStop],
             ),
-            borderRadius: borderRadius,
+            borderRadius: effectiveRadius,
             border: glassBorder,
           ),
           foregroundDecoration: BoxDecoration(
-            borderRadius: borderRadius,
+            borderRadius: effectiveRadius,
             border: Border(
               top: BorderSide(
                 color: Colors.white.withValues(alpha: isDark ? 0.22 : 0.62),
@@ -582,9 +625,8 @@ class SoftGlassCard extends StatelessWidget {
   }
 }
 
-/// Animated first-seen highlight outline rendered around newly received grade
-/// cards (and subject tiles containing them). Smoothly fades out when tapped or
-/// when a pull-to-refresh clears active session glows.
+/// Animated luminous ambient aura glow rendered around newly arrived ("first-seen")
+/// grade cards and subject tiles before auto-dismissing once inspected.
 class GradeFirstSeenGlow extends StatelessWidget {
   final bool isGlowing;
   final Color accentColor;
@@ -609,21 +651,55 @@ class GradeFirstSeenGlow extends StatelessWidget {
         borderRadius: borderRadius,
         border: Border.all(
           color: isGlowing
-              ? accentColor.withValues(alpha: isDark ? 0.90 : 0.82)
+              ? accentColor.withValues(alpha: isDark ? 0.45 : 0.38)
               : Colors.transparent,
-          width: isGlowing ? 1.5 : 0.0,
+          width: isGlowing ? 1.0 : 0.0,
         ),
         boxShadow: isGlowing
             ? [
                 BoxShadow(
-                  color: accentColor.withValues(alpha: isDark ? 0.42 : 0.30),
-                  blurRadius: 14,
-                  spreadRadius: 0.8,
+                  color: accentColor.withValues(alpha: isDark ? 0.44 : 0.35),
+                  blurRadius: 18,
+                  spreadRadius: 1.0,
+                ),
+                BoxShadow(
+                  color: accentColor.withValues(alpha: isDark ? 0.36 : 0.26),
+                  blurRadius: 26,
+                  spreadRadius: 2.0,
                 ),
               ]
             : const [],
       ),
-      child: child,
+      child: Stack(
+        fit: StackFit.passthrough,
+        children: [
+          Positioned.fill(
+            child: IgnorePointer(
+              child: ClipRRect(
+                borderRadius: borderRadius,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 280),
+                  curve: Curves.easeOutCubic,
+                  opacity: isGlowing ? 1.0 : 0.0,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: RadialGradient(
+                        center: Alignment.centerLeft,
+                        radius: 1.25,
+                        colors: [
+                          accentColor.withValues(alpha: isDark ? 0.18 : 0.11),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          child,
+        ],
+      ),
     );
   }
 }

@@ -6,21 +6,21 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kreta_api/kreta_api.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:rekreta_app/main.dart';
-import 'package:rekreta_app/screens/about_app_screen.dart';
-import 'package:rekreta_app/screens/grades_screen.dart';
-import 'package:rekreta_app/screens/home_screen.dart';
-import 'package:rekreta_app/screens/more_screen.dart';
-import 'package:rekreta_app/services/kreta_client.dart';
-import 'package:rekreta_app/services/token_storage_service.dart';
-import 'package:rekreta_app/theme/oled_theme.dart';
-import 'package:rekreta_app/widgets/animation_helpers.dart';
-import 'package:rekreta_app/widgets/christmas_snowfall_overlay.dart';
-import 'package:rekreta_app/widgets/edge_fade_horizontal_scroll.dart';
-import 'package:rekreta_app/widgets/frosted_inspection_modal.dart';
-import 'package:rekreta_app/widgets/glass_card.dart';
-import 'package:rekreta_app/widgets/skeleton_shimmer.dart';
-import 'package:rekreta_app/widgets/tinta_splash_overlay.dart';
+import 'package:tinta_naplo/main.dart';
+import 'package:tinta_naplo/screens/about_app_screen.dart';
+import 'package:tinta_naplo/screens/grades_screen.dart';
+import 'package:tinta_naplo/screens/home_screen.dart';
+import 'package:tinta_naplo/screens/more_screen.dart';
+import 'package:tinta_naplo/services/kreta_client.dart';
+import 'package:tinta_naplo/services/token_storage_service.dart';
+import 'package:tinta_naplo/theme/oled_theme.dart';
+import 'package:tinta_naplo/widgets/animation_helpers.dart';
+import 'package:tinta_naplo/widgets/christmas_snowfall_overlay.dart';
+import 'package:tinta_naplo/widgets/edge_fade_horizontal_scroll.dart';
+import 'package:tinta_naplo/widgets/frosted_inspection_modal.dart';
+import 'package:tinta_naplo/widgets/glass_card.dart';
+import 'package:tinta_naplo/widgets/skeleton_shimmer.dart';
+import 'package:tinta_naplo/widgets/tinta_splash_overlay.dart';
 
 Lesson _makeLesson({
   required String uid,
@@ -395,7 +395,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('Karácsonyi OLED'), findsOneWidget);
-    expect(find.text('v1.2.0'), findsOneWidget);
+    expect(find.text('v2.0.1'), findsOneWidget);
   });
 
   testWidgets(
@@ -810,11 +810,11 @@ void main() {
   );
 
   testWidgets(
-    'ReKretaApp startup uses TintaSplashOverlay with zero CircularProgressIndicator and dissolves cleanly',
+    'TintaNaploApp startup uses TintaSplashOverlay with zero CircularProgressIndicator and dissolves cleanly',
     (tester) async {
       FlutterSecureStorage.setMockInitialValues({});
       await tester.pumpWidget(
-        const ReKretaApp(tokenStorage: TokenStorageService()),
+        const TintaNaploApp(tokenStorage: TokenStorageService()),
       );
       // Frame 1: splash active on top, no blocking CircularProgressIndicator anywhere
       expect(find.byType(TintaSplashOverlay), findsOneWidget);

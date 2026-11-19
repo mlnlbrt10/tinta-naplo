@@ -15,6 +15,7 @@
     "timetable": "/ellenorzo/v3/sajat/OrarendElemek",
     "grades": "/ellenorzo/v3/sajat/Ertekelesek",
     "homeworks": "/ellenorzo/v3/sajat/HaziFeladatok",
+    "tests": "/ellenorzo/v3/sajat/BejelentettSzamonkeresek",
     "student": "/ellenorzo/v3/sajat/TanuloAdatlap"
   },
   "wearRelay": {
@@ -22,6 +23,7 @@
     "deepLinkHost": "wear-auth",
     "deepLinkUri": "tintanaplo://wear-auth",
     "messagePathRequestAuth": "/tinta/request_auth",
-    "dataPathAuthSession": "/tinta/auth_session"
+    "dataPathAuthSession": "/tinta/auth_session",
+    "dataPathDashboardSync": "/tinta/dashboard_sync"
   }
 }

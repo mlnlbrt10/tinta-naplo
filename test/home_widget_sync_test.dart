@@ -5,11 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kreta_api/kreta_api.dart';
-import 'package:rekreta_app/providers/app_providers.dart';
-import 'package:rekreta_app/screens/developer_options_screen.dart';
-import 'package:rekreta_app/services/home_widget_sync_service.dart';
-import 'package:rekreta_app/services/token_storage_service.dart';
-import 'package:rekreta_app/services/wear_sync_service.dart';
+import 'package:tinta_naplo/providers/app_providers.dart';
+import 'package:tinta_naplo/screens/developer_options_screen.dart';
+import 'package:tinta_naplo/services/home_widget_sync_service.dart';
+import 'package:tinta_naplo/services/token_storage_service.dart';
+import 'package:tinta_naplo/services/wear_sync_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Lesson _makeLesson({
@@ -71,7 +71,7 @@ class _MockHomeWidgetBridge {
   bool pendingOpenTimetable = false;
 
   late final MethodChannel channel = MethodChannel(
-    'hu.rekreta.rekreta_app/home_widget_test_${identityHashCode(this)}',
+    'hu.mlnlbrt.tintanaplo/home_widget_test_${identityHashCode(this)}',
   );
 
   void attach() {

@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -6,24 +9,53 @@ plugins {
 
 apply(from = "../shared/kreta_config_codegen.gradle.kts")
 
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    FileInputStream(keystorePropertiesFile).use { keystoreProperties.load(it) }
+}
+
 android {
-    namespace = "hu.rekreta.rekreta_app.wear"
+    namespace = "hu.mlnlbrt.tintanaplo.wear"
     compileSdk = 36
 
     sourceSets.getByName("main").java.srcDir(layout.buildDirectory.dir("generated/kreta/kotlin").get().asFile)
 
     defaultConfig {
-        applicationId = "hu.rekreta.rekreta_app"
+        applicationId = "hu.mlnlbrt.tintanaplo"
         minSdk = 30
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.2.0"
+        versionCode = 3
+        versionName = "2.0.1"
+    }
+
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            create("release") {
+                val storeFilePath = keystoreProperties.getProperty("storeFile")
+                if (!storeFilePath.isNullOrBlank()) {
+                    val resolved = listOf(
+                        file(storeFilePath),
+                        rootProject.file("app/$storeFilePath"),
+                        rootProject.file(storeFilePath),
+                    ).firstOrNull { it.exists() }
+                    if (resolved != null) {
+                        storeFile = resolved
+                    }
+                }
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                enableV1Signing = true
+                enableV2Signing = true
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

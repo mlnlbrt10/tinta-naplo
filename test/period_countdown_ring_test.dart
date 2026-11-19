@@ -3,12 +3,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:kreta_api/kreta_api.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:rekreta_app/providers/app_providers.dart';
-import 'package:rekreta_app/screens/home_screen.dart';
-import 'package:rekreta_app/screens/timetable_screen.dart';
-import 'package:rekreta_app/services/kreta_client.dart';
-import 'package:rekreta_app/services/token_storage_service.dart';
-import 'package:rekreta_app/theme/oled_theme.dart';
+import 'package:tinta_naplo/providers/app_providers.dart';
+import 'package:tinta_naplo/screens/home_screen.dart';
+import 'package:tinta_naplo/screens/timetable_screen.dart';
+import 'package:tinta_naplo/services/kreta_client.dart';
+import 'package:tinta_naplo/services/token_storage_service.dart';
+import 'package:tinta_naplo/theme/oled_theme.dart';
 
 Lesson _makeLesson({
   required String uid,

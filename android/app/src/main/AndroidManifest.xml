@@ -82,6 +82,15 @@
             android:roundIcon="@mipmap/ic_launcher_christmas_oled"
             android:label="Tinta Napló" />
 
+        <activity-alias
+            android:name=".MainActivityFityma"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="false"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher"
+            android:label="Fityma Napló" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -135,7 +144,7 @@
             android:enabled="true"
             android:exported="false">
             <intent-filter>
-                <action android:name="hu.rekreta.rekreta_app.ACTION_TINTA_LIVE_UPDATE" />
+                <action android:name="hu.mlnlbrt.tintanaplo.ACTION_TINTA_LIVE_UPDATE" />
             </intent-filter>
         </receiver>
 

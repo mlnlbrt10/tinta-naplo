@@ -32,12 +32,12 @@ abstract class GenerateKretaSharedConfigTask : DefaultTask() {
 
         val outFile = File(
             outputDir.get().asFile,
-            "hu/rekreta/rekreta_app/shared/KretaSharedConfig.kt",
+            "hu/mlnlbrt/tintanaplo/shared/KretaSharedConfig.kt",
         )
         outFile.parentFile.mkdirs()
         outFile.writeText(
             """
-            |package hu.rekreta.rekreta_app.shared
+            |package hu.mlnlbrt.tintanaplo.shared
             |
             |/**
             | * Generated from shared/kreta_config.json so the Flutter phone app and
@@ -60,6 +60,7 @@ abstract class GenerateKretaSharedConfigTask : DefaultTask() {
             |    const val ENDPOINT_TIMETABLE: String = "${escapeKotlin(endpoints["timetable"])}"
             |    const val ENDPOINT_GRADES: String = "${escapeKotlin(endpoints["grades"])}"
             |    const val ENDPOINT_HOMEWORKS: String = "${escapeKotlin(endpoints["homeworks"])}"
+            |    const val ENDPOINT_TESTS: String = "${escapeKotlin(endpoints["tests"])}"
             |    const val ENDPOINT_STUDENT: String = "${escapeKotlin(endpoints["student"])}"
             |
             |    const val WEAR_DEEP_LINK_SCHEME: String = "${escapeKotlin(wearRelay["deepLinkScheme"])}"
@@ -67,6 +68,7 @@ abstract class GenerateKretaSharedConfigTask : DefaultTask() {
             |    const val WEAR_DEEP_LINK_URI: String = "${escapeKotlin(wearRelay["deepLinkUri"])}"
             |    const val WEAR_MSG_REQUEST_AUTH: String = "${escapeKotlin(wearRelay["messagePathRequestAuth"])}"
             |    const val WEAR_DATA_AUTH_SESSION: String = "${escapeKotlin(wearRelay["dataPathAuthSession"])}"
+            |    const val WEAR_DATA_DASHBOARD_SYNC: String = "${escapeKotlin(wearRelay["dataPathDashboardSync"])}"
             |}
             |""".trimMargin(),
         )

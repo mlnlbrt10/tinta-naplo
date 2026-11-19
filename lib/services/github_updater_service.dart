@@ -43,9 +43,16 @@ class GitHubReleaseInfo {
     final assets = json['assets'];
     if (assets is List) {
       final cleanVer = GitHubUpdaterService._stripPrefix(tag).toLowerCase();
+      final expectedArm64Apk = cleanVer.isNotEmpty
+          ? 'tinta-naplo-v$cleanVer-arm64-v8a.apk'
+          : GitHubUpdaterService.defaultApkFileName.toLowerCase();
       final expectedVersionedApk = cleanVer.isNotEmpty
           ? 'tinta-naplo-v$cleanVer.apk'
-          : GitHubUpdaterService.defaultApkFileName.toLowerCase();
+          : 'tinta-naplo-v${GitHubUpdaterService.fallbackAppVersion}.apk';
+      String? tintaArm64ApkUrl;
+      String? versionedUniversalApkUrl;
+      String? appArm64ReleaseApkUrl;
+      String? anyArm64ApkUrl;
       String? brandedApkUrl;
       String? appReleaseApkUrl;
       String? anyApkUrl;
@@ -54,24 +61,38 @@ class GitHubReleaseInfo {
           final assetName = (item['name'] ?? '').toString().toLowerCase();
           final downloadUrl =
               (item['browser_download_url'] ?? '').toString().trim();
-          if (downloadUrl.isEmpty) continue;
-          if (assetName == expectedVersionedApk) {
+          if (downloadUrl.isEmpty || !assetName.endsWith('.apk')) continue;
+          if (assetName == expectedArm64Apk) {
             apkUrl = downloadUrl;
             break;
           }
-          if ((assetName.startsWith('tinta-naplo-v') ||
-                  assetName.startsWith('tinta_naplo') ||
-                  assetName.startsWith('tinta')) &&
-              assetName.endsWith('.apk')) {
+          if (assetName.startsWith('tinta') &&
+              assetName.contains('arm64-v8a')) {
+            tintaArm64ApkUrl ??= downloadUrl;
+          } else if (assetName == expectedVersionedApk) {
+            versionedUniversalApkUrl ??= downloadUrl;
+          } else if (assetName == 'app-arm64-v8a-release.apk') {
+            appArm64ReleaseApkUrl ??= downloadUrl;
+          } else if (assetName.contains('arm64-v8a')) {
+            anyArm64ApkUrl ??= downloadUrl;
+          } else if (assetName.startsWith('tinta-naplo-v') ||
+              assetName.startsWith('tinta_naplo') ||
+              assetName.startsWith('tinta')) {
             brandedApkUrl ??= downloadUrl;
           } else if (assetName == 'app-release.apk') {
             appReleaseApkUrl ??= downloadUrl;
-          } else if (assetName.endsWith('.apk')) {
+          } else {
             anyApkUrl ??= downloadUrl;
           }
         }
       }
-      apkUrl ??= brandedApkUrl ?? appReleaseApkUrl ?? anyApkUrl;
+      apkUrl ??= tintaArm64ApkUrl ??
+          versionedUniversalApkUrl ??
+          appArm64ReleaseApkUrl ??
+          anyArm64ApkUrl ??
+          brandedApkUrl ??
+          appReleaseApkUrl ??
+          anyApkUrl;
     }
 
     return GitHubReleaseInfo(
@@ -92,20 +113,20 @@ class GitHubUpdaterService {
   static const String repoUrl = 'https://github.com/mlnlbrt10/tinta-naplo';
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest';
-  static const String fallbackAppVersion = '1.2.0';
-  static const String fallbackBuildNumber = '15';
-  static const String defaultApkFileName = 'tinta-naplo-v1.2.0.apk';
+  static const String fallbackAppVersion = '2.0.1';
+  static const String fallbackBuildNumber = '16';
+  static const String defaultApkFileName = 'tinta-naplo-v2.0.1-arm64-v8a.apk';
 
   static bool _hasCheckedOnStartup = false;
 
-  /// Resolves the target APK file name for a given release tag (`tinta-naplo-v1.2.0.apk`).
+  /// Resolves the target APK file name for a given release tag (`tinta-naplo-v2.0.1-arm64-v8a.apk`).
   static String apkFileNameForTag(String tagName) {
     final clean = _stripPrefix(tagName);
     if (clean.isEmpty) return defaultApkFileName;
-    return 'tinta-naplo-v$clean.apk';
+    return 'tinta-naplo-v$clean-arm64-v8a.apk';
   }
 
-  /// Queries GitHub Releases API for the latest tag name, falling back to `v1.2.0`.
+  /// Queries GitHub Releases API for the latest tag name, falling back to `v2.0.1`.
   static Future<String> fetchLatestReleaseTag({http.Client? httpClient}) async {
     final client = httpClient ?? http.Client();
     try {
@@ -165,9 +186,8 @@ class GitHubUpdaterService {
   /// Returns `true` if [remoteTag] represents a strictly newer semantic version
   /// than [currentVersion].
   ///
-  /// After the v1.0.0 rebrand to Tinta Napló, legacy pre-rebrand `v1.1.x` and
-  /// `v1.2.x` releases (or unbranded `reKRETA-*.apk` releases) are ignored so
-  /// `v1.0.0` users are not prompted to install legacy pre-rebrand builds.
+  /// Releases without Tinta Napló branding and legacy `v1.1.x` / `v1.2.x`
+  /// pre-rebrand tags are ignored so users are not prompted with unrelated APKs.
   static bool isRemoteVersionNewer(
     String currentVersion,
     String remoteTag, {
@@ -186,17 +206,8 @@ class GitHubUpdaterService {
     final remMajor = remParts.isNotEmpty ? remParts[0] : 0;
     final remMinor = remParts.length > 1 ? remParts[1] : 0;
 
-    if (release != null) {
-      final hasTinta = _hasTintaBranding(release);
-      final titleLower = release.title.toLowerCase();
-      final apkLower = (release.apkDownloadUrl ?? '').toLowerCase();
-      final looksLegacyReKreta = !hasTinta &&
-          (apkLower.contains('rekreta-v') ||
-              (titleLower.contains('rekreta') &&
-                  !titleLower.contains('tinta')));
-      if (looksLegacyReKreta) {
-        return false;
-      }
+    if (release != null && !_hasTintaBranding(release)) {
+      return false;
     }
 
     final hasExplicitTintaRelease =
@@ -500,7 +511,7 @@ class _FrostedUpdateDialogContentState
         _downloadProgress = 1.0;
         _statusMessage = uwu('Android csomagtelepítő indítása...');
       });
-      final res = await const MethodChannel('hu.rekreta.rekreta_app/updater')
+      final res = await const MethodChannel('hu.mlnlbrt.tintanaplo/updater')
           .invokeMethod<String>('installApk', {'filePath': file.path});
       if (!mounted) return;
       setState(() {

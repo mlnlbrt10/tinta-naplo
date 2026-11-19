@@ -2,15 +2,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:kreta_api/kreta_api.dart';
-import 'package:rekreta_app/core/kreta_auth_config.dart';
-import 'package:rekreta_app/screens/grades_screen.dart';
-import 'package:rekreta_app/screens/timetable_screen.dart';
-import 'package:rekreta_app/services/github_updater_service.dart';
-import 'package:rekreta_app/services/kreta_client.dart';
-import 'package:rekreta_app/services/menetrend_service.dart';
-import 'package:rekreta_app/services/token_storage_service.dart';
-import 'package:rekreta_app/utils/greeting_utils.dart';
-import 'package:rekreta_app/utils/uwu_helper.dart';
+import 'package:tinta_naplo/core/kreta_auth_config.dart';
+import 'package:tinta_naplo/screens/grades_screen.dart';
+import 'package:tinta_naplo/screens/timetable_screen.dart';
+import 'package:tinta_naplo/services/github_updater_service.dart';
+import 'package:tinta_naplo/services/kreta_client.dart';
+import 'package:tinta_naplo/services/menetrend_service.dart';
+import 'package:tinta_naplo/services/token_storage_service.dart';
+import 'package:tinta_naplo/utils/greeting_utils.dart';
+import 'package:tinta_naplo/utils/uwu_helper.dart';
 
 class _InMemoryTokenStorage extends TokenStorageService {
   StoredSession? savedSession;
@@ -227,31 +227,34 @@ void main() {
       GitHubUpdaterService.latestReleaseApiUrl,
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest',
     );
-    expect(GitHubUpdaterService.fallbackAppVersion, '1.2.0');
-    expect(GitHubUpdaterService.fallbackBuildNumber, '15');
-    expect(GitHubUpdaterService.defaultApkFileName, 'tinta-naplo-v1.2.0.apk');
+    expect(GitHubUpdaterService.fallbackAppVersion, '2.0.1');
+    expect(GitHubUpdaterService.fallbackBuildNumber, '16');
     expect(
-      GitHubUpdaterService.apkFileNameForTag('v1.2.0'),
-      'tinta-naplo-v1.2.0.apk',
+      GitHubUpdaterService.defaultApkFileName,
+      'tinta-naplo-v2.0.1-arm64-v8a.apk',
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.2.0', 'v1.2.1'),
+      GitHubUpdaterService.apkFileNameForTag('v2.0.1'),
+      'tinta-naplo-v2.0.1-arm64-v8a.apk',
+    );
+    expect(
+      GitHubUpdaterService.isRemoteVersionNewer('2.0.1', 'v2.0.2'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.2.0', 'v1.2.0'),
+      GitHubUpdaterService.isRemoteVersionNewer('2.0.1', 'v2.0.1'),
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.2.0-alpha', 'v1.2.0'),
+      GitHubUpdaterService.isRemoteVersionNewer('2.0.1-alpha', 'v2.0.1'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.2.0-alpha', 'v1.2.0-alpha'),
+      GitHubUpdaterService.isRemoteVersionNewer('2.0.1-alpha', 'v2.0.1-alpha'),
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('1.2.0', 'v1.1.2'),
+      GitHubUpdaterService.isRemoteVersionNewer('2.0.1', 'v1.2.0'),
       isFalse,
     );
     // Legacy pre-rebrand v1.2.x / v1.1.x tags must not prompt updates on v1.0.0.
@@ -263,46 +266,67 @@ void main() {
       GitHubUpdaterService.isRemoteVersionNewer('1.0.0', 'v1.1.9'),
       isFalse,
     );
-    const legacyRelease = GitHubReleaseInfo(
-      tagName: 'v1.2.7',
-      title: 'reKRETA v1.2.7',
-      releaseNotes: 'Legacy release',
+    const unbrandedRelease = GitHubReleaseInfo(
+      tagName: 'v2.9.9',
+      title: 'Legacy Client v2.9.9',
+      releaseNotes: 'Unbranded release',
       htmlUrl: GitHubUpdaterService.repoUrl,
-      apkDownloadUrl:
-          'https://github.com/mlnlbrt10/reKRETA/releases/download/v1.2.7/reKRETA-v1.2.7.apk',
+      apkDownloadUrl: 'https://example.com/legacy-v2.9.9.apk',
     );
     expect(
       GitHubUpdaterService.isRemoteVersionNewer(
-        '1.0.0',
-        'v1.2.7',
-        release: legacyRelease,
+        '2.0.1',
+        'v2.9.9',
+        release: unbrandedRelease,
       ),
       isFalse,
     );
     final brandedFutureRelease = GitHubReleaseInfo.fromJson({
-      'tag_name': 'v1.2.0',
-      'name': 'Tinta Napló v1.2.0',
+      'tag_name': 'v2.0.1',
+      'name': 'Tinta Napló v2.0.1',
       'body': 'Újdonságok',
-      'html_url': 'https://github.com/mlnlbrt10/tinta-naplo/releases/tag/v1.2.0',
+      'html_url': 'https://github.com/mlnlbrt10/tinta-naplo/releases/tag/v2.0.1',
       'assets': [
         {
           'name': 'app-release.apk',
           'browser_download_url': 'https://example.com/app-release.apk',
         },
         {
-          'name': 'tinta-naplo-v1.2.0.apk',
-          'browser_download_url': 'https://example.com/tinta-naplo-v1.2.0.apk',
+          'name': 'app-armeabi-v7a-release.apk',
+          'browser_download_url': 'https://example.com/app-armeabi-v7a-release.apk',
+        },
+        {
+          'name': 'tinta-naplo-v2.0.1-arm64-v8a.apk',
+          'browser_download_url': 'https://example.com/tinta-naplo-v2.0.1-arm64-v8a.apk',
         },
       ],
     });
     expect(
       brandedFutureRelease.apkDownloadUrl,
-      'https://example.com/tinta-naplo-v1.2.0.apk',
+      'https://example.com/tinta-naplo-v2.0.1-arm64-v8a.apk',
+    );
+    final splitArm64FallbackRelease = GitHubReleaseInfo.fromJson({
+      'tag_name': 'v2.0.2',
+      'name': 'Tinta Napló v2.0.2',
+      'assets': [
+        {
+          'name': 'app-armeabi-v7a-release.apk',
+          'browser_download_url': 'https://example.com/app-armeabi-v7a-release.apk',
+        },
+        {
+          'name': 'app-arm64-v8a-release.apk',
+          'browser_download_url': 'https://example.com/app-arm64-v8a-release.apk',
+        },
+      ],
+    });
+    expect(
+      splitArm64FallbackRelease.apkDownloadUrl,
+      'https://example.com/app-arm64-v8a-release.apk',
     );
     expect(
       GitHubUpdaterService.isRemoteVersionNewer(
         '1.0.0',
-        'v1.2.0',
+        'v2.0.1',
         release: brandedFutureRelease,
       ),
       isTrue,

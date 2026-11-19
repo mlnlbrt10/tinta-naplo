@@ -19,7 +19,7 @@ import 'token_storage_service.dart';
 class HomeWidgetSyncService {
   HomeWidgetSyncService._({MethodChannel? channel})
       : _channel =
-            channel ?? const MethodChannel('hu.rekreta.rekreta_app/home_widget');
+            channel ?? const MethodChannel('hu.mlnlbrt.tintanaplo/home_widget');
 
   @visibleForTesting
   factory HomeWidgetSyncService.forTest(MethodChannel channel) =>

@@ -405,7 +405,7 @@ class LiquidGlassPillSurface extends StatelessWidget {
 /// [LiquidSpringPillTrack] and [LiquidBubbleTabBar].
 class _LiquidInteractivePhysics {
   static const double _maxOverscrollPx = 15.0;
-  static const double _maxVerticalPullPx = 0.0;
+  static const double _maxVerticalPullPx = 7.0;
 
   final TickerProvider vsync;
   final VoidCallback onScheduleUpdate;
@@ -900,7 +900,10 @@ class _LiquidInteractivePhysics {
   }
 
   double verticalPullAtDeltaY(double rawDy) {
-    return 0.0;
+    if (!_liquidGlassEnabled || rawDy.abs() < 0.5) return 0.0;
+    return rawDy.sign *
+        _maxVerticalPullPx *
+        (1.0 - math.exp(-rawDy.abs() / 22.0));
   }
 
   Matrix4 buildDropletTransform({
@@ -953,10 +956,17 @@ class _LiquidInteractivePhysics {
     final edgeXNorm = (edgeXPx.abs() / _maxOverscrollPx).clamp(0.0, 1.0);
     final motionX = math.max(velXNorm, edgeXNorm * 0.65).clamp(0.0, 1.0);
 
-    // Balanced 2D droplet glide: stretches horizontally up to ~1.085 while
-    // compressing vertically down to ~0.955 so the pill stays within bar padding.
-    final hStretch = 1.0 + (motionX * 0.085) * stretchMult;
-    final vStretch = 1.0 - (motionX * 0.045) * stretchMult;
+    final pullYNorm = _maxVerticalPullPx > 0
+        ? (_renderedPosY.abs() / _maxVerticalPullPx).clamp(0.0, 1.0)
+        : 0.0;
+    final velYNorm = (_renderedVelY.abs() / 180.0).clamp(0.0, 1.0);
+    final motionY = math.max(pullYNorm, velYNorm * 0.65).clamp(0.0, 1.0);
+
+    // Balanced 2D droplet glide + hold-and-drag Y-axis elasticity following finger.
+    final hStretch =
+        1.0 + ((motionX * 0.085) - (motionY * 0.045)) * stretchMult;
+    final vStretch =
+        1.0 + ((motionY * 0.085) - (motionX * 0.045)) * stretchMult;
     final gelSquishX = _liquidGlassMode == LiquidGlassMode.rippleGel
         ? (1.0 + 0.04 * pressProgress)
         : 1.0;
@@ -1059,7 +1069,10 @@ class _LiquidInteractivePhysics {
       _lastPointerX = null;
       _lastPointerTimeUs = 0;
       final distSlots = (_renderedPos - target).abs();
-      if (distSlots >= 0.25) {
+      if (distSlots >= 0.25 && _renderedPosY.abs() < 0.05) {
+        _renderedPosY = 0.0;
+        _renderedVelY = 0.0;
+        offsetYAnim.value = 0.0;
         _tapSlideActive = true;
         _tapSlideStartPos = _renderedPos;
         _tapSlideTargetPos = target;

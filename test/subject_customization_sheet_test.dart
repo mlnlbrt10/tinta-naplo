@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kreta_api/kreta_api.dart';
-import 'package:rekreta_app/providers/app_providers.dart';
-import 'package:rekreta_app/screens/grades_screen.dart';
-import 'package:rekreta_app/services/token_storage_service.dart';
-import 'package:rekreta_app/theme/oled_theme.dart';
+import 'package:tinta_naplo/providers/app_providers.dart';
+import 'package:tinta_naplo/screens/grades_screen.dart';
+import 'package:tinta_naplo/services/token_storage_service.dart';
+import 'package:tinta_naplo/theme/oled_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Grade _sampleGrade({

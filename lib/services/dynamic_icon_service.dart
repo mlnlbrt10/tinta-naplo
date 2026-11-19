@@ -8,7 +8,7 @@ import 'token_storage_service.dart';
 /// `<activity-alias>` launcher icon via `PackageManager.setComponentEnabledSetting`.
 class DynamicIconService {
   static const MethodChannel _channel = MethodChannel(
-    'hu.rekreta.rekreta_app/dynamic_icon',
+    'hu.mlnlbrt.tintanaplo/dynamic_icon',
   );
 
   static String? _lastSyncedIconId;
@@ -37,14 +37,15 @@ class DynamicIconService {
       // time to show feedback and prefs time to persist first.
       await Future<void>.delayed(const Duration(milliseconds: 1500));
       final preset = AppIconPresetInfo.fromId(iconId);
+      final isFityma = iconId == 'icon_fityma' || iconId == '.MainActivityFityma';
       final appliedAlias = await _channel.invokeMethod<String>(
         'setAppIcon',
         <String, dynamic>{
-          'iconName': preset.id,
-          'alias': preset.activityAlias,
+          'iconName': isFityma ? 'icon_fityma' : preset.id,
+          'alias': isFityma ? '.MainActivityFityma' : preset.activityAlias,
         },
       );
-      _lastSyncedIconId = preset.id;
+      _lastSyncedIconId = isFityma ? 'icon_fityma' : preset.id;
       _pendingIconId = null;
       return appliedAlias;
     } catch (_) {

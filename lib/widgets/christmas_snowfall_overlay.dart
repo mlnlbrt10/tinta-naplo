@@ -125,6 +125,107 @@ class AppIconPresetInfo {
   }
 }
 
+/// Playful cartoon mascot vector badge rendered when "Fityma Napló mód" is active.
+class FitymaBrandIcon extends StatelessWidget {
+  final double size;
+
+  const FitymaBrandIcon({
+    super.key,
+    this.size = 76,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: Size.square(size),
+      painter: _FitymaCartoonPainter(),
+    );
+  }
+}
+
+class _FitymaCartoonPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final bgPaint = Paint()
+      ..shader = const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFF1F1630), Color(0xFF0D0F18)],
+      ).createShader(Rect.fromLTWH(0, 0, w, h));
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), bgPaint);
+
+    // Lighthearted rounded hooded mascot silhouette
+    final bodyRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(w * 0.25, h * 0.28, w * 0.50, h * 0.56),
+      Radius.circular(w * 0.25),
+    );
+    final bodyPaint = Paint()
+      ..shader = const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0xFFFFD180), Color(0xFFFFAB40)],
+      ).createShader(bodyRect.outerRect);
+    canvas.drawRRect(bodyRect, bodyPaint);
+
+    // Cheeky hood / collar fold
+    final collarPath = Path()
+      ..moveTo(w * 0.24, h * 0.52)
+      ..quadraticBezierTo(w * 0.50, h * 0.42, w * 0.76, h * 0.52)
+      ..quadraticBezierTo(w * 0.50, h * 0.62, w * 0.24, h * 0.52)
+      ..close();
+    canvas.drawPath(
+      collarPath,
+      Paint()..color = const Color(0xFFFFE0B2).withValues(alpha: 0.72),
+    );
+
+    // Googly eyes
+    final eyeWhite = Paint()..color = Colors.white;
+    final pupilPaint = Paint()..color = const Color(0xFF18181B);
+    canvas.drawCircle(Offset(w * 0.41, h * 0.44), w * 0.085, eyeWhite);
+    canvas.drawCircle(Offset(w * 0.60, h * 0.43), w * 0.095, eyeWhite);
+    canvas.drawCircle(Offset(w * 0.425, h * 0.445), w * 0.042, pupilPaint);
+    canvas.drawCircle(Offset(w * 0.59, h * 0.435), w * 0.048, pupilPaint);
+
+    // Wink / grin arc
+    final smilePaint = Paint()
+      ..color = const Color(0xFF27272A)
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = (w * 0.042).clamp(1.6, 5.0);
+    canvas.drawArc(
+      Rect.fromCenter(
+        center: Offset(w * 0.50, h * 0.55),
+        width: w * 0.24,
+        height: h * 0.14,
+      ),
+      0.15,
+      pi - 0.3,
+      false,
+      smilePaint,
+    );
+
+    // Playful graduation cap tilted at top
+    final capPaint = Paint()..color = const Color(0xFF38BDF8);
+    final capPath = Path()
+      ..moveTo(w * 0.52, h * 0.12)
+      ..lineTo(w * 0.78, h * 0.21)
+      ..lineTo(w * 0.50, h * 0.31)
+      ..lineTo(w * 0.22, h * 0.22)
+      ..close();
+    canvas.drawPath(capPath, capPaint);
+    canvas.drawCircle(
+      Offset(w * 0.76, h * 0.29),
+      w * 0.036,
+      Paint()..color = const Color(0xFFFFD54F),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
 /// Renders the customized or festive Christmas App Brand Icon Badge.
 class AppBrandIconBadge extends StatelessWidget {
   final UserProfilePrefs prefs;
@@ -142,6 +243,7 @@ class AppBrandIconBadge extends StatelessWidget {
     final isChristmas = prefs.christmasModeEnabled ||
         preset.id == 'icon_christmas' ||
         preset.id == 'icon_christmas_oled';
+    final isFityma = prefs.fitymaModeEnabled;
 
     return Stack(
       clipBehavior: Clip.none,
@@ -150,15 +252,20 @@ class AppBrandIconBadge extends StatelessWidget {
           width: size,
           height: size,
           decoration: BoxDecoration(
-            color: preset.backgroundColor,
+            color: isFityma ? const Color(0xFF14101C) : preset.backgroundColor,
             borderRadius: BorderRadius.circular(size * 0.3),
             border: Border.all(
-              color: preset.primaryColor.withValues(alpha: 0.75),
+              color: isFityma
+                  ? const Color(0xFFFFB74D).withValues(alpha: 0.85)
+                  : preset.primaryColor.withValues(alpha: 0.75),
               width: 2,
             ),
             boxShadow: [
               BoxShadow(
-                color: preset.primaryColor.withValues(alpha: 0.28),
+                color: (isFityma
+                        ? const Color(0xFFFFB74D)
+                        : preset.primaryColor)
+                    .withValues(alpha: 0.28),
                 blurRadius: 18,
                 offset: const Offset(0, 6),
               ),
@@ -166,17 +273,19 @@ class AppBrandIconBadge extends StatelessWidget {
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(size * 0.28),
-            child: Image.asset(
-              preset.assetPath,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => Center(
-                child: Icon(
-                  preset.icon,
-                  size: size * 0.5,
-                  color: preset.primaryColor,
-                ),
-              ),
-            ),
+            child: isFityma
+                ? FitymaBrandIcon(size: size)
+                : Image.asset(
+                    preset.assetPath,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => Center(
+                      child: Icon(
+                        preset.icon,
+                        size: size * 0.5,
+                        color: preset.primaryColor,
+                      ),
+                    ),
+                  ),
           ),
         ),
         if (isChristmas)

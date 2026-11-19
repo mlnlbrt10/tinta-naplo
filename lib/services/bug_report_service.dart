@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../theme/oled_theme.dart';
+import '../utils/uwu_helper.dart';
 import 'token_storage_service.dart';
 
 /// Metadata describing an optional screenshot or screen recording attached to a
@@ -198,7 +199,7 @@ class BugReportService {
     BugAttachment? attachment,
   }) {
     final buf = StringBuffer()
-      ..writeln('Tinta Napló — Hibajelentés')
+      ..writeln('${UwuHelper.brandName()} — Hibajelentés')
       ..writeln('Kategória: $category')
       ..writeln('Beküldő: $reporter')
       ..writeln('Verzió: $appVersion')

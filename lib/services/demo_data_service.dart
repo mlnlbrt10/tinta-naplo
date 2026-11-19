@@ -370,25 +370,25 @@ class DemoDataService {
 
     final specs = [
       // Matematika (4 grades: 5@200%, 4@100%, 5@100%, 4@50%)
-      (0, 5, 'Jeles (5)', '5', 200, 'Témazáró dolgozat', 'Logaritmus és exponenciális függvények', 1),
-      (0, 4, 'Jó (4)', '4', 100, 'Írásbeli röpdolgozat', 'Egyenletrendszerek megoldása', 7),
+      (0, 5, 'Jeles (5)', '5', 200, 'Témazáró dolgozat', 'Logaritmus és exponenciális függvények', 0),
+      (0, 4, 'Jó (4)', '4', 100, 'Írásbeli röpdolgozat', 'Egyenletrendszerek megoldása', 3),
       (0, 5, 'Jeles (5)', '5', 100, 'Órai munka', 'Függvénytranszformációk táblánál', 14),
       (0, 4, 'Jó (4)', '4', 50, 'Házi feladat ellenőrzése', 'Gyakorló feladatsor 4.', 21),
 
       // Hálózatok I. (4 grades: 5@200%, 5@100%, 4@50%, 5@50%)
       (1, 5, 'Jeles (5)', '5', 200, 'Gyakorlati témazáró', 'VLAN, trunk és router-on-a-stick lab', 0),
-      (1, 5, 'Jeles (5)', '5', 100, 'Labor mérés', 'OSPF többterületes hálózat szimuláció', 5),
+      (1, 5, 'Jeles (5)', '5', 100, 'Labor mérés', 'OSPF többterületes hálózat szimuláció', 1),
       (1, 4, 'Jó (4)', '4', 50, 'Röpdolgozat', 'IPv6 alhálózat-kiosztás', 12),
       (1, 5, 'Jeles (5)', '5', 50, 'Projektértékelés', 'Packet Tracer topológia dokumentáció', 19),
 
       // Adatbázis-kezelés (4 grades: 5@200%, 4@100%, 5@50%, 5@50%)
-      (2, 5, 'Jeles (5)', '5', 200, 'Témazáró dolgozat', 'SQL JOIN, allekérdezések és nézetek', 2),
-      (2, 4, 'Jó (4)', '4', 100, 'Gyakorlati feladat', '3NF normalizálás és ER tervezés', 9),
+      (2, 5, 'Jeles (5)', '5', 200, 'Témazáró dolgozat', 'SQL JOIN, allekérdezések és nézetek', 0),
+      (2, 4, 'Jó (4)', '4', 100, 'Gyakorlati feladat', '3NF normalizálás és ER tervezés', 5),
       (2, 5, 'Jeles (5)', '5', 50, 'Órai munka', 'Aggregáló függvények HAVING-gel', 16),
       (2, 5, 'Jeles (5)', '5', 50, 'Szóbeli felelet', 'Tranzakciók és ACID elvek', 23),
 
       // Angol nyelv (3 grades: 5@100%, 5@100%, 4@50%)
-      (3, 5, 'Jeles (5)', '5', 100, 'Esszé', 'Argumentative Essay: AI in Education', 3),
+      (3, 5, 'Jeles (5)', '5', 100, 'Esszé', 'Argumentative Essay: AI in Education', 1),
       (3, 5, 'Jeles (5)', '5', 100, 'Hallásértés', 'B2 Mock Exam Listening Section', 11),
       (3, 4, 'Jó (4)', '4', 50, 'Szódolgozat', 'IT & Cloud Infrastructure Phrasal Verbs', 18),
 
@@ -403,7 +403,7 @@ class DemoDataService {
       (5, 4, 'Jó (4)', '4', 50, 'Számolási feladat', 'Lorentz-erő alkalmazásai', 24),
 
       // Magyar nyelv és irodalom (4 grades: 4@100%, 4@100%, 5@50%, 4@50%)
-      (6, 4, 'Jó (4)', '4', 100, 'Műelemzés', 'Ady Endre: Új versek ciklus elemzése', 3),
+      (6, 4, 'Jó (4)', '4', 100, 'Műelemzés', 'Ady Endre: Új versek ciklus elemzése', 2),
       (6, 4, 'Jó (4)', '4', 100, 'Nyelvtani dolgozat', 'Szövegkohézió és stílusrétegek', 10),
       (6, 5, 'Jeles (5)', '5', 50, 'Versmondás', 'Kosztolányi Dezső: Boldog, szomorú dal', 17),
       (6, 4, 'Jó (4)', '4', 50, 'Órai munka', 'Retorikai érvelés gyakorlat', 25),
@@ -464,9 +464,6 @@ class DemoDataService {
     final today = DateUtils.dateOnly(now);
     final items = [
       (0, 1, 2, 'Írásbeli témazáró dolgozat', 'Exponenciális és logaritmikus egyenletek'),
-      (1, 3, 1, 'Gyakorlati mérés', 'OSPF és dinamikus útválasztás Packet Tracerben'),
-      (3, 6, 4, 'Szóbeli prezentáció', 'Sustainability & Emerging Tech Topics (B2)'),
-      (4, 9, 5, 'Írásbeli dolgozat', 'Az I. világháború okai és főbb hadszínterei'),
     ];
     return [
       for (int i = 0; i < items.length; i++)
@@ -506,19 +503,19 @@ class DemoDataService {
       ),
       (
         2,
-        2,
+        0,
         'Írj 5 db összetett SELECT JOIN lekérdezést a webshop adatbázis sémához (GROUP BY + HAVING).',
-        false,
+        true,
       ),
       (
         3,
-        3,
+        -1,
         'Prepare a 180-word Opinion Essay on remote teamwork tools (Student Book p. 64).',
-        false,
+        true,
       ),
       (
         1,
-        -1,
+        -2,
         'VLAN IPv4 címzési táblázat kitöltése és feltöltése PDF-ben.',
         true,
       ),

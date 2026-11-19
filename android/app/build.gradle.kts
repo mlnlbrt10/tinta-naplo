@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -6,8 +9,14 @@ plugins {
 
 apply(from = "../../shared/kreta_config_codegen.gradle.kts")
 
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    FileInputStream(keystorePropertiesFile).use { keystoreProperties.load(it) }
+}
+
 android {
-    namespace = "hu.rekreta.rekreta_app"
+    namespace = "hu.mlnlbrt.tintanaplo"
     sourceSets.getByName("main").java.srcDir(layout.buildDirectory.dir("generated/kreta/kotlin").get().asFile)
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
@@ -19,40 +28,45 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "hu.rekreta.rekreta_app"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        applicationId = "hu.mlnlbrt.tintanaplo"
         minSdk = flutter.minSdkVersion
         targetSdk = 36
         multiDexEnabled = true
-        // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
-        // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
-        // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`
-        // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            val storeFilePath = keystoreProperties.getProperty("storeFile")
+            if (!storeFilePath.isNullOrBlank()) {
+                storeFile = file(storeFilePath)
+            }
+            storePassword = keystoreProperties.getProperty("storePassword")
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
+            enableV1Signing = true
+            enableV2Signing = true
+        }
+    }
+
     buildTypes {
-        release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
+            isShrinkResources = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 
     applicationVariants.all {
         val variant = this
-        val versionLabel = variant.versionName ?: "1.2.0"
+        val versionLabel = variant.versionName ?: "2.0.1"
         val customApkName = "tinta-naplo-v${versionLabel}.apk"
-        variant.outputs
-            .map { it as com.android.build.gradle.internal.api.BaseVariantOutputImpl }
-            .forEach { output ->
-                if (variant.buildType.name == "release") {
-                    output.outputFileName = customApkName
-                }
-            }
+        val arm64CustomApkName = "tinta-naplo-v${versionLabel}-arm64-v8a.apk"
         variant.assembleProvider.configure {
             doLast {
                 try {
@@ -63,7 +77,7 @@ android {
                                 "shell",
                                 "pm",
                                 "enable",
-                                "hu.rekreta.rekreta_app/hu.rekreta.rekreta_app.MainActivityNormal"
+                                "hu.mlnlbrt.tintanaplo/hu.mlnlbrt.tintanaplo.MainActivityNormal"
                             )
                         )
                         .waitFor()
@@ -74,14 +88,15 @@ android {
                     val flutterApkDir = rootProject.projectDir.resolve("../build/app/outputs/flutter-apk")
                     flutterApkDir.mkdirs()
                     val releaseApkDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
-                    val generatedApk = releaseApkDir.resolve(customApkName)
-                    if (generatedApk.exists()) {
-                        generatedApk.copyTo(flutterApkDir.resolve(customApkName), overwrite = true)
-                    } else {
-                        val fallbackFlutterApk = flutterApkDir.resolve("app-release.apk")
-                        if (fallbackFlutterApk.exists()) {
-                            fallbackFlutterApk.copyTo(flutterApkDir.resolve(customApkName), overwrite = true)
-                        }
+                    val sourceApk = listOf(
+                        flutterApkDir.resolve("app-arm64-v8a-release.apk"),
+                        releaseApkDir.resolve("app-arm64-v8a-release.apk"),
+                        flutterApkDir.resolve("app-release.apk"),
+                        releaseApkDir.resolve("app-release.apk"),
+                    ).firstOrNull { it.exists() }
+                    if (sourceApk != null) {
+                        sourceApk.copyTo(flutterApkDir.resolve(arm64CustomApkName), overwrite = true)
+                        sourceApk.copyTo(flutterApkDir.resolve(customApkName), overwrite = true)
                     }
                 }
             }

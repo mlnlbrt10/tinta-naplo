@@ -4,15 +4,15 @@ import 'package:http/testing.dart';
 import 'package:http/http.dart' as http;
 import 'package:kreta_api/kreta_api.dart';
 
-import 'package:rekreta_app/providers/app_providers.dart';
-import 'package:rekreta_app/screens/more_screen.dart';
-import 'package:rekreta_app/screens/timetable_screen.dart';
-import 'package:rekreta_app/services/kreta_client.dart';
-import 'package:rekreta_app/services/menetrend_service.dart';
-import 'package:rekreta_app/services/token_storage_service.dart';
-import 'package:rekreta_app/theme/oled_theme.dart';
-import 'package:rekreta_app/widgets/animation_helpers.dart';
-import 'package:rekreta_app/widgets/glass_card.dart';
+import 'package:tinta_naplo/providers/app_providers.dart';
+import 'package:tinta_naplo/screens/more_screen.dart';
+import 'package:tinta_naplo/screens/timetable_screen.dart';
+import 'package:tinta_naplo/services/kreta_client.dart';
+import 'package:tinta_naplo/services/menetrend_service.dart';
+import 'package:tinta_naplo/services/token_storage_service.dart';
+import 'package:tinta_naplo/theme/oled_theme.dart';
+import 'package:tinta_naplo/widgets/animation_helpers.dart';
+import 'package:tinta_naplo/widgets/glass_card.dart';
 
 StoredSession _fakeSession() => StoredSession(
       accessToken: 'acc',
@@ -335,20 +335,20 @@ void main() {
         }
 
         final downPill = tester.widget<Positioned>(pillFinder);
-        // Pill stays vertically anchored (`translateY == 0`) so it never pops past bar edges
-        expect(downPill.top!, closeTo(0.0, 0.01));
+        // Active hold+drag allows damped vertical rubber-band pull within ±7px
+        expect(downPill.top!, inInclusiveRange(3.0, 8.0));
 
         final downMatrix = tester.widget<Transform>(transformFinder).transform;
         final downScaleX = downMatrix.entry(0, 0);
         final downScaleY = downMatrix.entry(1, 1);
-        expect(downScaleX, greaterThanOrEqualTo(1.08));
-        expect(downScaleY, lessThanOrEqualTo(1.12));
+        expect(downScaleY, greaterThan(downScaleX));
+        expect(downScaleY, greaterThanOrEqualTo(1.08));
 
         // 1px–1.2px stadium rim painter stays clean without chord stripe bars.
         final downSurface = tester.widget<LiquidGlassPillSurface>(
           find.byType(LiquidGlassPillSurface),
         );
-        expect(downSurface.highlightBias.dy, closeTo(0.0, 0.05));
+        expect(downSurface.highlightBias.dy, greaterThan(0.35));
         expect(
           find.descendant(
             of: find.byType(LiquidGlassPillSurface),
@@ -377,14 +377,15 @@ void main() {
           greaterThan(0.30),
         );
 
-        // Diagonal drag right & upward slides X smoothly while keeping translateY == 0.
+        // Diagonal drag right & upward slides X smoothly and pulls Y upward within -7px.
         for (int i = 0; i < 9; i++) {
           await gesture.moveBy(const Offset(8, -16));
           await tester.pump(const Duration(milliseconds: 16));
         }
         final diagPill = tester.widget<Positioned>(pillFinder);
         expect(diagPill.left!, greaterThan(restingLeft + 15.0));
-        expect(diagPill.top!, closeTo(0.0, 0.01));
+        expect(diagPill.top!, lessThan(-3.0));
+        expect(diagPill.top!, greaterThanOrEqualTo(-8.0));
 
         // Elastic release springs both X and Y back cleanly.
         await gesture.up();
@@ -467,7 +468,7 @@ void main() {
           await tester.pump(const Duration(milliseconds: 16));
         }
 
-        expect(tester.widget<Positioned>(pillFinder).top!, closeTo(0.0, 0.01));
+        expect(tester.widget<Positioned>(pillFinder).top!, inInclusiveRange(3.0, 8.0));
         expect(scrollCtrl.offset, closeTo(0.0, 0.01));
 
         await holdGesture.up();

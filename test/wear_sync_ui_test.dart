@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kreta_api/kreta_api.dart';
-import 'package:rekreta_app/main.dart';
-import 'package:rekreta_app/screens/more_screen.dart';
-import 'package:rekreta_app/services/kreta_client.dart';
-import 'package:rekreta_app/services/token_storage_service.dart';
-import 'package:rekreta_app/services/wear_sync_service.dart';
-import 'package:rekreta_app/widgets/expandable_profile_card.dart';
+import 'package:tinta_naplo/main.dart';
+import 'package:tinta_naplo/screens/more_screen.dart';
+import 'package:tinta_naplo/services/kreta_client.dart';
+import 'package:tinta_naplo/services/token_storage_service.dart';
+import 'package:tinta_naplo/services/wear_sync_service.dart';
+import 'package:tinta_naplo/widgets/expandable_profile_card.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 StoredSession _sampleSession() {
@@ -292,7 +292,7 @@ void main() {
     expect(pushedArgs!['forceSync'], isTrue);
   });
 
-  testWidgets('ReKretaApp immediately pushes active session on watch auth request when logged in',
+  testWidgets('TintaNaploApp immediately pushes active session on watch auth request when logged in',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
     final session = _sampleSession();
@@ -338,7 +338,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      ReKretaApp(tokenStorage: storage, kretaClient: client),
+      TintaNaploApp(tokenStorage: storage, kretaClient: client),
     );
     await tester.pumpAndSettle();
 

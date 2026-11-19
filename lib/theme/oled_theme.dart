@@ -373,8 +373,10 @@ class OledTheme {
         : (prefs.themeStyle == AppThemeStyle.light);
     final isOled = !isLight && prefs.themeStyle == AppThemeStyle.oledPureBlack;
     final brightness = isLight ? Brightness.light : Brightness.dark;
-    final seedColor =
-        prefs.uwuModeEnabled ? uwuPastelPink : Color(prefs.seedColorValue);
+    final skin = prefs.customSkinConfig;
+    final seedColor = skin.enabled && skin.accent != null
+        ? skin.accent!
+        : (prefs.uwuModeEnabled ? uwuPastelPink : Color(prefs.seedColorValue));
 
     ColorScheme baseScheme;
     if (!prefs.uwuModeEnabled &&
@@ -487,17 +489,48 @@ class OledTheme {
       );
     }
 
+    final Color resolvedScaffoldBg =
+        skin.enabled ? (skin.bg ?? scaffoldBg) : scaffoldBg;
+    final Color resolvedCardBg = skin.enabled
+        ? (skin.surface ?? cardBg).withValues(alpha: skin.cardOpacity ?? 1.0)
+        : cardBg;
+    final Color resolvedElevatedBg =
+        skin.enabled ? (skin.surface ?? elevatedBg) : elevatedBg;
+    final Color resolvedBorderColor =
+        skin.enabled ? (skin.borderColor ?? borderColor) : borderColor;
+    final BorderRadius effectiveCardRadius =
+        skin.enabled && skin.cardRadius != null
+            ? BorderRadius.circular(skin.cardRadius!)
+            : cardRadius;
+    final double effectiveBorderWidth =
+        skin.enabled ? (skin.borderWidth ?? 1.0) : 1.0;
+
+    if (skin.enabled) {
+      baseScheme = baseScheme.copyWith(
+        surface: resolvedScaffoldBg,
+        onSurface: skin.text ?? baseScheme.onSurface,
+        primary: skin.accent ?? baseScheme.primary,
+        secondary: skin.accent ?? baseScheme.secondary,
+        outlineVariant: resolvedBorderColor,
+        surfaceContainerLowest: resolvedScaffoldBg,
+        surfaceContainerLow: resolvedCardBg,
+        surfaceContainer: resolvedCardBg,
+        surfaceContainerHigh: resolvedElevatedBg,
+        surfaceContainerHighest: resolvedElevatedBg,
+      );
+    }
+
     final primaryAccent = baseScheme.primary;
     final onSurfaceText = baseScheme.onSurface;
     final mutedText = onSurfaceText.withValues(alpha: 0.68);
 
-    return ThemeData(
+    final baseTheme = ThemeData(
       useMaterial3: true,
       brightness: brightness,
       colorScheme: baseScheme,
-      scaffoldBackgroundColor: scaffoldBg,
-      canvasColor: scaffoldBg,
-      dividerColor: borderColor,
+      scaffoldBackgroundColor: resolvedScaffoldBg,
+      canvasColor: resolvedScaffoldBg,
+      dividerColor: resolvedBorderColor,
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: SmoothSharedAxisTransitionsBuilder(),
@@ -508,24 +541,27 @@ class OledTheme {
         },
       ),
       appBarTheme: AppBarTheme(
-        backgroundColor: scaffoldBg,
+        backgroundColor: resolvedScaffoldBg,
         foregroundColor: onSurfaceText,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: false,
       ),
       cardTheme: CardThemeData(
-        color: cardBg,
+        color: resolvedCardBg,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: cardRadius,
-          side: BorderSide(color: borderColor, width: 1),
+          borderRadius: effectiveCardRadius,
+          side: BorderSide(
+            color: resolvedBorderColor,
+            width: effectiveBorderWidth,
+          ),
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: cardBg,
+        backgroundColor: resolvedCardBg,
         surfaceTintColor: Colors.transparent,
         indicatorColor: primaryAccent.withValues(alpha: 0.22),
         indicatorShape: RoundedRectangleBorder(
@@ -549,18 +585,18 @@ class OledTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: elevatedBg,
+        fillColor: resolvedElevatedBg,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 18,
           vertical: 14,
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(22),
-          borderSide: BorderSide(color: borderColor),
+          borderSide: BorderSide(color: resolvedBorderColor),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(22),
-          borderSide: BorderSide(color: borderColor),
+          borderSide: BorderSide(color: resolvedBorderColor),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(22),
@@ -568,17 +604,49 @@ class OledTheme {
         ),
       ),
       dialogTheme: DialogThemeData(
-        backgroundColor: cardBg,
+        backgroundColor: resolvedCardBg,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: largeRadius),
       ),
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: cardBg,
+        backgroundColor: resolvedCardBg,
         surfaceTintColor: Colors.transparent,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         ),
       ),
     );
+
+    if (skin.enabled &&
+        skin.fontScale != null &&
+        (skin.fontScale! - 1.0).abs() > 0.01) {
+      final scale = skin.fontScale!;
+      final resolvedTypography = Typography.englishLike2021.merge(
+        baseTheme.textTheme,
+      );
+      TextStyle? scaleStyle(TextStyle? style) => style?.fontSize != null
+          ? style!.copyWith(fontSize: style.fontSize! * scale)
+          : style;
+      return baseTheme.copyWith(
+        textTheme: TextTheme(
+          displayLarge: scaleStyle(resolvedTypography.displayLarge),
+          displayMedium: scaleStyle(resolvedTypography.displayMedium),
+          displaySmall: scaleStyle(resolvedTypography.displaySmall),
+          headlineLarge: scaleStyle(resolvedTypography.headlineLarge),
+          headlineMedium: scaleStyle(resolvedTypography.headlineMedium),
+          headlineSmall: scaleStyle(resolvedTypography.headlineSmall),
+          titleLarge: scaleStyle(resolvedTypography.titleLarge),
+          titleMedium: scaleStyle(resolvedTypography.titleMedium),
+          titleSmall: scaleStyle(resolvedTypography.titleSmall),
+          bodyLarge: scaleStyle(resolvedTypography.bodyLarge),
+          bodyMedium: scaleStyle(resolvedTypography.bodyMedium),
+          bodySmall: scaleStyle(resolvedTypography.bodySmall),
+          labelLarge: scaleStyle(resolvedTypography.labelLarge),
+          labelMedium: scaleStyle(resolvedTypography.labelMedium),
+          labelSmall: scaleStyle(resolvedTypography.labelSmall),
+        ),
+      );
+    }
+    return baseTheme;
   }
 }
