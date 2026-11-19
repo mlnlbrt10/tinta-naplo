@@ -554,6 +554,8 @@ class KretaClient {
         'Authorization': 'Bearer $accessToken',
       };
 
+  static const Duration defaultRequestTimeout = Duration(seconds: 12);
+
   /// Exchanges the intercepted OAuth2 authorization [code] and PKCE
   /// [codeVerifier] at `/connect/token` and persists the resulting tokens.
   Future<StoredSession> exchangeCodeForTokens({
@@ -571,7 +573,7 @@ class KretaClient {
         'client_id': clientId,
         'grant_type': 'authorization_code',
       },
-    );
+    ).timeout(const Duration(seconds: 15));
 
     if (response.statusCode == 400) {
       throw const TokenExpiredException();
@@ -606,8 +608,12 @@ class KretaClient {
     if (_isDemoActive(current)) {
       return DemoDataService.instance.buildDemoSession();
     }
-    if (_refreshCompleter != null) {
-      final ok = await _refreshCompleter!.future;
+    final existingCompleter = _refreshCompleter;
+    if (existingCompleter != null) {
+      final ok = await existingCompleter.future.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => false,
+      );
       StoredSession? storedAfterWait;
       try {
         storedAfterWait = await _storage.loadSession();
@@ -655,14 +661,14 @@ class KretaClient {
         clientId: clientId,
       );
       _latestSession = refreshed;
-      completer.complete(true);
+      if (!completer.isCompleted) {
+        completer.complete(true);
+      }
       return refreshed;
-    } catch (_) {
+    } finally {
       if (!completer.isCompleted) {
         completer.complete(false);
       }
-      rethrow;
-    } finally {
       if (identical(_refreshCompleter, completer)) {
         _refreshCompleter = null;
       }
@@ -695,7 +701,8 @@ class KretaClient {
   }
 
   /// Transparent Token Refresh Interceptor:
-  /// Wraps any authorized HTTP request with serialized single-flight token refresh.
+  /// Wraps any authorized HTTP request with serialized single-flight token refresh
+  /// and bounded request timeouts. Never logs out directly on 401/403/5xx/timeouts.
   Future<http.Response> _sendWithRetryInterceptor(
     StoredSession session,
     Future<http.Response> Function(String accessToken) sendRequest,
@@ -709,19 +716,20 @@ class KretaClient {
     if (active.isExpired) {
       try {
         active = await ensureValidSession(active);
-      } on InvalidGrantException {
+      } on VerifiedInvalidGrantException {
         if (DateTime.now().isAfter(active.expiresAt)) {
           rethrow;
         }
         // Still within nominal pre-expiry margin: try current token cleanly first.
       } catch (_) {
-        // Transient network/5xx error during pre-emptive refresh: keep session
-        // and attempt request so offline errors don't force a logout.
+        // Transient network/5xx/storage error during pre-emptive refresh: keep session
+        // and attempt request so offline errors never force a logout.
       }
     }
 
     final usedAccessToken = active.accessToken;
-    var response = await sendRequest(usedAccessToken);
+    var response =
+        await sendRequest(usedAccessToken).timeout(defaultRequestTimeout);
     if (response.statusCode != 401) {
       return response;
     }
@@ -738,7 +746,8 @@ class KretaClient {
       active = await refreshSession(active, force: true);
     }
 
-    response = await sendRequest(active.accessToken);
+    response =
+        await sendRequest(active.accessToken).timeout(defaultRequestTimeout);
     return response;
   }
 
@@ -1515,6 +1524,9 @@ class KretaClient {
     if (missingHwUids.isNotEmpty) {
       final fetched = await Future.wait(
         missingHwUids.map((uid) => fetchHomeworkByUid(session, uid)),
+      ).timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => const <Homework?>[],
       );
       for (final hw in fetched) {
         if (hw != null && !homeworks.any((h) => h.uid == hw.uid || h.id == hw.id)) {

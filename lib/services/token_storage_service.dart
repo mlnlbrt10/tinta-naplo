@@ -1085,6 +1085,79 @@ class StoredSession {
   static String refreshTokenOrEmpty(String token) => token;
 }
 
+/// Permanent, retry-verified `invalid_grant` response returned by the KRÉTA
+/// OAuth2 token endpoint after cross-checking local & external token stores
+/// and retrying once to rule out concurrent rotation or transient glitches.
+class VerifiedInvalidGrantException extends InvalidGrantException {
+  final int httpStatusCode;
+  final String responseBody;
+  final String caller;
+
+  const VerifiedInvalidGrantException({
+    required this.httpStatusCode,
+    required this.responseBody,
+    this.caller = 'TokenStorageService.refreshToken',
+  }) : super();
+
+  @override
+  String toString() =>
+      'VerifiedInvalidGrantException(caller: $caller, httpStatus: $httpStatusCode, body: $responseBody)';
+}
+
+/// Diagnostic snapshot persisted under SharedPreferences key
+/// `'last_logout_reason'` whenever a session is cleared or redirected to
+/// `LoginScreen`.
+class LogoutDiagnosticEntry {
+  final DateTime timestamp;
+  final String caller;
+  final String reason;
+  final int? httpStatusCode;
+  final String? errorBody;
+
+  const LogoutDiagnosticEntry({
+    required this.timestamp,
+    required this.caller,
+    required this.reason,
+    this.httpStatusCode,
+    this.errorBody,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'timestamp': timestamp.toIso8601String(),
+        'caller': caller,
+        'reason': reason,
+        if (httpStatusCode != null) 'httpStatusCode': httpStatusCode,
+        if (errorBody != null && errorBody!.isNotEmpty) 'errorBody': errorBody,
+      };
+
+  factory LogoutDiagnosticEntry.fromJson(Map<String, dynamic> json) {
+    return LogoutDiagnosticEntry(
+      timestamp: DateTime.tryParse(json['timestamp']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      caller: json['caller']?.toString() ?? 'unknown',
+      reason: json['reason']?.toString() ?? 'Ismeretlen ok',
+      httpStatusCode: json['httpStatusCode'] is num
+          ? (json['httpStatusCode'] as num).toInt()
+          : int.tryParse(json['httpStatusCode']?.toString() ?? ''),
+      errorBody: json['errorBody']?.toString(),
+    );
+  }
+
+  String toDiagnosticSummary() {
+    final buf = StringBuffer()
+      ..writeln('Időpont: ${timestamp.toLocal().toIso8601String()}')
+      ..writeln('Hívó: $caller')
+      ..writeln('Ok: $reason');
+    if (httpStatusCode != null) {
+      buf.writeln('HTTP státusz: $httpStatusCode');
+    }
+    if (errorBody != null && errorBody!.trim().isNotEmpty) {
+      buf.writeln('Válasz / hiba: ${errorBody!.trim()}');
+    }
+    return buf.toString().trim();
+  }
+}
+
 /// Manages encrypted persistence of OAuth2 tokens and user profile preferences
 /// via [FlutterSecureStorage].
 class TokenStorageService {
@@ -1148,12 +1221,121 @@ class TokenStorageService {
   static const _keyDashboardCachePrefix = 'kreta_dashboard_cache_v1_';
   static const String sharedPrefsProfileKey = 'tinta_profile_prefs_v1';
   static const String _keySharedPrefsSessionBackup = 'kreta_session_backup_v2';
+  static const String lastLogoutReasonKey = 'last_logout_reason';
+  static const String _keyHasEverLoggedIn = 'tinta_has_ever_logged_in_v1';
 
   static Completer<bool>? _refreshCompleter;
   static StoredSession? _lastRefreshedSession;
   static StoredSession? get latestSession => _lastRefreshedSession;
   static final ValueNotifier<StoredSession?> sessionNotifier =
       ValueNotifier<StoredSession?>(null);
+
+  /// Optional external fallback loader (registered on Android by
+  /// `WearSyncService`) to recover rotated tokens cached natively in
+  /// `WearSessionBridge` when KeyStore or Dart storage lags behind.
+  static Future<StoredSession?> Function()? externalSessionFallbackLoader;
+
+  /// Delay before retrying a suspected `invalid_grant` once to rule out
+  /// concurrent rotation or transient IdP races.
+  static Duration invalidGrantRetryDelay = const Duration(milliseconds: 400);
+
+  /// Last transient storage exception encountered during [loadSession], if any.
+  static String? lastStorageReadError;
+
+  static DateTime? _lastLogoutRecordedAt;
+
+  static String? _sanitizeDiagnosticBody(String? raw) {
+    if (raw == null) return null;
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+    final scrubbed = trimmed
+        .replaceAll(
+          RegExp(
+            r'(access_token|refresh_token|id_token)"?\s*[:=]\s*"?[^",\s\}]+',
+            caseSensitive: false,
+          ),
+          r'$1=[REDACTED]',
+        )
+        .replaceAll(
+          RegExp(r'Bearer\s+[A-Za-z0-9._\-]+', caseSensitive: false),
+          'Bearer [REDACTED]',
+        );
+    return scrubbed.length > 500
+        ? '${scrubbed.substring(0, 500)}…'
+        : scrubbed;
+  }
+
+  /// Persists a timestamped `last_logout_reason` entry in [SharedPreferences]
+  /// so Developer Options can display the exact root cause of any logout.
+  static Future<void> recordLogoutReason({
+    required String caller,
+    required String reason,
+    int? httpStatusCode,
+    String? errorBody,
+  }) async {
+    _lastLogoutRecordedAt = DateTime.now();
+    final entry = LogoutDiagnosticEntry(
+      timestamp: DateTime.now(),
+      caller: caller,
+      reason: reason,
+      httpStatusCode: httpStatusCode,
+      errorBody: _sanitizeDiagnosticBody(errorBody),
+    );
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString(lastLogoutReasonKey, jsonEncode(entry.toJson()));
+    } catch (_) {
+      // Ignore in unmocked unit tests.
+    }
+  }
+
+  static Future<LogoutDiagnosticEntry?> loadLastLogoutReason() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final raw = sp.getString(lastLogoutReasonKey);
+      if (raw == null || raw.trim().isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        return LogoutDiagnosticEntry.fromJson(
+          Map<String, dynamic>.from(decoded),
+        );
+      }
+      return LogoutDiagnosticEntry(
+        timestamp: DateTime.fromMillisecondsSinceEpoch(0),
+        caller: 'legacy',
+        reason: raw,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> clearLastLogoutReason() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.remove(lastLogoutReasonKey);
+    } catch (_) {}
+  }
+
+  static Future<bool> hadPreviousLogin() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      return sp.getBool(_keyHasEverLoggedIn) == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> setPreviousLoginMarker(bool loggedIn) async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      if (loggedIn) {
+        await sp.setBool(_keyHasEverLoggedIn, true);
+      } else {
+        await sp.remove(_keyHasEverLoggedIn);
+      }
+    } catch (_) {}
+  }
 
   /// Picks the valid [StoredSession] with non-empty credentials and the latest
   /// [StoredSession.expiresAt].
@@ -1235,6 +1417,7 @@ class TokenStorageService {
     _lastRefreshedSession = session;
     sessionNotifier.value = session;
     await _saveSessionBackupToSharedPrefs(session);
+    await setPreviousLoginMarker(true);
     // Write sequentially to avoid Android EncryptedSharedPreferences concurrency races.
     final entries = <MapEntry<String, String>>[
       MapEntry(_keyAccessToken, session.accessToken),
@@ -1251,61 +1434,139 @@ class TokenStorageService {
     }
   }
 
-  Future<StoredSession?> loadSession() async {
-    StoredSession? fromSecure;
-    try {
-      final values = await _storage.readAll();
-      final accessToken = values[_keyAccessToken];
-      final refreshToken = values[_keyRefreshToken];
-      final instituteCode = values[_keyInstituteCode];
+  StoredSession? _parseSessionFromMap(Map<String, String?> values) {
+    final accessToken = values[_keyAccessToken];
+    final refreshToken = values[_keyRefreshToken];
+    final instituteCode = values[_keyInstituteCode];
 
-      if (accessToken != null &&
-          accessToken.isNotEmpty &&
-          refreshToken != null &&
-          refreshToken.isNotEmpty &&
-          instituteCode != null &&
-          instituteCode.isNotEmpty) {
-        final expiresRaw = values[_keyExpiresAt];
-        final expiresAt =
-            (expiresRaw != null ? DateTime.tryParse(expiresRaw) : null) ??
-                DateTime.fromMillisecondsSinceEpoch(0);
-        final userName = values[_keyUserName];
-        fromSecure = StoredSession(
-          accessToken: accessToken,
-          refreshToken: refreshToken,
-          idToken: values[_keyIdToken] ?? '',
-          instituteCode: instituteCode,
-          userName: (userName != null && userName.isNotEmpty) ? userName : null,
-          expiresAt: expiresAt,
-        );
-      }
-    } catch (_) {
-      fromSecure = null;
+    if (accessToken == null ||
+        accessToken.isEmpty ||
+        refreshToken == null ||
+        refreshToken.isEmpty ||
+        instituteCode == null ||
+        instituteCode.isEmpty) {
+      return null;
     }
 
+    final expiresRaw = values[_keyExpiresAt];
+    final expiresAt =
+        (expiresRaw != null ? DateTime.tryParse(expiresRaw) : null) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+    final userName = values[_keyUserName];
+    return StoredSession(
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      idToken: values[_keyIdToken] ?? '',
+      instituteCode: instituteCode,
+      userName: (userName != null && userName.isNotEmpty) ? userName : null,
+      expiresAt: expiresAt,
+    );
+  }
+
+  Future<StoredSession?> _readSessionFromSecureStorageResilient() async {
+    lastStorageReadError = null;
+    try {
+      final values = await _storage.readAll();
+      return _parseSessionFromMap(values);
+    } catch (e) {
+      lastStorageReadError = e.toString();
+      // Never wipe credentials on transient Android KeyStore / EncryptedSharedPreferences
+      // exceptions. Wait briefly and read only the 6 auth keys individually so an
+      // unrelated corrupted preference entry cannot mask valid tokens.
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      try {
+        final map = <String, String?>{};
+        for (final key in const [
+          _keyAccessToken,
+          _keyRefreshToken,
+          _keyIdToken,
+          _keyInstituteCode,
+          _keyUserName,
+          _keyExpiresAt,
+        ]) {
+          try {
+            map[key] = await _storage.read(key: key);
+          } catch (keyErr) {
+            lastStorageReadError = keyErr.toString();
+          }
+        }
+        return _parseSessionFromMap(map);
+      } catch (retryErr) {
+        lastStorageReadError = retryErr.toString();
+        return null;
+      }
+    }
+  }
+
+  Future<StoredSession?> loadSession() async {
+    final fromSecure = await _readSessionFromSecureStorageResilient();
     final fromBackup = await _loadSessionBackupFromSharedPrefs();
+    StoredSession? fromExternal;
+    final extLoader = externalSessionFallbackLoader;
+    if (extLoader != null) {
+      try {
+        fromExternal =
+            await Future<StoredSession?>.value(extLoader()).timeout(
+          const Duration(seconds: 2),
+          onTimeout: () => null,
+        );
+      } catch (_) {
+        fromExternal = null;
+      }
+    }
+
     final chosen = pickNewestSession([
       fromSecure,
       _lastRefreshedSession,
       fromBackup,
+      fromExternal,
     ]);
     if (chosen != null) {
       _lastRefreshedSession = chosen;
+      final needsBackupBackfill = fromBackup == null ||
+          chosen.refreshToken != fromBackup.refreshToken ||
+          chosen.accessToken != fromBackup.accessToken ||
+          chosen.expiresAt.isAfter(fromBackup.expiresAt);
+      if (needsBackupBackfill) {
+        await _saveSessionBackupToSharedPrefs(chosen);
+      }
+      await setPreviousLoginMarker(true);
     }
     return chosen;
   }
 
+  static bool _isExplicitInvalidGrantResponse(http.Response response) {
+    if (response.statusCode != 400 && response.statusCode != 401) {
+      return false;
+    }
+    String? errorCode;
+    try {
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is Map) {
+        errorCode = decoded['error']?.toString().toLowerCase().trim();
+      }
+    } catch (_) {}
+    final bodyLower = response.body.toLowerCase();
+    return errorCode == 'invalid_grant' || bodyLower.contains('invalid_grant');
+  }
+
   /// Transparently refreshes the OAuth2 access & refresh tokens using a strict
   /// single-flight lock (`_refreshCompleter`) so concurrent callers never race
-  /// KRÉTA's single-use refresh token rotation. Transient network / 429 / 5xx
-  /// failures raise regular exceptions rather than [InvalidGrantException].
+  /// KRÉTA's single-use refresh token rotation. Transient network / 429 / 5xx /
+  /// KeyStore failures raise regular exceptions rather than [InvalidGrantException].
+  /// Only a retry-verified permanent `invalid_grant` from the auth server throws
+  /// [VerifiedInvalidGrantException].
   Future<StoredSession> refreshToken({
     StoredSession? session,
     http.Client? httpClient,
     String clientId = KretaAuthConfig.clientIdIos,
   }) async {
-    if (_refreshCompleter != null) {
-      final succeeded = await _refreshCompleter!.future;
+    final existingCompleter = _refreshCompleter;
+    if (existingCompleter != null) {
+      final succeeded = await existingCompleter.future.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => false,
+      );
       StoredSession? storedAfterWait;
       try {
         storedAfterWait = await loadSession();
@@ -1350,17 +1611,25 @@ class TokenStorageService {
           !active.isExpired) {
         _lastRefreshedSession = active;
         sessionNotifier.value = active;
-        completer.complete(true);
+        if (!completer.isCompleted) {
+          completer.complete(true);
+        }
         return active;
       }
 
+      // Never treat a transient local storage read miss as a server invalid_grant.
       if (active == null || active.refreshToken.trim().isEmpty) {
-        throw const InvalidGrantException();
+        throw Exception(
+          'Refresh token unavailable locally (storageError: ${lastStorageReadError ?? 'none'}).',
+        );
       }
 
       final client = httpClient ?? http.Client();
 
-      Future<http.Response> postRefresh(String refreshTokenStr) {
+      Future<http.Response> postRefresh(
+        String instituteCode,
+        String refreshTokenStr,
+      ) {
         return client
             .post(
               Uri.parse(KretaAuthConfig.tokenEndpoint),
@@ -1371,20 +1640,23 @@ class TokenStorageService {
                 'User-Agent': KretaAuthConfig.userAgent,
               },
               body: {
-                'institute_code': active.instituteCode,
+                'institute_code': instituteCode,
                 'refresh_token': refreshTokenStr,
                 'grant_type': 'refresh_token',
                 'client_id': clientId,
               },
             )
-            .timeout(const Duration(seconds: 20));
+            .timeout(const Duration(seconds: 12));
       }
 
       var effectiveActive = active;
-      var response = await postRefresh(effectiveActive.refreshToken);
+      var response = await postRefresh(
+        effectiveActive.instituteCode,
+        effectiveActive.refreshToken,
+      );
 
       if (response.statusCode == 400 || response.statusCode == 401) {
-        // Before declaring invalid_grant, check if another caller / background isolate
+        // 1. Check if another caller, background isolate, or Wear OS watch already
         // rotated and saved a newer refresh_token in the meantime.
         final latestCheck = await loadSession();
         if (latestCheck != null &&
@@ -1392,27 +1664,51 @@ class TokenStorageService {
           if (!latestCheck.isExpired) {
             _lastRefreshedSession = latestCheck;
             sessionNotifier.value = latestCheck;
-            completer.complete(true);
+            if (!completer.isCompleted) {
+              completer.complete(true);
+            }
             return latestCheck;
           }
           effectiveActive = latestCheck;
-          response = await postRefresh(effectiveActive.refreshToken);
+          response = await postRefresh(
+            effectiveActive.instituteCode,
+            effectiveActive.refreshToken,
+          );
         }
       }
 
-      if (response.statusCode == 400 || response.statusCode == 401) {
-        String? errorCode;
-        try {
-          final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-          if (decoded is Map) {
-            errorCode = decoded['error']?.toString().toLowerCase().trim();
+      if (_isExplicitInvalidGrantResponse(response)) {
+        // 2. Wait briefly to let any in-flight Watch/background sync settle, re-check
+        // storage, and retry once before confirming permanent invalid_grant.
+        if (invalidGrantRetryDelay > Duration.zero) {
+          await Future<void>.delayed(invalidGrantRetryDelay);
+        }
+        final settledCheck = await loadSession();
+        if (settledCheck != null &&
+            settledCheck.refreshToken != effectiveActive.refreshToken) {
+          if (!settledCheck.isExpired) {
+            _lastRefreshedSession = settledCheck;
+            sessionNotifier.value = settledCheck;
+            if (!completer.isCompleted) {
+              completer.complete(true);
+            }
+            return settledCheck;
           }
-        } catch (_) {}
-        final bodyLower = response.body.toLowerCase();
-        final isExplicitInvalidGrant =
-            errorCode == 'invalid_grant' || bodyLower.contains('invalid_grant');
-        if (isExplicitInvalidGrant) {
-          throw const InvalidGrantException();
+          effectiveActive = settledCheck;
+        }
+        response = await postRefresh(
+          effectiveActive.instituteCode,
+          effectiveActive.refreshToken,
+        );
+      }
+
+      if (response.statusCode == 400 || response.statusCode == 401) {
+        if (_isExplicitInvalidGrantResponse(response)) {
+          throw VerifiedInvalidGrantException(
+            httpStatusCode: response.statusCode,
+            responseBody: response.body,
+            caller: 'TokenStorageService.refreshToken',
+          );
         }
         throw Exception(
           'Token refresh rejected transiently (HTTP ${response.statusCode}): ${response.body}',
@@ -1444,14 +1740,14 @@ class TokenStorageService {
         fallbackUserName: effectiveActive.userName,
       );
       await saveSession(refreshed);
-      completer.complete(true);
+      if (!completer.isCompleted) {
+        completer.complete(true);
+      }
       return refreshed;
-    } catch (_) {
+    } finally {
       if (!completer.isCompleted) {
         completer.complete(false);
       }
-      rethrow;
-    } finally {
       if (identical(_refreshCompleter, completer)) {
         _refreshCompleter = null;
       }
@@ -1459,8 +1755,28 @@ class TokenStorageService {
   }
 
   /// Clears only the authentication tokens while preserving all user
-  /// preferences, colors, nicknames, subject renames, and rounding configs.
-  Future<void> clearSession() async {
+  /// preferences, colors, nicknames, subject renames, rounding configs, and
+  /// the diagnostic `last_logout_reason` record.
+  Future<void> clearSession({
+    String caller = 'TokenStorageService.clearSession',
+    String reason = 'Munkamenet törölve',
+    int? httpStatusCode,
+    String? errorBody,
+    bool isUserInitiated = false,
+  }) async {
+    final recentlyRecorded = _lastLogoutRecordedAt != null &&
+        DateTime.now().difference(_lastLogoutRecordedAt!).inSeconds < 2;
+    if (!recentlyRecorded) {
+      await recordLogoutReason(
+        caller: caller,
+        reason: reason,
+        httpStatusCode: httpStatusCode,
+        errorBody: errorBody,
+      );
+    }
+    if (isUserInitiated) {
+      await setPreviousLoginMarker(false);
+    }
     _lastRefreshedSession = null;
     sessionNotifier.value = null;
     try {
@@ -1790,177 +2106,104 @@ class TokenStorageService {
     final serializedTeacherNames = jsonEncode(prefs.teacherCustomNames);
 
     try {
-      await Future.wait([
-      _storage.write(key: _keyExtras, value: jsonEncode(prefs.extras)),
-      if (trimmedNick.isEmpty)
-        _storage.delete(key: _keyCustomNickname)
-      else
-        _storage.write(key: _keyCustomNickname, value: trimmedNick),
-      _storage.write(
-        key: _keyAvatarIconIndex,
-        value: prefs.avatarIconIndex.toString(),
-      ),
-      _storage.write(
-        key: _keyAvatarColorIndex,
-        value: prefs.avatarColorIndex.toString(),
-      ),
-      if (trimmedPhoto.isEmpty)
-        _storage.delete(key: _keyCustomPhotoPath)
-      else
-        _storage.write(key: _keyCustomPhotoPath, value: trimmedPhoto),
-      _storage.write(key: _keyThemeStyle, value: prefs.themeStyle.name),
-      _storage.write(
-        key: _keyUseDynamicColor,
-        value: prefs.useDynamicColor.toString(),
-      ),
-      _storage.write(
-        key: _keySeedColorValue,
-        value: prefs.seedColorValue.toString(),
-      ),
-      _storage.write(
-        key: _keyShowWeekends,
-        value: prefs.showWeekends.toString(),
-      ),
-      _storage.write(
-        key: _keyShowCancelledLessons,
-        value: prefs.showCancelledLessons.toString(),
-      ),
-      _storage.write(key: _keyCustomGradeColors, value: serializedColors),
-      _storage.write(key: _keyRoundingConfig, value: serializedRounding),
-      _storage.write(
-        key: _keyDeveloperModeUnlocked,
-        value: prefs.developerModeUnlocked.toString(),
-      ),
-      _storage.write(
-        key: _keyUwuModeEnabled,
-        value: prefs.uwuModeEnabled.toString(),
-      ),
-      _storage.write(
-        key: _keyTsundereModeEnabled,
-        value: prefs.tsundereModeEnabled.toString(),
-      ),
-      _storage.write(
-        key: _keyChristmasModeEnabled,
-        value: prefs.christmasModeEnabled.toString(),
-      ),
-      _storage.write(
-        key: _keyAppIconPreset,
-        value: prefs.appIconPreset,
-      ),
-      _storage.write(
-        key: _keyBackgroundPreset,
-        value: prefs.backgroundPreset,
-      ),
-      _storage.write(
-        key: _keyModalCloseMode,
-        value: prefs.modalCloseMode.name,
-      ),
-      _storage.write(
-        key: _keyTransitHomeStation,
-        value: prefs.transitHomeStation.trim(),
-      ),
-      _storage.write(
-        key: _keyTransitSchoolStation,
-        value: prefs.transitSchoolStation.trim(),
-      ),
-      _storage.write(
-        key: _keyTransitAllowCoach,
-        value: prefs.transitAllowCoach.toString(),
-      ),
-      _storage.write(
-        key: _keyTransitAllowTrain,
-        value: prefs.transitAllowTrain.toString(),
-      ),
-      _storage.write(
-        key: _keyTransitAllowLocalBus,
-        value: prefs.transitAllowLocalBus.toString(),
-      ),
-      _storage.write(
-        key: _keyWalkingSpeedKmh,
-        value: prefs.walkingSpeedKmh.toString(),
-      ),
-      _storage.write(
-        key: _keyWalkingDurationMinutes,
-        value: prefs.walkingDurationMinutes.toString(),
-      ),
-      _storage.write(
-        key: _keyTransitAlertBufferMinutes,
-        value: prefs.transitAlertBufferMinutes.toString(),
-      ),
-      _storage.write(
-        key: _keyTransitNotificationsEnabled,
-        value: prefs.transitNotificationsEnabled.toString(),
-      ),
-      _storage.write(key: _keyWalkHomeToBusMinutes, value: prefs.walkHomeToBusMinutes.toString()),
-      _storage.write(key: _keyWalkHomeToTrainMinutes, value: prefs.walkHomeToTrainMinutes.toString()),
-      _storage.write(key: _keyWalkSchoolToBusMinutes, value: prefs.walkSchoolToBusMinutes.toString()),
-      _storage.write(key: _keyWalkSchoolToTrainMinutes, value: prefs.walkSchoolToTrainMinutes.toString()),
-      _storage.write(key: _keyCalcAllow200Weight, value: prefs.calcAllow200Weight.toString()),
-      _storage.write(
-        key: _keyTransitCardEnabled,
-        value: prefs.transitCardEnabled.toString(),
-      ),
-      _storage.write(
-        key: _keyLiquidGlassEnabled,
-        value: prefs.liquidGlassEnabled.toString(),
-      ),
-      _storage.write(
-        key: _keyLiquidGlassMode,
-        value: prefs.liquidGlassMode.name,
-      ),
-      if (prefs.customBackdropPath == null ||
-          prefs.customBackdropPath!.trim().isEmpty)
-        _storage.delete(key: _keyCustomBackdropPath)
-      else
-        _storage.write(
-          key: _keyCustomBackdropPath,
-          value: prefs.customBackdropPath!.trim(),
+      // Serialize writes sequentially behind the secure-storage lock instead of
+      // firing ~48 parallel writes into Android EncryptedSharedPreferences,
+      // preventing KeyStore/XML races with auth tokens.
+      final writeOps = <MapEntry<String, String?>>[
+        MapEntry(_keyExtras, jsonEncode(prefs.extras)),
+        MapEntry(_keyCustomNickname, trimmedNick.isEmpty ? null : trimmedNick),
+        MapEntry(_keyAvatarIconIndex, prefs.avatarIconIndex.toString()),
+        MapEntry(_keyAvatarColorIndex, prefs.avatarColorIndex.toString()),
+        MapEntry(_keyCustomPhotoPath, trimmedPhoto.isEmpty ? null : trimmedPhoto),
+        MapEntry(_keyThemeStyle, prefs.themeStyle.name),
+        MapEntry(_keyUseDynamicColor, prefs.useDynamicColor.toString()),
+        MapEntry(_keySeedColorValue, prefs.seedColorValue.toString()),
+        MapEntry(_keyShowWeekends, prefs.showWeekends.toString()),
+        MapEntry(_keyShowCancelledLessons, prefs.showCancelledLessons.toString()),
+        MapEntry(_keyCustomGradeColors, serializedColors),
+        MapEntry(_keyRoundingConfig, serializedRounding),
+        MapEntry(
+          _keyDeveloperModeUnlocked,
+          prefs.developerModeUnlocked.toString(),
         ),
-      _storage.write(
-        key: _keyCustomBackdropDim,
-        value: prefs.customBackdropDim.toString(),
-      ),
-      _storage.write(
-        key: _keyCustomBackdropLuminance,
-        value: prefs.customBackdropLuminance.toString(),
-      ),
-      _storage.write(
-        key: _keyAnimatedBackdropPreset,
-        value: prefs.animatedBackdropPreset.name,
-      ),
-      _storage.write(
-        key: _keyCardOpacity,
-        value: prefs.cardOpacity.toString(),
-      ),
-      _storage.write(
-        key: _keyCardBlurSigma,
-        value: prefs.cardBlurSigma.toString(),
-      ),
-      _storage.write(
-        key: _keyFavoriteRoute1stPeriod,
-        value: prefs.favoriteRoute1stPeriod.trim(),
-      ),
-      _storage.write(
-        key: _keyFavoriteRoute2ndPeriod,
-        value: prefs.favoriteRoute2ndPeriod.trim(),
-      ),
-      _storage.write(
-        key: _keySubjectRoundingOverrides,
-        value: serializedSubjRounding,
-      ),
-      _storage.write(
-        key: _keySubjectCustomColors,
-        value: serializedSubjColors,
-      ),
-      _storage.write(
-        key: _keySubjectCustomNames,
-        value: serializedSubjNames,
-      ),
-      _storage.write(
-        key: _keyTeacherCustomNames,
-        value: serializedTeacherNames,
-      ),
-    ]);
+        MapEntry(_keyUwuModeEnabled, prefs.uwuModeEnabled.toString()),
+        MapEntry(_keyTsundereModeEnabled, prefs.tsundereModeEnabled.toString()),
+        MapEntry(_keyChristmasModeEnabled, prefs.christmasModeEnabled.toString()),
+        MapEntry(_keyAppIconPreset, prefs.appIconPreset),
+        MapEntry(_keyBackgroundPreset, prefs.backgroundPreset),
+        MapEntry(_keyModalCloseMode, prefs.modalCloseMode.name),
+        MapEntry(_keyTransitHomeStation, prefs.transitHomeStation.trim()),
+        MapEntry(_keyTransitSchoolStation, prefs.transitSchoolStation.trim()),
+        MapEntry(_keyTransitAllowCoach, prefs.transitAllowCoach.toString()),
+        MapEntry(_keyTransitAllowTrain, prefs.transitAllowTrain.toString()),
+        MapEntry(
+          _keyTransitAllowLocalBus,
+          prefs.transitAllowLocalBus.toString(),
+        ),
+        MapEntry(_keyWalkingSpeedKmh, prefs.walkingSpeedKmh.toString()),
+        MapEntry(
+          _keyWalkingDurationMinutes,
+          prefs.walkingDurationMinutes.toString(),
+        ),
+        MapEntry(
+          _keyTransitAlertBufferMinutes,
+          prefs.transitAlertBufferMinutes.toString(),
+        ),
+        MapEntry(
+          _keyTransitNotificationsEnabled,
+          prefs.transitNotificationsEnabled.toString(),
+        ),
+        MapEntry(
+          _keyWalkHomeToBusMinutes,
+          prefs.walkHomeToBusMinutes.toString(),
+        ),
+        MapEntry(
+          _keyWalkHomeToTrainMinutes,
+          prefs.walkHomeToTrainMinutes.toString(),
+        ),
+        MapEntry(
+          _keyWalkSchoolToBusMinutes,
+          prefs.walkSchoolToBusMinutes.toString(),
+        ),
+        MapEntry(
+          _keyWalkSchoolToTrainMinutes,
+          prefs.walkSchoolToTrainMinutes.toString(),
+        ),
+        MapEntry(_keyCalcAllow200Weight, prefs.calcAllow200Weight.toString()),
+        MapEntry(_keyTransitCardEnabled, prefs.transitCardEnabled.toString()),
+        MapEntry(_keyLiquidGlassEnabled, prefs.liquidGlassEnabled.toString()),
+        MapEntry(_keyLiquidGlassMode, prefs.liquidGlassMode.name),
+        MapEntry(
+          _keyCustomBackdropPath,
+          (prefs.customBackdropPath == null ||
+                  prefs.customBackdropPath!.trim().isEmpty)
+              ? null
+              : prefs.customBackdropPath!.trim(),
+        ),
+        MapEntry(_keyCustomBackdropDim, prefs.customBackdropDim.toString()),
+        MapEntry(
+          _keyCustomBackdropLuminance,
+          prefs.customBackdropLuminance.toString(),
+        ),
+        MapEntry(_keyAnimatedBackdropPreset, prefs.animatedBackdropPreset.name),
+        MapEntry(_keyCardOpacity, prefs.cardOpacity.toString()),
+        MapEntry(_keyCardBlurSigma, prefs.cardBlurSigma.toString()),
+        MapEntry(_keyFavoriteRoute1stPeriod, prefs.favoriteRoute1stPeriod.trim()),
+        MapEntry(_keyFavoriteRoute2ndPeriod, prefs.favoriteRoute2ndPeriod.trim()),
+        MapEntry(_keySubjectRoundingOverrides, serializedSubjRounding),
+        MapEntry(_keySubjectCustomColors, serializedSubjColors),
+        MapEntry(_keySubjectCustomNames, serializedSubjNames),
+        MapEntry(_keyTeacherCustomNames, serializedTeacherNames),
+      ];
+      for (final op in writeOps) {
+        try {
+          if (op.value == null) {
+            await _storage.delete(key: op.key);
+          } else {
+            await _storage.write(key: op.key, value: op.value!);
+          }
+        } catch (_) {}
+      }
     } catch (_) {
       // SharedPreferences mirror above has already succeeded.
     }

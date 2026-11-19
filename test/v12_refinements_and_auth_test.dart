@@ -35,6 +35,8 @@ void main() {
     UwuHelper.isTsundereEnabled = false;
     UwuHelper.isFitymaEnabled = false;
     UserProfilePrefs.syncActiveGlobals(const UserProfilePrefs());
+    TokenStorageService.externalSessionFallbackLoader = null;
+    TokenStorageService.invalidGrantRetryDelay = Duration.zero;
   });
 
   tearDown(() {
@@ -42,6 +44,9 @@ void main() {
     UwuHelper.isTsundereEnabled = false;
     UwuHelper.isFitymaEnabled = false;
     UserProfilePrefs.syncActiveGlobals(const UserProfilePrefs());
+    TokenStorageService.externalSessionFallbackLoader = null;
+    TokenStorageService.invalidGrantRetryDelay =
+        const Duration(milliseconds: 400);
   });
 
   group('1. TintaErrorState & Offline Mapping', () {
@@ -411,6 +416,144 @@ void main() {
               ),
           isTrue,
         );
+      },
+    );
+  });
+
+  group('12. Refresh Lock Safety, Watch Token Recovery & last_logout_reason', () {
+    test(
+      'refreshToken recovers rotated token from external watch fallback before declaring invalid_grant and unlocks single-flight Completer after errors',
+      () async {
+        const storage = TokenStorageService();
+        final futureExpSec =
+            DateTime.now().add(const Duration(minutes: 30)).millisecondsSinceEpoch ~/
+                1000;
+        final initialSession = StoredSession(
+          accessToken: 'old-access',
+          refreshToken: 'old-refresh-consumed-by-watch',
+          idToken: 'id-1',
+          instituteCode: 'klik0001',
+          userName: 'tanulo1',
+          expiresAt: DateTime.now().subtract(const Duration(minutes: 5)),
+        );
+        await storage.saveSession(initialSession);
+
+        final watchRotatedSession = StoredSession(
+          accessToken: _makeJwt({
+            'exp': futureExpSec,
+            'kreta:institute_code': 'klik0001',
+            'kreta:user_name': 'tanulo1',
+          }),
+          refreshToken: 'fresh-watch-rotated-refresh',
+          idToken: 'id-1',
+          instituteCode: 'klik0001',
+          userName: 'tanulo1',
+          expiresAt: DateTime.now().add(const Duration(minutes: 25)),
+        );
+
+        var postAttempts = 0;
+        final raceMock = MockClient((req) async {
+          postAttempts++;
+          if (postAttempts == 1) {
+            // Simulate watch rotating the token right as phone tried old refresh token.
+            TokenStorageService.externalSessionFallbackLoader =
+                () async => watchRotatedSession;
+            return http.Response('{"error":"invalid_grant"}', 400);
+          }
+          return http.Response('{"error":"invalid_grant"}', 400);
+        });
+
+        final recovered = await storage.refreshToken(
+          session: initialSession,
+          httpClient: raceMock,
+        );
+        expect(recovered.refreshToken, 'fresh-watch-rotated-refresh');
+        expect(postAttempts, 1);
+
+        // Now verify failed refresh unlocks single-flight Completer so next call runs cleanly.
+        TokenStorageService.externalSessionFallbackLoader = null;
+        await storage.saveSession(initialSession);
+        final failingClient = MockClient(
+          (_) async => http.Response('Gateway Timeout', 504),
+        );
+        await expectLater(
+          () => storage.refreshToken(
+            session: initialSession,
+            httpClient: failingClient,
+          ),
+          throwsException,
+        );
+
+        final nextFreshJwt = _makeJwt({
+          'exp': futureExpSec,
+          'kreta:institute_code': 'klik0001',
+          'kreta:user_name': 'tanulo1',
+        });
+        final succeedingClient = MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'access_token': nextFreshJwt,
+              'refresh_token': 'refresh-after-recovery',
+              'expires_in': 1800,
+              'token_type': 'Bearer',
+            }),
+            200,
+          ),
+        );
+        final afterUnlock = await storage.refreshToken(
+          session: initialSession,
+          httpClient: succeedingClient,
+        );
+        expect(afterUnlock.refreshToken, 'refresh-after-recovery');
+      },
+    );
+
+    testWidgets(
+      'last_logout_reason persists in SharedPreferences across clearSession and renders inside DeveloperAuthNetworkSubPage',
+      (tester) async {
+        const storage = TokenStorageService();
+        await TokenStorageService.recordLogoutReason(
+          caller: 'HomeScreen._loadDashboard',
+          reason: 'Verified permanent invalid_grant after retry',
+          httpStatusCode: 400,
+          errorBody: '{"error":"invalid_grant"}',
+        );
+        await storage.clearSession();
+
+        final sp = await SharedPreferences.getInstance();
+        expect(
+          sp.getString(TokenStorageService.lastLogoutReasonKey),
+          contains('HomeScreen._loadDashboard'),
+        );
+
+        final loaded = await TokenStorageService.loadLastLogoutReason();
+        expect(loaded, isNotNull);
+        expect(loaded!.caller, 'HomeScreen._loadDashboard');
+        expect(loaded.httpStatusCode, 400);
+        expect(loaded.errorBody, '{"error":"invalid_grant"}');
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: OledTheme.buildTheme(prefs: const UserProfilePrefs()),
+            home: const DeveloperAuthNetworkSubPage(
+              initialPrefs: UserProfilePrefs(),
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 200));
+
+        await tester.scrollUntilVisible(
+          find.text('Utolsó kijelentkezés oka (last_logout_reason)'),
+          250,
+          scrollable: find.byType(Scrollable).first,
+        );
+        expect(
+          find.text('Utolsó kijelentkezés oka (last_logout_reason)'),
+          findsOneWidget,
+        );
+        expect(find.text('HomeScreen._loadDashboard'), findsOneWidget);
+        expect(find.text('400'), findsOneWidget);
+        expect(find.text('{"error":"invalid_grant"}'), findsOneWidget);
       },
     );
   });

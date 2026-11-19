@@ -13,6 +13,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import hu.mlnlbrt.tintanaplo.wear.auth.WearRemoteAuthManager
 import hu.mlnlbrt.tintanaplo.wear.data.InvalidGrantException
 import hu.mlnlbrt.tintanaplo.wear.data.KretaDateParser
 import hu.mlnlbrt.tintanaplo.wear.data.KretaWearApiClient
@@ -36,7 +37,13 @@ class KretaSyncWorker(
             return Result.success()
         }
 
-        val apiClient = KretaWearApiClient(tokenStore)
+        val apiClient = KretaWearApiClient(
+            tokenStore = tokenStore,
+            onSessionRefreshed = { refreshed ->
+                WearRemoteAuthManager.getInstance(applicationContext)
+                    .pushRefreshedSessionToPhone(refreshed)
+            },
+        )
         return try {
             val synced = apiClient.syncAll(session)
             KretaSyncScheduler.scheduleNextTransitionUpdate(applicationContext, synced.lessons)

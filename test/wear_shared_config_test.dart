@@ -41,6 +41,7 @@ void main() {
       KretaEndpoints.getStudent(sampleIss),
       'https://$sampleIss.${KretaEndpoints.kretaBase}${endpoints['student']}',
     );
+    expect(endpoints['tests'], '/ellenorzo/v3/sajat/BejelentettSzamonkeresek');
 
     final wearRelay = json['wearRelay'] as Map<String, dynamic>;
     expect(wearRelay['deepLinkScheme'], 'tintanaplo');
@@ -48,5 +49,6 @@ void main() {
     expect(wearRelay['deepLinkUri'], 'tintanaplo://wear-auth');
     expect(wearRelay['messagePathRequestAuth'], '/tinta/request_auth');
     expect(wearRelay['dataPathAuthSession'], '/tinta/auth_session');
+    expect(wearRelay['dataPathDashboardSync'], '/tinta/dashboard_sync');
   });
 }

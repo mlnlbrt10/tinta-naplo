@@ -11,6 +11,10 @@ import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import hu.mlnlbrt.tintanaplo.shared.KretaSharedConfig
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -43,6 +47,15 @@ data class PhoneWearSessionSnapshot(
         if (recentGradesJson != null) put("recentGradesJson", recentGradesJson)
         if (upcomingExamsJson != null) put("upcomingExamsJson", upcomingExamsJson)
     }
+
+    fun toMethodMap(): Map<String, Any?> = mapOf(
+        "accessToken" to accessToken,
+        "refreshToken" to refreshToken,
+        "idToken" to idToken,
+        "instituteCode" to instituteCode,
+        "userName" to userName,
+        "expiresAtMs" to expiresAtMs,
+    )
 
     companion object {
         fun fromJson(json: JSONObject): PhoneWearSessionSnapshot? {
@@ -101,7 +114,10 @@ data class PhoneWearSessionSnapshot(
 }
 
 object WearSessionBridge {
+    const val WEAR_PATH_WATCH_TOKEN_SYNC = "/tinta/watch_token_sync"
     private const val PREFS_NAME = "tinta_phone_wear_bridge_v1"
+    private const val FLUTTER_PREFS_NAME = "FlutterSharedPreferences"
+    private const val FLUTTER_SESSION_BACKUP_KEY = "flutter.kreta_session_backup_v2"
     private const val KEY_CACHED_SESSION = "cached_wear_session_v1"
     private const val KEY_LAST_SYNCED_AT = "last_wear_synced_at_v1"
 
@@ -115,8 +131,15 @@ object WearSessionBridge {
     @Volatile
     private var activeAuthRequestListener: (() -> Unit)? = null
 
+    @Volatile
+    private var activeSessionUpdatedListener: ((PhoneWearSessionSnapshot) -> Unit)? = null
+
     fun registerAuthRequestListener(listener: (() -> Unit)?) {
         activeAuthRequestListener = listener
+    }
+
+    fun registerSessionUpdatedListener(listener: ((PhoneWearSessionSnapshot) -> Unit)?) {
+        activeSessionUpdatedListener = listener
     }
 
     fun hasActiveListener(): Boolean = activeAuthRequestListener != null
@@ -188,6 +211,77 @@ object WearSessionBridge {
         return runCatching {
             PhoneWearSessionSnapshot.fromJson(JSONObject(raw))
         }.getOrNull()
+    }
+
+    /**
+     * Ingests a rotated KRÉTA token refreshed on the paired Wear OS watch and
+     * immediately persists it to both the native cache and Flutter's shared
+     * session backup (`kreta_session_backup_v2`) so the phone never reuses an
+     * invalidated single-use refresh_token.
+     */
+    fun ingestRotatedSessionFromWatch(
+        context: Context,
+        incoming: PhoneWearSessionSnapshot,
+    ) {
+        if (incoming.refreshToken.isBlank() ||
+            incoming.accessToken.isBlank() ||
+            incoming.instituteCode.isBlank()
+        ) {
+            return
+        }
+        val appCtx = context.applicationContext
+        val prev = loadCachedSession(appCtx)
+        if (prev != null) {
+            val sameAccount = prev.instituteCode.equals(incoming.instituteCode, ignoreCase = true)
+            if (!sameAccount) return
+            if (incoming.expiresAtMs > 0L &&
+                prev.expiresAtMs > 0L &&
+                incoming.expiresAtMs < prev.expiresAtMs
+            ) {
+                return
+            }
+        }
+        val merged = incoming.copy(
+            idToken = incoming.idToken.ifBlank { prev?.idToken.orEmpty() },
+            userName = incoming.userName.ifBlank { prev?.userName.orEmpty() },
+            studentName = incoming.studentName.ifBlank { prev?.studentName.orEmpty() },
+            studentUid = incoming.studentUid.ifBlank { prev?.studentUid.orEmpty() },
+            instituteName = incoming.instituteName.ifBlank { prev?.instituteName.orEmpty() },
+            schoolYearUid = incoming.schoolYearUid.ifBlank { prev?.schoolYearUid.orEmpty() },
+            recentGradesJson = incoming.recentGradesJson ?: prev?.recentGradesJson,
+            upcomingExamsJson = incoming.upcomingExamsJson ?: prev?.upcomingExamsJson,
+        )
+        cacheSession(appCtx, merged)
+
+        runCatching {
+            val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
+            val isoExpires = if (merged.expiresAtMs > 0L) {
+                isoFormat.format(Date(merged.expiresAtMs))
+            } else {
+                isoFormat.format(Date(0L))
+            }
+            val backupJson = JSONObject().apply {
+                put("accessToken", merged.accessToken)
+                put("refreshToken", merged.refreshToken)
+                put("idToken", merged.idToken)
+                put("instituteCode", merged.instituteCode)
+                put("userName", merged.userName)
+                put("expiresAt", isoExpires)
+            }.toString()
+            appCtx.getSharedPreferences(FLUTTER_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(FLUTTER_SESSION_BACKUP_KEY, backupJson)
+                .apply()
+        }
+
+        val listener = activeSessionUpdatedListener
+        if (listener != null) {
+            mainHandler.post {
+                activeSessionUpdatedListener?.invoke(merged)
+            }
+        }
     }
 
     fun clearSession(context: Context) {

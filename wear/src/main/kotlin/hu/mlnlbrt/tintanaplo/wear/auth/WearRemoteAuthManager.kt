@@ -9,6 +9,7 @@ import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMap
 import com.google.android.gms.wearable.DataMapItem
+import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import hu.mlnlbrt.tintanaplo.shared.KretaSharedConfig
 import hu.mlnlbrt.tintanaplo.wear.data.AuthSessionPayload
@@ -215,6 +216,48 @@ class WearRemoteAuthManager private constructor(context: Context) :
         _status.value = RemoteAuthStatus.Idle
     }
 
+    /**
+     * Pushes a rotated KRÉTA session refreshed on the watch back to the paired
+     * phone immediately via Wearable DataClient & MessageClient so the phone
+     * never attempts to reuse an already-rotated single-use refresh_token.
+     */
+    fun pushRefreshedSessionToPhone(session: StoredSession) {
+        if (session.refreshToken.isBlank() || session.instituteCode.isBlank()) return
+        scope.launch {
+            val nowMs = System.currentTimeMillis()
+            runCatching {
+                val request = PutDataMapRequest.create(WEAR_PATH_WATCH_TOKEN_SYNC).apply {
+                    dataMap.putString("access_token", session.accessToken)
+                    dataMap.putString("refresh_token", session.refreshToken)
+                    dataMap.putString("id_token", session.idToken)
+                    dataMap.putString("institute_code", session.instituteCode)
+                    dataMap.putString("user_name", session.userName.orEmpty())
+                    dataMap.putLong("expires_at_ms", session.expiresAtEpochMs)
+                    dataMap.putLong("synced_at_ms", nowMs)
+                }.asPutDataRequest().setUrgent()
+                Wearable.getDataClient(appContext).putDataItem(request).await()
+            }
+            runCatching {
+                val payload = JSONObject().apply {
+                    put("accessToken", session.accessToken)
+                    put("refreshToken", session.refreshToken)
+                    put("idToken", session.idToken)
+                    put("instituteCode", session.instituteCode)
+                    put("userName", session.userName.orEmpty())
+                    put("expiresAtMs", session.expiresAtEpochMs)
+                    put("syncedAtMs", nowMs)
+                }.toString().toByteArray(StandardCharsets.UTF_8)
+                val nodes = Wearable.getNodeClient(appContext).connectedNodes.await()
+                val msgClient = Wearable.getMessageClient(appContext)
+                for (node in nodes) {
+                    runCatching {
+                        msgClient.sendMessage(node.id, WEAR_PATH_WATCH_TOKEN_SYNC, payload).await()
+                    }
+                }
+            }
+        }
+    }
+
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         try {
             for (event in dataEvents) {
@@ -371,6 +414,8 @@ class WearRemoteAuthManager private constructor(context: Context) :
     }
 
     companion object {
+        const val WEAR_PATH_WATCH_TOKEN_SYNC = "/tinta/watch_token_sync"
+
         @Volatile
         private var instance: WearRemoteAuthManager? = null
 

@@ -1013,10 +1013,14 @@ class _MoreScreenState extends State<MoreScreen>
   Future<void> _refreshModules() async {
     final client = widget.kretaClient;
     if (client == null) return;
-    setState(() => _isLoadingModules = true);
+    if (mounted) {
+      setState(() => _isLoadingModules = true);
+    }
     try {
       if (widget.messagesOnly) {
-        final fetchedMessages = await client.fetchMessages(widget.session);
+        final fetchedMessages = await client
+            .fetchMessages(widget.session)
+            .timeout(const Duration(seconds: 15));
         if (!mounted) return;
         setState(() {
           _messages = fetchedMessages
@@ -1026,7 +1030,6 @@ class _MoreScreenState extends State<MoreScreen>
                     : m,
               )
               .toList();
-          _isLoadingModules = false;
           if (widget.isActiveTab) {
             _armInitialEntranceIfNeeded();
           }
@@ -1038,7 +1041,7 @@ class _MoreScreenState extends State<MoreScreen>
       final results = await Future.wait<Object>([
         client.fetchOmissions(widget.session),
         client.fetchMessages(widget.session),
-      ]);
+      ]).timeout(const Duration(seconds: 15));
       if (!mounted) return;
       setState(() {
         _omissions = results[0] as List<Omission>;
@@ -1048,20 +1051,22 @@ class _MoreScreenState extends State<MoreScreen>
                   !m.isRead && _isMessageRead(m) ? m.copyWith(isRead: true) : m,
             )
             .toList();
-        _isLoadingModules = false;
         if (widget.isActiveTab) {
           _armInitialEntranceIfNeeded();
         }
       });
       widget.onMessagesChanged?.call(List<KretaMessage>.of(_messages));
     } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _isLoadingModules = false;
-        if (widget.isActiveTab) {
-          _armInitialEntranceIfNeeded();
-        }
-      });
+      // Keep cached attendance/messages intact on timeout or network failure.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingModules = false;
+          if (widget.isActiveTab) {
+            _armInitialEntranceIfNeeded();
+          }
+        });
+      }
     }
   }
 
@@ -2377,6 +2382,11 @@ class _MoreScreenState extends State<MoreScreen>
               ),
               onPressed: () async {
                 final rootNav = Navigator.of(context, rootNavigator: true);
+                await TokenStorageService.recordLogoutReason(
+                  caller: 'MoreScreen.logoutButton',
+                  reason: 'Felhasználó által indított kijelentkezés',
+                );
+                await TokenStorageService.setPreviousLoginMarker(false);
                 await Future.sync(widget.onLogout);
                 rootNav.pushNamedAndRemoveUntil('/login', (route) => false);
               },

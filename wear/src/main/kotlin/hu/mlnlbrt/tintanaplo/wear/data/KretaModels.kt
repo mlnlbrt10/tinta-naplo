@@ -155,21 +155,22 @@ data class AuthSessionPayload(
             existing.instituteCode.equals(instituteCode, ignoreCase = true) &&
             (userName == null || existing.userName == null || existing.userName == userName)
 
-        val keepExistingTokens = sameAccount &&
+        val keepExistingTokens = existing != null &&
+            sameAccount &&
             !forceSync &&
-            existing!!.refreshToken.isNotBlank() &&
+            existing.refreshToken.isNotBlank() &&
             !existing.isExpired() &&
             existing.expiresAtEpochMs > expiresAtEpochMs
 
-        val effectiveAccess = if (keepExistingTokens) existing!!.accessToken else accessToken
-        val effectiveRefresh = if (keepExistingTokens) existing!!.refreshToken else refreshToken
+        val effectiveAccess = if (keepExistingTokens) existing.accessToken else accessToken
+        val effectiveRefresh = if (keepExistingTokens) existing.refreshToken else refreshToken
         val effectiveIdToken = if (keepExistingTokens) {
-            existing!!.idToken
+            existing.idToken
         } else {
             idToken.ifEmpty { existing?.idToken.orEmpty() }
         }
         val effectiveExpiresAt = if (keepExistingTokens) {
-            existing!!.expiresAtEpochMs
+            existing.expiresAtEpochMs
         } else if (effectiveAccess.isBlank()) {
             0L
         } else {

@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart';
-import 'package:kreta_api/kreta_api.dart';
 
 import 'providers/app_providers.dart';
 import 'screens/home_screen.dart';
@@ -85,13 +84,37 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
     super.initState();
     _settingsProvider.addListener(_onProviderPrefsChanged);
     TokenStorageService.sessionNotifier.addListener(_onGlobalSessionChanged);
+    TokenStorageService.externalSessionFallbackLoader =
+        WearSyncService.instance.loadCachedSessionFromNative;
     HomeWidgetSyncService.instance.initialize();
     WearSyncService.instance.initialize(
       onWatchAuthRequested: () {
         unawaited(_handleWatchAuthRequested());
       },
+      onSessionUpdatedFromWatch: (rotated) {
+        unawaited(_ingestRotatedWatchSession(rotated));
+      },
     );
     _restoreSavedSessionAndPrefs();
+  }
+
+  Future<void> _ingestRotatedWatchSession(StoredSession rotated) async {
+    if (_prefs.demoModeEnabled) return;
+    final current = _session ?? TokenStorageService.latestSession;
+    if (current != null &&
+        current.instituteCode.toLowerCase() !=
+            rotated.instituteCode.toLowerCase()) {
+      return;
+    }
+    if (current != null &&
+        rotated.expiresAt.isBefore(current.expiresAt) &&
+        rotated.refreshToken == current.refreshToken) {
+      return;
+    }
+    await _tokenStorage.saveSession(rotated);
+    if (mounted) {
+      _set(() => _session = rotated);
+    }
   }
 
   void _onGlobalSessionChanged() {
@@ -119,6 +142,10 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
   @override
   void dispose() {
     TokenStorageService.sessionNotifier.removeListener(_onGlobalSessionChanged);
+    if (TokenStorageService.externalSessionFallbackLoader ==
+        WearSyncService.instance.loadCachedSessionFromNative) {
+      TokenStorageService.externalSessionFallbackLoader = null;
+    }
     WearSyncService.instance.disposeListener();
     _settingsProvider.removeListener(_onProviderPrefsChanged);
     _commuteProvider.dispose();
@@ -153,6 +180,14 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
         );
       } else if (restoredPrefs.demoModeEnabled) {
         restoredCache = DemoDataService.instance.buildDashboardData();
+      } else if (await TokenStorageService.hadPreviousLogin()) {
+        await TokenStorageService.recordLogoutReason(
+          caller: 'TintaNaploApp._restoreSavedSessionAndPrefs',
+          reason:
+              'Munkamenet nem található indításkor (korábbi bejelentkezés után)',
+          errorBody: TokenStorageService.lastStorageReadError ??
+              'no_stored_session_found',
+        );
       }
       if (!mounted) return;
       if (restoredCache != null) {
@@ -232,13 +267,19 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
             if (mounted) {
               _set(() => _session = active);
             }
-          } on InvalidGrantException {
+          } on VerifiedInvalidGrantException catch (e) {
+            await TokenStorageService.recordLogoutReason(
+              caller: 'TintaNaploApp._handleWatchAuthRequested',
+              reason: 'Verified permanent invalid_grant during watch auth sync',
+              httpStatusCode: e.httpStatusCode,
+              errorBody: e.responseBody,
+            );
             await _handleLogout();
             if (mounted) await _openWatchRequestedLogin();
             return;
           } catch (_) {
-            // Keep existing session on transient offline errors; the watch still
-            // persists refresh_token + institute_code and refreshes independently.
+            // Keep existing session on transient offline or unverified errors;
+            // never silently log out the phone user.
           }
         }
         final pushed = await WearSyncService.instance.syncSessionToWatch(
@@ -347,7 +388,10 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
         TokenStorageService.accountKeyForSession(previousSession),
       );
     }
-    await _tokenStorage.clearSession();
+    await _tokenStorage.clearSession(
+      caller: 'TintaNaploApp._handleLogout',
+      reason: 'Munkamenet lezárva (_handleLogout)',
+    );
     HomeWidgetSyncService.instance.clearMemoryCache();
     unawaited(WearSyncService.instance.clearWatchSession());
     if (!mounted) return;

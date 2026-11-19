@@ -891,6 +891,7 @@ class _GradesScreenState extends State<GradesScreen>
   /// lazily built list tiles never re-animate while scrolling.
   bool _initialEntrancePlayed = false;
   bool _entranceActive = false;
+  bool _isRefreshing = false;
 
   @override
   void initState() {
@@ -1188,8 +1189,20 @@ class _GradesScreenState extends State<GradesScreen>
         edgeOffset: 8,
         strokeWidth: 2.6,
         onRefresh: () async {
-          AppProvidersScope.maybeOf(context)?.settings.clearAllGradeGlows();
-          await widget.onRefresh();
+          if (_isRefreshing) return;
+          if (mounted) {
+            setState(() => _isRefreshing = true);
+          }
+          try {
+            AppProvidersScope.maybeOf(context)?.settings.clearAllGradeGlows();
+            await widget.onRefresh().timeout(const Duration(seconds: 15));
+          } catch (_) {
+            // Keep existing grades visible if refresh fails or times out.
+          } finally {
+            if (mounted) {
+              setState(() => _isRefreshing = false);
+            }
+          }
         },
         child: CustomScrollView(
           physics: const BouncingScrollPhysics(

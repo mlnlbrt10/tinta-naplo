@@ -36,6 +36,7 @@ class KretaWearApiClient(
     private val clientId: String = KretaSharedConfig.CLIENT_ID_IOS,
     private val idpBaseUrlOverride: String? = null,
     private val tenantBaseUrlOverride: String? = null,
+    private val onSessionRefreshed: ((StoredSession) -> Unit)? = null,
 ) {
     @Volatile
     private var latestSession: StoredSession? = null
@@ -117,6 +118,7 @@ class KretaWearApiClient(
 
         latestSession = refreshed
         tokenStore.saveSession(refreshed)
+        runCatching { onSessionRefreshed?.invoke(refreshed) }
         refreshed
     }
 

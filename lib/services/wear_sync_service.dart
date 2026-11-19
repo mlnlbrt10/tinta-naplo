@@ -91,6 +91,7 @@ class WearSyncService {
 
   final MethodChannel _channel;
   VoidCallback? _onWatchAuthRequested;
+  ValueChanged<StoredSession>? _onSessionUpdatedFromWatch;
   bool _handlerRegistered = false;
 
   WearSyncService({MethodChannel? channel})
@@ -98,14 +99,43 @@ class WearSyncService {
 
   MethodChannel get channel => _channel;
 
-  void initialize({VoidCallback? onWatchAuthRequested}) {
+  static StoredSession? _parseNativeSessionMap(Object? raw) {
+    if (raw is! Map<Object?, Object?>) return null;
+    final accessToken = raw['accessToken']?.toString().trim() ?? '';
+    final refreshToken = raw['refreshToken']?.toString().trim() ?? '';
+    final instituteCode = raw['instituteCode']?.toString().trim() ?? '';
+    if (accessToken.isEmpty || refreshToken.isEmpty || instituteCode.isEmpty) {
+      return null;
+    }
+    final userName = raw['userName']?.toString().trim();
+    final expiresAtMs = (raw['expiresAtMs'] as num?)?.toInt() ?? 0;
+    return StoredSession(
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      idToken: raw['idToken']?.toString() ?? '',
+      instituteCode: instituteCode,
+      userName: (userName != null && userName.isNotEmpty) ? userName : null,
+      expiresAt: DateTime.fromMillisecondsSinceEpoch(expiresAtMs),
+    );
+  }
+
+  void initialize({
+    VoidCallback? onWatchAuthRequested,
+    ValueChanged<StoredSession>? onSessionUpdatedFromWatch,
+  }) {
     _onWatchAuthRequested = onWatchAuthRequested;
+    _onSessionUpdatedFromWatch = onSessionUpdatedFromWatch;
     if (_handlerRegistered) return;
     _handlerRegistered = true;
     try {
       _channel.setMethodCallHandler((call) async {
         if (call.method == 'onWatchAuthRequested') {
           _onWatchAuthRequested?.call();
+        } else if (call.method == 'onSessionUpdatedFromWatch') {
+          final parsed = _parseNativeSessionMap(call.arguments);
+          if (parsed != null) {
+            _onSessionUpdatedFromWatch?.call(parsed);
+          }
         }
         return null;
       });
@@ -114,6 +144,18 @@ class WearSyncService {
 
   void disposeListener() {
     _onWatchAuthRequested = null;
+    _onSessionUpdatedFromWatch = null;
+  }
+
+  Future<StoredSession?> loadCachedSessionFromNative() async {
+    try {
+      final raw = await _channel.invokeMethod<Object?>(
+        'getCachedSessionForPhone',
+      );
+      return _parseNativeSessionMap(raw);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<bool> consumePendingWatchAuthRequest() async {

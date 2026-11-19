@@ -38,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -65,7 +66,6 @@ import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.PagerDefaults
 import androidx.wear.compose.foundation.pager.rememberPagerState
-import androidx.wear.compose.foundation.rememberActiveFocusRequester
 import androidx.wear.compose.foundation.requestFocusOnHierarchyActive
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
@@ -158,8 +158,15 @@ private data class ExamRowUi(
 fun TintaWearApp(resumeEpoch: Int = 0) {
     val context = LocalContext.current
     val tokenStore = remember { SecureTokenStorage(context) }
-    val apiClient = remember { KretaWearApiClient(tokenStore) }
     val remoteAuth = remember { WearRemoteAuthManager.getInstance(context) }
+    val apiClient = remember {
+        KretaWearApiClient(
+            tokenStore = tokenStore,
+            onSessionRefreshed = { refreshed ->
+                remoteAuth.pushRefreshedSessionToPhone(refreshed)
+            },
+        )
+    }
     val authStatus by remoteAuth.status.collectAsState()
     val dashboardSyncEpoch by remoteAuth.dashboardSyncEpoch.collectAsState()
     val scope = rememberCoroutineScope()
@@ -1112,7 +1119,7 @@ private fun TimetablePage(
     onSelectDay: (TimetableDayFilter) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val focusRequester = rememberActiveFocusRequester()
+    val focusRequester = remember { FocusRequester() }
     val scalingParams = remember {
         ScalingLazyColumnDefaults.scalingParams(
             edgeScale = 0.78f,
@@ -1353,7 +1360,7 @@ private fun GradesAndExamsPage(
     isLoadingInitial: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val focusRequester = rememberActiveFocusRequester()
+    val focusRequester = remember { FocusRequester() }
     val scalingParams = remember {
         ScalingLazyColumnDefaults.scalingParams(
             edgeScale = 0.78f,

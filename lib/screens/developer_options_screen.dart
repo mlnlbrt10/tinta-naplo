@@ -1378,6 +1378,7 @@ class DeveloperAuthNetworkSubPage extends StatefulWidget {
 class _DeveloperAuthNetworkSubPageState
     extends State<DeveloperAuthNetworkSubPage> {
   StoredSession? _storedSession;
+  LogoutDiagnosticEntry? _lastLogoutReason;
   bool _loadingSession = true;
   bool _testingRefresh = false;
   bool _testingSync = false;
@@ -1394,14 +1395,21 @@ class _DeveloperAuthNetworkSubPageState
 
   Future<void> _loadSessionState() async {
     StoredSession? loaded;
+    LogoutDiagnosticEntry? logoutReason;
     try {
       loaded = await _storage.loadSession();
     } catch (_) {
       loaded = null;
     }
+    try {
+      logoutReason = await TokenStorageService.loadLastLogoutReason();
+    } catch (_) {
+      logoutReason = null;
+    }
     if (!mounted) return;
     setState(() {
       _storedSession = loaded;
+      _lastLogoutReason = logoutReason;
       _loadingSession = false;
     });
   }
@@ -1602,6 +1610,96 @@ class _DeveloperAuthNetworkSubPageState
                         color: scheme.onSurface,
                       ),
                     ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          SoftGlassCard(
+            prefs: activePrefs,
+            padding: const EdgeInsets.all(18),
+            borderRadius: OledTheme.largeRadius,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  uwu('Utolsó kijelentkezés oka (last_logout_reason)'),
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                if (_lastLogoutReason == null)
+                  Text(
+                    uwu('Nincs rögzített kijelentkezési esemény.'),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurface.withValues(alpha: 0.72),
+                    ),
+                  )
+                else ...[
+                  _DevInfoRow(
+                    'Időpont',
+                    fmt.format(_lastLogoutReason!.timestamp.toLocal()),
+                  ),
+                  _DevInfoRow('Hívó metódus', _lastLogoutReason!.caller),
+                  _DevInfoRow('Ok', _lastLogoutReason!.reason),
+                  if (_lastLogoutReason!.httpStatusCode != null)
+                    _DevInfoRow(
+                      'HTTP státusz',
+                      '${_lastLogoutReason!.httpStatusCode}',
+                    ),
+                  if (_lastLogoutReason!.errorBody != null &&
+                      _lastLogoutReason!.errorBody!.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: scheme.surfaceContainerHigh
+                            .withValues(alpha: 0.65),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        _lastLogoutReason!.errorBody!,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          fontFamily: 'monospace',
+                          color: scheme.onSurface.withValues(alpha: 0.88),
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          final entry = _lastLogoutReason;
+                          if (entry == null) return;
+                          await Clipboard.setData(
+                            ClipboardData(text: entry.toDiagnosticSummary()),
+                          );
+                          if (!context.mounted) return;
+                          TintaToast.info(
+                            context,
+                            'Kijelentkezési napló vágólapra másolva',
+                          );
+                        },
+                        icon: const Icon(Icons.copy_rounded, size: 16),
+                        label: const Text('Másolás'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () async {
+                          await TokenStorageService.clearLastLogoutReason();
+                          if (!mounted) return;
+                          setState(() => _lastLogoutReason = null);
+                        },
+                        icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                        label: const Text('Napló törlése'),
+                      ),
+                    ],
                   ),
                 ],
               ],

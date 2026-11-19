@@ -17,6 +17,7 @@ import androidx.wear.tiles.TileBuilders
 import androidx.wear.tiles.TileService
 import com.google.common.util.concurrent.ListenableFuture
 import hu.mlnlbrt.tintanaplo.wear.MainActivity
+import hu.mlnlbrt.tintanaplo.wear.auth.WearRemoteAuthManager
 import hu.mlnlbrt.tintanaplo.wear.data.KretaDateParser
 import hu.mlnlbrt.tintanaplo.wear.data.KretaWearApiClient
 import hu.mlnlbrt.tintanaplo.wear.data.Lesson
@@ -59,7 +60,13 @@ class TintaTimetableTileService : TileService() {
             var cached = tokenStore.loadWearDataCache(accountKey, todayKey)
             val activeSession = session
             if (activeSession != null && (cached == null || cached.lessons.isEmpty())) {
-                val apiClient = KretaWearApiClient(tokenStore)
+                val apiClient = KretaWearApiClient(
+                    tokenStore = tokenStore,
+                    onSessionRefreshed = { refreshed ->
+                        WearRemoteAuthManager.getInstance(applicationContext)
+                            .pushRefreshedSessionToPhone(refreshed)
+                    },
+                )
                 val synced = runCatching { apiClient.syncAll(activeSession) }.getOrNull()
                 if (synced != null) {
                     cached = synced

@@ -667,6 +667,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _lastDemoModeActive = false;
   SettingsProvider? _settingsProvider;
   bool _isLoading = true;
+  bool _isRefreshing = false;
   String? _error;
   Timer? _countdownTimer;
   final ValueNotifier<int> _countdownTick = ValueNotifier<int>(0);
@@ -1160,8 +1161,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _handleHomePullToRefresh() async {
-    AppProvidersScope.maybeOf(context)?.settings.clearAllGradeGlows();
-    await _loadDashboard();
+    if (_isRefreshing) return;
+    if (mounted) {
+      setState(() => _isRefreshing = true);
+    }
+    try {
+      AppProvidersScope.maybeOf(context)?.settings.clearAllGradeGlows();
+      await _loadDashboard().timeout(const Duration(seconds: 15));
+    } catch (e) {
+      if (mounted && _data != null) {
+        TintaToast.error(context, TintaErrorState.friendlyTitleFor(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRefreshing = false;
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   Future<void> _loadDashboard({bool silentIfCached = false}) async {
@@ -1175,49 +1193,59 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _data = demoData;
         _messagesOverride = null;
         _isLoading = false;
+        _isRefreshing = false;
         _error = null;
       });
       return;
     }
 
-    if (_data == null) {
-      final cached = await widget.kretaClient.loadCachedDashboard(_session);
-      if (mounted && cached != null && _data == null) {
-        final playInitialEntrance = !_homeInitialEntrancePlayed;
-        setState(() {
-          _data = cached;
-          _isLoading = false;
-          _error = null;
-          if (playInitialEntrance) {
-            _homeInitialEntrancePlayed = true;
-            _homeEntranceActive = true;
-          }
-        });
-        unawaited(
-          AppProvidersScope.maybeOf(context)
-              ?.settings
-              .ingestGrades(cached.allGrades),
-        );
-        if (playInitialEntrance) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _homeEntranceActive = false;
-          });
-        }
-        unawaited(_refreshCommute(allowDelayNotifications: false));
-      }
-    }
-
-    if (mounted && _data == null) {
-      setState(() {
-        _isLoading = true;
-        _error = null;
-      });
-    }
-
     try {
+      if (_data == null) {
+        DashboardData? cached;
+        try {
+          cached = await widget.kretaClient
+              .loadCachedDashboard(_session)
+              .timeout(const Duration(seconds: 4));
+        } catch (_) {
+          cached = null;
+        }
+        if (mounted && cached != null && _data == null) {
+          final playInitialEntrance = !_homeInitialEntrancePlayed;
+          setState(() {
+            _data = cached;
+            _isLoading = false;
+            _error = null;
+            if (playInitialEntrance) {
+              _homeInitialEntrancePlayed = true;
+              _homeEntranceActive = true;
+            }
+          });
+          unawaited(
+            AppProvidersScope.maybeOf(context)
+                ?.settings
+                .ingestGrades(cached.allGrades),
+          );
+          if (playInitialEntrance) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _homeEntranceActive = false;
+            });
+          }
+          unawaited(_refreshCommute(allowDelayNotifications: false));
+        }
+      }
+
+      if (mounted && _data == null) {
+        setState(() {
+          _isLoading = true;
+          _error = null;
+        });
+      }
+
       final previousRefreshToken = _session.refreshToken;
       final hadExistingData = _data != null;
-      final result = await widget.kretaClient.fetchDashboardData(_session);
+      final result = await widget.kretaClient
+          .fetchDashboardData(_session)
+          .timeout(const Duration(seconds: 15));
       if (!mounted) return;
       final playInitialEntrance =
           !_homeInitialEntrancePlayed && !silentIfCached && !hadExistingData;
@@ -1279,7 +1307,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
       );
       _syncHomeWidgetsFromDashboard(result);
-    } on InvalidGrantException {
+    } on VerifiedInvalidGrantException catch (e) {
+      await TokenStorageService.recordLogoutReason(
+        caller: 'HomeScreen._loadDashboard',
+        reason: 'Verified permanent invalid_grant after retry',
+        httpStatusCode: e.httpStatusCode,
+        errorBody: e.responseBody,
+      );
       if (!mounted) return;
       widget.onLogout();
     } catch (e) {
@@ -1295,6 +1329,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       });
       if (hasCached && !silentIfCached) {
         TintaToast.error(context, TintaErrorState.friendlyTitleFor(e));
+      }
+    } finally {
+      if (mounted && (_isLoading || _isRefreshing)) {
+        setState(() {
+          _isLoading = false;
+          _isRefreshing = false;
+        });
       }
     }
   }

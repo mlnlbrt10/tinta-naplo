@@ -321,6 +321,9 @@ open class MainActivity : FlutterActivity() {
         WearSessionBridge.registerAuthRequestListener {
             wearSyncChannel?.invokeMethod("onWatchAuthRequested", null)
         }
+        WearSessionBridge.registerSessionUpdatedListener { snapshot ->
+            wearSyncChannel?.invokeMethod("onSessionUpdatedFromWatch", snapshot.toMethodMap())
+        }
 
         val widgetChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -451,6 +454,10 @@ open class MainActivity : FlutterActivity() {
                         runOnUiThread { result.success(ok) }
                     }
                 }
+            }
+            "getCachedSessionForPhone" -> {
+                val cached = WearSessionBridge.loadCachedSession(applicationContext)
+                result.success(cached?.toMethodMap())
             }
             "clearWearSession" -> {
                 WearSessionBridge.clearSession(applicationContext)
@@ -780,6 +787,7 @@ open class MainActivity : FlutterActivity() {
 
     override fun onDestroy() {
         WearSessionBridge.registerAuthRequestListener(null)
+        WearSessionBridge.registerSessionUpdatedListener(null)
         wearSyncChannel?.setMethodCallHandler(null)
         wearSyncChannel = null
         calendarExecutor.shutdownNow()

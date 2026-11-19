@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -351,5 +353,103 @@ void main() {
     expect(pushedArgs!['studentName'], 'Kovács Milán');
     expect(pushedArgs!['instituteName'], 'Fazekas Mihály Gimnázium');
     expect(pushedArgs!['forceSync'], isTrue);
+  });
+
+  test('WearSyncService serializes latest 5 grades and upcoming 3 exams for watch payload', () async {
+    const channel = MethodChannel('test.wear.dashboard');
+    final service = WearSyncService(channel: channel);
+    Map<Object?, Object?>? dashboardArgs;
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'pushDashboardToWatch') {
+        dashboardArgs = call.arguments as Map<Object?, Object?>?;
+        return true;
+      }
+      return true;
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final now = DateTime(2026, 11, 19, 12, 0);
+    final grades = List<Grade>.generate(7, (i) {
+      return Grade(
+        uid: 'g$i',
+        recordDate: now.subtract(Duration(days: i)),
+        creationDate: now.subtract(Duration(days: i)),
+        subject: Subject(
+          uid: 's$i',
+          name: 'Tantárgy $i',
+          category: NameUidDesc(uid: 'c', name: 'c', description: 'c'),
+          sortIndex: i,
+        ),
+        topic: 'Téma $i',
+        type: NameUidDesc(uid: 't', name: 'Évközi', description: 'Évközi'),
+        valueType: NameUidDesc(uid: 'v', name: 'Osztályzat', description: 'Osztályzat'),
+        teacher: 'Tanár',
+        numericValue: (i % 5) + 1,
+        strValue: '${(i % 5) + 1}',
+        weightPercentage: 100,
+        classGroup: UidObj(uid: 'cg'),
+        sortIndex: i,
+      );
+    });
+    final tests = <Test>[
+      Test(
+        uid: 'past',
+        date: now.subtract(const Duration(days: 2)),
+        reportDate: now.subtract(const Duration(days: 5)),
+        teacherName: 'Tanár',
+        lessonNumber: 1,
+        subject: Subject(
+          uid: 's0',
+          name: 'Múltbeli',
+          category: NameUidDesc(uid: 'c', name: 'c', description: 'c'),
+          sortIndex: 0,
+        ),
+        subjectName: 'Múltbeli',
+        theme: 'Régi',
+        method: NameUidDesc(uid: 'm', name: 'Írásbeli', description: 'Írásbeli'),
+        classGroup: UidObj(uid: 'cg'),
+      ),
+      ...List<Test>.generate(4, (i) {
+        return Test(
+          uid: 't$i',
+          date: now.add(Duration(days: i + 1)),
+          reportDate: now,
+          teacherName: 'Tanár',
+          lessonNumber: i + 1,
+          subject: Subject(
+            uid: 'st$i',
+            name: 'Vizsga $i',
+            category: NameUidDesc(uid: 'c', name: 'c', description: 'c'),
+            sortIndex: i,
+          ),
+          subjectName: 'Vizsga $i',
+          theme: 'Anyag $i',
+          method: NameUidDesc(uid: 'm', name: 'Írásbeli', description: 'Írásbeli'),
+          classGroup: UidObj(uid: 'cg'),
+        );
+      }),
+    ];
+
+    final ok = await service.syncDashboardToWatch(
+      session: _sampleSession(),
+      student: _sampleStudent(),
+      recentGrades: grades,
+      upcomingExams: tests,
+    );
+    expect(ok, isTrue);
+    expect(dashboardArgs, isNotNull);
+
+    final decodedGrades = jsonDecode(dashboardArgs!['recentGradesJson'] as String) as List;
+    expect(decodedGrades, hasLength(5));
+    expect(decodedGrades.first['Uid'], 'g0');
+
+    final decodedExams = jsonDecode(dashboardArgs!['upcomingExamsJson'] as String) as List;
+    expect(decodedExams, hasLength(3));
+    expect(decodedExams.map((e) => e['Uid']), ['t0', 't1', 't2']);
   });
 }

@@ -651,6 +651,28 @@ class _TimetableScreenState extends State<TimetableScreen>
   bool _isSameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
+  Future<void> _handleTimetablePullToRefresh(int weekOffset) async {
+    try {
+      await _ensureWeekLoaded(
+        weekOffset,
+        prefetchNeighbors: true,
+        forceRefresh: true,
+      ).timeout(const Duration(seconds: 15));
+    } catch (e) {
+      if (mounted && (_weekLessonsCache[weekOffset]?.isNotEmpty ?? false)) {
+        TintaToast.error(context, TintaErrorState.friendlyTitleFor(e));
+      }
+    } finally {
+      _inFlightWeekLoads.remove(weekOffset);
+      if (mounted && _isLoading) {
+        setState(() {
+          _isInitialLoadComplete = true;
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
   Future<void> _ensureWeekLoaded(
     int weekOffset, {
     bool isInitialLoad = false,
@@ -663,23 +685,37 @@ class _TimetableScreenState extends State<TimetableScreen>
       }
       return Future.value();
     }
-    final inFlight = _inFlightWeekLoads[weekOffset];
-    if (inFlight != null) {
-      if (prefetchNeighbors) {
-        inFlight.whenComplete(() {
-          if (mounted) _prefetchAdjacentWeeks(weekOffset);
-        });
+    if (!forceRefresh) {
+      final inFlight = _inFlightWeekLoads[weekOffset];
+      if (inFlight != null) {
+        if (prefetchNeighbors) {
+          inFlight.whenComplete(() {
+            if (mounted) _prefetchAdjacentWeeks(weekOffset);
+          });
+        }
+        return inFlight.timeout(
+          const Duration(seconds: 15),
+          onTimeout: () {
+            if (identical(_inFlightWeekLoads[weekOffset], inFlight)) {
+              _inFlightWeekLoads.remove(weekOffset);
+            }
+          },
+        );
       }
-      return inFlight;
-    }
-    if (forceRefresh) {
+    } else {
+      _inFlightWeekLoads.remove(weekOffset);
       _weekErrors.remove(weekOffset);
     }
-    final future = _fetchWeekInternal(
+    late final Future<void> future;
+    future = _fetchWeekInternal(
       weekOffset,
       isInitialLoad: isInitialLoad,
       prefetchNeighbors: prefetchNeighbors,
-    );
+    ).whenComplete(() {
+      if (identical(_inFlightWeekLoads[weekOffset], future)) {
+        _inFlightWeekLoads.remove(weekOffset);
+      }
+    });
     _inFlightWeekLoads[weekOffset] = future;
     return future;
   }
@@ -706,12 +742,13 @@ class _TimetableScreenState extends State<TimetableScreen>
     final sunday = DateTime(monday.year, monday.month, monday.day + 6);
 
     try {
-      final lessons = await widget.kretaClient.fetchTimetableForRange(
-        widget.session,
-        from: monday,
-        to: sunday,
-      );
-      _inFlightWeekLoads.remove(weekOffset);
+      final lessons = await widget.kretaClient
+          .fetchTimetableForRange(
+            widget.session,
+            from: monday,
+            to: sunday,
+          )
+          .timeout(const Duration(seconds: 14));
       if (!mounted) return;
 
       final currentPos = _resolvePage(_currentPage);
@@ -776,6 +813,9 @@ class _TimetableScreenState extends State<TimetableScreen>
           missingUids.map(
             (uid) => widget.kretaClient.fetchHomeworkByUid(widget.session, uid),
           ),
+        ).timeout(
+          const Duration(seconds: 6),
+          onTimeout: () => const <Homework?>[],
         );
         if (!mounted) return;
         bool added = false;
@@ -791,7 +831,6 @@ class _TimetableScreenState extends State<TimetableScreen>
         }
       }
     } catch (e) {
-      _inFlightWeekLoads.remove(weekOffset);
       if (!mounted) return;
       final cachedLessons = _weekLessonsCache[weekOffset];
       final hasCached = cachedLessons != null && cachedLessons.isNotEmpty;
@@ -806,6 +845,13 @@ class _TimetableScreenState extends State<TimetableScreen>
           _isLoading = false;
         }
       });
+    } finally {
+      if (mounted && (isInitialLoad || !_isInitialLoadComplete) && _isLoading) {
+        setState(() {
+          _isInitialLoadComplete = true;
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -1110,10 +1156,8 @@ class _TimetableScreenState extends State<TimetableScreen>
                             displacement: 44,
                             edgeOffset: 8,
                             strokeWidth: 2.6,
-                            onRefresh: () => _ensureWeekLoaded(
+                            onRefresh: () => _handleTimetablePullToRefresh(
                               pagePos.weekOffset,
-                              prefetchNeighbors: true,
-                              forceRefresh: true,
                             ),
                             child: pageError != null
                                 ? ListView(
