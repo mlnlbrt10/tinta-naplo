@@ -49,8 +49,8 @@ export '../widgets/period_countdown_badge.dart'
 }
 
 /// Filters a day's sorted lessons using two independent toggles:
-/// * [hideCancelled] – hides lessons flagged as cancelled ("Elmaradó órák");
-/// * [hideFree] – hides synthesized free / gap ("Lyukas") placeholder periods.
+/// * [hideCancelled] - hides lessons flagged as cancelled ("Elmaradó órák");
+/// * [hideFree] - hides synthesized free / gap ("Lyukas") placeholder periods.
 ///
 /// When [hideFree] is false, muted placeholder cards are synthesized for the
 /// inactive leading period(s) and for numbered periods missing between lessons,
@@ -145,9 +145,9 @@ List<Lesson> filterLessonsForDisplay(
 }
 
 /// "Órarend" tab providing:
-/// - Horizontal Day Swiping via `PageView.builder` (Monday to Friday, or Mon–Sun)
+/// - Horizontal Day Swiping via `PageView.builder` (Monday to Friday, or Mon-Sun)
 ///   with two-way synchronization to the top segmented weekday pill bar.
-/// - Calendar Datepicker when tapping the date range pill (`11. 09.–11. 13.`).
+/// - Calendar Datepicker when tapping the date range pill (`11. 09.-11. 13.`).
 /// - Compact lesson cards so a full school day fits comfortably without scrolling.
 /// - Immersive Landscape Weekly Timetable mode (hides top AppBar & bottom dock,
 ///   with a single compact floating exit button `Icons.fullscreen_exit`).
@@ -497,12 +497,24 @@ class _TimetableScreenState extends State<TimetableScreen>
     _reloadAfterSessionOrDemoSwitch(snapToTodayIfWeekday: true);
   }
 
-  void _reloadAfterSessionOrDemoSwitch({bool snapToTodayIfWeekday = false}) {
-    setState(() {
+  int _weekFetchGeneration = 0;
+
+  void _reloadAfterSessionOrDemoSwitch({
+    bool snapToTodayIfWeekday = false,
+    bool fromDidUpdateWidget = false,
+  }) {
+    _weekFetchGeneration++;
+    if (fromDidUpdateWidget) {
       _weekLessonsCache.clear();
       _inFlightWeekLoads.clear();
       _weekErrors.clear();
-    });
+    } else {
+      setState(() {
+        _weekLessonsCache.clear();
+        _inFlightWeekLoads.clear();
+        _weekErrors.clear();
+      });
+    }
     if (snapToTodayIfWeekday) {
       final today = DateUtils.dateOnly(_now());
       if (today.weekday <= 5) {
@@ -538,6 +550,7 @@ class _TimetableScreenState extends State<TimetableScreen>
         oldWidget.session.instituteCode != widget.session.instituteCode) {
       _reloadAfterSessionOrDemoSwitch(
         snapToTodayIfWeekday: widget.prefs.demoModeEnabled,
+        fromDidUpdateWidget: true,
       );
     }
     if (!oldWidget.isActiveTab && widget.isActiveTab) {
@@ -738,6 +751,7 @@ class _TimetableScreenState extends State<TimetableScreen>
     bool isInitialLoad = false,
     bool prefetchNeighbors = false,
   }) async {
+    final fetchGen = _weekFetchGeneration;
     final monday = _mondayOfWeekOffset(weekOffset);
     final sunday = DateTime(monday.year, monday.month, monday.day + 6);
 
@@ -749,7 +763,7 @@ class _TimetableScreenState extends State<TimetableScreen>
             to: sunday,
           )
           .timeout(const Duration(seconds: 14));
-      if (!mounted) return;
+      if (!mounted || fetchGen != _weekFetchGeneration) return;
 
       final currentPos = _resolvePage(_currentPage);
       final ({int weekOffset, int dayIndex})? progPos =
@@ -788,11 +802,13 @@ class _TimetableScreenState extends State<TimetableScreen>
 
       if (weekOffset == 0 || weekOffset == 1) {
         unawaited(
-          HomeWidgetSyncService.instance.syncFromLessons(
-            lessons,
-            prefs: widget.prefs,
-            themeAccent: Theme.of(context).colorScheme.primary,
-          ),
+          HomeWidgetSyncService.instance
+              .syncFromLessons(
+                lessons,
+                prefs: widget.prefs,
+                themeAccent: Theme.of(context).colorScheme.primary,
+              )
+              .catchError((_) => false),
         );
       }
 
@@ -811,13 +827,15 @@ class _TimetableScreenState extends State<TimetableScreen>
       if (missingUids.isNotEmpty) {
         final fetched = await Future.wait(
           missingUids.map(
-            (uid) => widget.kretaClient.fetchHomeworkByUid(widget.session, uid),
+            (uid) => widget.kretaClient
+                .fetchHomeworkByUid(widget.session, uid)
+                .catchError((_) => null),
           ),
         ).timeout(
           const Duration(seconds: 6),
           onTimeout: () => const <Homework?>[],
         );
-        if (!mounted) return;
+        if (!mounted || fetchGen != _weekFetchGeneration) return;
         bool added = false;
         for (final hw in fetched) {
           if (hw != null &&
@@ -831,7 +849,7 @@ class _TimetableScreenState extends State<TimetableScreen>
         }
       }
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || fetchGen != _weekFetchGeneration) return;
       final cachedLessons = _weekLessonsCache[weekOffset];
       final hasCached = cachedLessons != null && cachedLessons.isNotEmpty;
       setState(() {
@@ -846,7 +864,10 @@ class _TimetableScreenState extends State<TimetableScreen>
         }
       });
     } finally {
-      if (mounted && (isInitialLoad || !_isInitialLoadComplete) && _isLoading) {
+      if (mounted &&
+          fetchGen == _weekFetchGeneration &&
+          (isInitialLoad || !_isInitialLoadComplete) &&
+          _isLoading) {
         setState(() {
           _isInitialLoadComplete = true;
           _isLoading = false;
@@ -1071,7 +1092,7 @@ class _TimetableScreenState extends State<TimetableScreen>
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+          padding: const EdgeInsets.fromLTRB(16, 2, 16, 0),
           child: Column(
             children: [
               _buildTopControlsCard(
@@ -1082,7 +1103,7 @@ class _TimetableScreenState extends State<TimetableScreen>
                 endDay,
                 pos,
               ),
-              const SizedBox(height: 5),
+              const SizedBox(height: 4),
               _buildWeekdaySelector(
                 theme,
                 scheme,
@@ -1106,103 +1127,111 @@ class _TimetableScreenState extends State<TimetableScreen>
                       )
                     : const SizedBox.shrink(),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 2),
             ],
           ),
         ),
         Expanded(
-          child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : pos.weekOffset == 0 &&
-                      _weekLessonsCache.isEmpty &&
-                      currentWeekError != null
-                  ? Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: _buildErrorCard(
-                        theme,
-                        currentWeekError,
-                        weekOffset: pos.weekOffset,
-                      ),
-                    )
-                  : PageView.builder(
-                      controller: _pageController,
-                      physics: const PageScrollPhysics(),
-                      allowImplicitScrolling: true,
-                      itemCount: _totalPageCount,
-                      onPageChanged: _onPageSwiped,
-                      itemBuilder: (context, pageIdx) {
-                        final pagePos = _resolvePage(pageIdx);
-                        if (!_weekLessonsCache.containsKey(pagePos.weekOffset) &&
-                            !_inFlightWeekLoads.containsKey(pagePos.weekOffset) &&
-                            !_weekErrors.containsKey(pagePos.weekOffset)) {
-                          Future.microtask(
-                            () => _ensureWeekLoaded(pagePos.weekOffset),
+          child: VerticalScrollEdgeFades(
+            key: const ValueKey<String>('timetable-lesson-list-fade'),
+            prefs: effectivePrefs,
+            topHeaderHeight: 0.0,
+            topFeatherHeight: 24.0,
+            bottomFadeHeight: 0.0,
+            scrollDrivenTopFeather: true,
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : pos.weekOffset == 0 &&
+                        _weekLessonsCache.isEmpty &&
+                        currentWeekError != null
+                    ? Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: _buildErrorCard(
+                          theme,
+                          currentWeekError,
+                          weekOffset: pos.weekOffset,
+                        ),
+                      )
+                    : PageView.builder(
+                        controller: _pageController,
+                        physics: const PageScrollPhysics(),
+                        allowImplicitScrolling: true,
+                        itemCount: _totalPageCount,
+                        onPageChanged: _onPageSwiped,
+                        itemBuilder: (context, pageIdx) {
+                          final pagePos = _resolvePage(pageIdx);
+                          if (!_weekLessonsCache.containsKey(pagePos.weekOffset) &&
+                              !_inFlightWeekLoads.containsKey(pagePos.weekOffset) &&
+                              !_weekErrors.containsKey(pagePos.weekOffset)) {
+                            Future.microtask(
+                              () => _ensureWeekLoaded(pagePos.weekOffset),
+                            );
+                          }
+                          final pageMonday =
+                              _mondayOfWeekOffset(pagePos.weekOffset);
+                          final day = DateTime(
+                            pageMonday.year,
+                            pageMonday.month,
+                            pageMonday.day + pagePos.dayIndex,
                           );
-                        }
-                        final pageMonday =
-                            _mondayOfWeekOffset(pagePos.weekOffset);
-                        final day = DateTime(
-                          pageMonday.year,
-                          pageMonday.month,
-                          pageMonday.day + pagePos.dayIndex,
-                        );
-                        final pageError =
-                            _weekLessonsCache.containsKey(pagePos.weekOffset)
-                                ? null
-                                : _weekErrors[pagePos.weekOffset];
-                        return _KeepAliveDayPage(
-                          key: ValueKey<int>(pageIdx),
-                          child: RefreshIndicator(
-                            displacement: 44,
-                            edgeOffset: 8,
-                            strokeWidth: 2.6,
-                            onRefresh: () => _handleTimetablePullToRefresh(
-                              pagePos.weekOffset,
-                            ),
-                            child: pageError != null
-                                ? ListView(
-                                    key: PageStorageKey<int>(pageIdx),
-                                    primary: false,
-                                    physics: const BouncingScrollPhysics(
-                                      parent: AlwaysScrollableScrollPhysics(),
-                                    ),
-                                    padding: const EdgeInsets.fromLTRB(
-                                      16,
-                                      16,
-                                      16,
-                                      100,
-                                    ),
-                                    children: [
-                                      _buildErrorCard(
-                                        theme,
-                                        pageError,
-                                        weekOffset: pagePos.weekOffset,
+                          final pageError =
+                              _weekLessonsCache.containsKey(pagePos.weekOffset)
+                                  ? null
+                                  : _weekErrors[pagePos.weekOffset];
+                          return _KeepAliveDayPage(
+                            key: ValueKey<int>(pageIdx),
+                            child: RefreshIndicator(
+                              displacement: 44,
+                              edgeOffset: 8,
+                              strokeWidth: 2.6,
+                              onRefresh: () => _handleTimetablePullToRefresh(
+                                pagePos.weekOffset,
+                              ),
+                              child: pageError != null
+                                  ? ListView(
+                                      key: PageStorageKey<int>(pageIdx),
+                                      primary: false,
+                                      physics: const BouncingScrollPhysics(
+                                        parent: AlwaysScrollableScrollPhysics(),
                                       ),
-                                    ],
-                                  )
-                                : ListView(
-                                    key: PageStorageKey<int>(pageIdx),
-                                    primary: false,
-                                    physics: const BouncingScrollPhysics(
-                                      parent: AlwaysScrollableScrollPhysics(),
+                                      padding: const EdgeInsets.fromLTRB(
+                                        16,
+                                        16,
+                                        16,
+                                        100,
+                                      ),
+                                      children: [
+                                        _buildErrorCard(
+                                          theme,
+                                          pageError,
+                                          weekOffset: pagePos.weekOffset,
+                                        ),
+                                      ],
+                                    )
+                                  : ListView(
+                                      key: PageStorageKey<int>(pageIdx),
+                                      primary: false,
+                                      physics: const BouncingScrollPhysics(
+                                        parent: AlwaysScrollableScrollPhysics(),
+                                      ),
+                                      padding: const EdgeInsets.fromLTRB(
+                                        16,
+                                        0,
+                                        16,
+                                        100,
+                                      ),
+                                      children: _buildDailyList(
+                                        theme,
+                                        scheme,
+                                        day,
+                                        pagePos.weekOffset,
+                                      ),
                                     ),
-                                    padding: const EdgeInsets.fromLTRB(
-                                      16,
-                                      2,
-                                      16,
-                                      100,
-                                    ),
-                                    children: _buildDailyList(
-                                      theme,
-                                      scheme,
-                                      day,
-                                      pagePos.weekOffset,
-                                    ),
-                                  ),
-                          ),
-                        );
-                      },
-                    ),
+                            ),
+                          );
+                        },
+                      ),
+          ),
         ),
       ],
     );
@@ -1213,10 +1242,10 @@ class _TimetableScreenState extends State<TimetableScreen>
     final mDay = monday.day.toString().padLeft(2, '0');
     final eDay = endDay.day.toString().padLeft(2, '0');
     if (monday.month == endDay.month) {
-      return '$mMonth.$mDay–$eDay.';
+      return '$mMonth.$mDay-$eDay.';
     }
     final eMonth = endDay.month.toString().padLeft(2, '0');
-    return '$mMonth.$mDay–$eMonth.$eDay.';
+    return '$mMonth.$mDay-$eMonth.$eDay.';
   }
 
   Widget _buildWeekBubbleButton({
@@ -1344,7 +1373,9 @@ class _TimetableScreenState extends State<TimetableScreen>
               prefs: effectivePrefs,
               color: isViewingToday
                   ? null
-                  : scheme.primary.withValues(alpha: 0.20),
+                  : (liquid
+                      ? scheme.primary.withValues(alpha: isDark ? 0.28 : 0.18)
+                      : scheme.primary),
               padding: const EdgeInsets.symmetric(
                 horizontal: 14,
                 vertical: 9,
@@ -1353,7 +1384,9 @@ class _TimetableScreenState extends State<TimetableScreen>
               border: Border.all(
                 color: isViewingToday
                     ? pillBorder
-                    : scheme.primary.withValues(alpha: 0.65),
+                    : (liquid
+                        ? scheme.primary.withValues(alpha: 0.65)
+                        : scheme.primary),
                 width: 1.0,
               ),
               child: Text(
@@ -1366,7 +1399,9 @@ class _TimetableScreenState extends State<TimetableScreen>
                   height: 1.15,
                   color: isViewingToday
                       ? scheme.onSurface.withValues(alpha: 0.78)
-                      : scheme.primary,
+                      : (liquid
+                          ? (isDark ? Colors.white : scheme.primary)
+                          : scheme.onPrimary),
                 ),
               ),
             ),
@@ -1401,7 +1436,10 @@ class _TimetableScreenState extends State<TimetableScreen>
         ),
         const SizedBox(width: 6),
         Tooltip(
-          message: 'Órarend beállítások',
+          message: uwuLabel(
+            'Órarend beállítások',
+            enabled: effectivePrefs.uwuModeEnabled,
+          ),
           child: TactileBounce(
             onTap: () {
               HapticFeedback.selectionClick();
@@ -1410,7 +1448,9 @@ class _TimetableScreenState extends State<TimetableScreen>
             child: SoftGlassCard(
               prefs: effectivePrefs,
               color: _showFilterPanel
-                  ? scheme.primary.withValues(alpha: 0.20)
+                  ? (liquid
+                      ? scheme.primary.withValues(alpha: isDark ? 0.28 : 0.18)
+                      : scheme.primary)
                   : null,
               padding: const EdgeInsets.symmetric(
                 horizontal: 11,
@@ -1419,14 +1459,20 @@ class _TimetableScreenState extends State<TimetableScreen>
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
                 color: _showFilterPanel
-                    ? scheme.primary.withValues(alpha: 0.65)
+                    ? (liquid
+                        ? scheme.primary.withValues(alpha: 0.65)
+                        : scheme.primary)
                     : pillBorder,
                 width: 1.0,
               ),
               child: Icon(
                 Icons.tune_rounded,
                 size: 16,
-                color: _showFilterPanel ? scheme.primary : scheme.onSurface,
+                color: _showFilterPanel
+                    ? (liquid
+                        ? (isDark ? Colors.white : scheme.primary)
+                        : scheme.onPrimary)
+                    : scheme.onSurface,
               ),
             ),
           ),
@@ -1440,20 +1486,34 @@ class _TimetableScreenState extends State<TimetableScreen>
     ColorScheme scheme,
     UserProfilePrefs effectivePrefs,
   ) {
+    final isDark = theme.brightness == Brightness.dark;
+    final liquid = effectivePrefs.liquidGlassEnabled;
     return SoftGlassCard(
       prefs: effectivePrefs,
-      isExpanded: true,
+      isExpanded: false,
+      color: liquid
+          ? scheme.surfaceContainerHigh.withValues(alpha: isDark ? 0.62 : 0.78)
+          : null,
+      border: liquid
+          ? Border.all(
+              color: Colors.white.withValues(alpha: isDark ? 0.18 : 0.45),
+              width: 1.0,
+            )
+          : null,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SwitchListTile.adaptive(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            title: const Text(
-              'Elmaradó órák elrejtése',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            title: Text(
+              uwuLabel(
+                'Elmaradó órák elrejtése',
+                enabled: effectivePrefs.uwuModeEnabled,
+              ),
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
             ),
             value: effectivePrefs.hideCancelledLessons,
             onChanged: (_) => _toggleHideCancelledLessons(),
@@ -1461,9 +1521,12 @@ class _TimetableScreenState extends State<TimetableScreen>
           SwitchListTile.adaptive(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            title: const Text(
-              'Lyukas / szabad órák elrejtése',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            title: Text(
+              uwuLabel(
+                'Lyukas / szabad órák elrejtése',
+                enabled: effectivePrefs.uwuModeEnabled,
+              ),
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
             ),
             value: effectivePrefs.hideFreeLessons,
             onChanged: (_) => _toggleHideFreeLessons(),
@@ -1471,9 +1534,12 @@ class _TimetableScreenState extends State<TimetableScreen>
           SwitchListTile.adaptive(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            title: const Text(
-              'Hétvége mutatása',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            title: Text(
+              uwuLabel(
+                'Hétvége mutatása',
+                enabled: effectivePrefs.uwuModeEnabled,
+              ),
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
             ),
             value: effectivePrefs.showWeekends,
             onChanged: (_) => _toggleShowWeekends(),
@@ -1484,7 +1550,12 @@ class _TimetableScreenState extends State<TimetableScreen>
               Expanded(
                 child: ActionChip(
                   avatar: const Icon(Icons.today_rounded, size: 16),
-                  label: const Text('Mai nap (Ma)'),
+                  label: Text(
+                    uwuLabel(
+                      'Mai nap (Ma)',
+                      enabled: effectivePrefs.uwuModeEnabled,
+                    ),
+                  ),
                   onPressed: () {
                     setState(() => _showFilterPanel = false);
                     _jumpToToday();
@@ -1495,7 +1566,12 @@ class _TimetableScreenState extends State<TimetableScreen>
               Expanded(
                 child: ActionChip(
                   avatar: const Icon(Icons.calendar_month_rounded, size: 16),
-                  label: const Text('Naptár...'),
+                  label: Text(
+                    uwuLabel(
+                      'Naptár...',
+                      enabled: effectivePrefs.uwuModeEnabled,
+                    ),
+                  ),
                   onPressed: () {
                     setState(() => _showFilterPanel = false);
                     _openDatePicker();
@@ -1601,37 +1677,33 @@ class _TimetableScreenState extends State<TimetableScreen>
 
     return [
       Padding(
-        padding: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.fromLTRB(2, 15, 2, 9),
         child: Row(
           children: [
-            Icon(
-              Icons.schedule_rounded,
-              size: 16,
-              color: scheme.primary,
-            ),
-            const SizedBox(width: 6),
             Expanded(
               child: Text(
-                '$dayName • ${_dayFormat.format(day)}',
+                uwuLabel(
+                  '$dayName • ${_dayFormat.format(day)}',
+                  enabled: widget.prefs.uwuModeEnabled,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.2,
                 ),
               ),
             ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Text(
+            Text(
+              uwuLabel(
                 '${dayLessons.length} óra',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: scheme.onSurface.withValues(alpha: 0.72),
-                  fontWeight: FontWeight.w700,
-                ),
+                enabled: widget.prefs.uwuModeEnabled,
+              ),
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: scheme.onSurface.withValues(alpha: 0.52),
+                fontWeight: FontWeight.w600,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ],
@@ -1821,7 +1893,10 @@ class _TimetableScreenState extends State<TimetableScreen>
                   Expanded(
                     child: Center(
                       child: Text(
-                        'Nincs óra',
+                        uwuLabel(
+                          'Nincs óra',
+                          enabled: widget.prefs.uwuModeEnabled,
+                        ),
                         style: theme.textTheme.labelSmall?.copyWith(
                           color: scheme.onSurface.withValues(alpha: 0.45),
                           fontSize: 10,
@@ -1908,26 +1983,47 @@ class _TimetableScreenState extends State<TimetableScreen>
           child: Row(
             children: [
               if (lesson.lessonNumber != null)
-                Text(
-                  '${lesson.lessonNumber}. ',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: isPlaceholder
-                        ? scheme.onSurface.withValues(alpha: 0.45)
-                        : isCancelled
-                            ? const Color(0xFFFF5252)
-                            : widget.prefs.timetablePeriodColor != null
-                                ? OledTheme.readableInlineColor(
-                                    widget.prefs.timetablePeriodColor!,
-                                    theme.brightness,
-                                  )
-                                : scheme.primary,
-                    fontWeight: FontWeight.w900,
+                if (!isPlaceholder)
+                  Hero(
+                    tag: heroTag,
+                    createRectTween: createLinearHeroRectTween,
+                    flightShuttleBuilder: buildBoomerangBadgeHeroShuttle,
+                    child: Material(
+                      type: MaterialType.transparency,
+                      child: Text(
+                        '${lesson.lessonNumber}. ',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: isCancelled
+                              ? OledTheme.semanticForeground(
+                                  const Color(0xFFEF5350),
+                                  theme.brightness,
+                                )
+                              : hasSub
+                                  ? OledTheme.semanticForeground(
+                                      const Color(0xFFF59E0B),
+                                      theme.brightness,
+                                    )
+                                  : scheme.primary,
+                          fontWeight: FontWeight.w800,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  Text(
+                    '${lesson.lessonNumber}. ',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: scheme.onSurface.withValues(alpha: 0.45),
+                      fontWeight: FontWeight.w800,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
                   ),
-                ),
               Expanded(
                 child: Text(
-                  subjectDisplay,
+                  uwuLabel(subjectDisplay, enabled: widget.prefs.uwuModeEnabled),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -1954,7 +2050,10 @@ class _TimetableScreenState extends State<TimetableScreen>
                   lesson.roomName!.trim().isNotEmpty &&
                   !isPlaceholder)
                 Text(
-                  lesson.roomName!,
+                  uwuLabel(
+                    lesson.roomName!,
+                    enabled: widget.prefs.uwuModeEnabled,
+                  ),
                   style: TextStyle(
                     fontSize: 8.5,
                     color: scheme.onSurface.withValues(alpha: 0.55),
@@ -1982,7 +2081,10 @@ class _TimetableScreenState extends State<TimetableScreen>
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              'Erre a napra nincs rögzített tanóra.',
+              uwu(
+                'Erre a napra nincs rögzített tanóra.',
+                enabled: widget.prefs.uwuModeEnabled,
+              ),
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: scheme.onSurface.withValues(alpha: 0.72),
               ),
@@ -2175,27 +2277,34 @@ Widget buildOledLessonCard(
 
   final startLocal = lesson.start.toLocal();
   final endLocal = lesson.end.toLocal();
-  final timeRange =
-      '${timeFormat.format(startLocal)}–${timeFormat.format(endLocal)}';
 
-  final customPeriodColor = prefs?.timetablePeriodColor;
+  final cancelledRed = OledTheme.semanticForeground(
+    const Color(0xFFEF5350),
+    theme.brightness,
+  );
+  final substituteAmber = OledTheme.semanticForeground(
+    const Color(0xFFF59E0B),
+    theme.brightness,
+  );
+  final badgeAccent = isCancelled
+      ? cancelledRed
+      : hasSubstitute
+          ? substituteAmber
+          : scheme.primary;
+  final isLightMode = theme.brightness == Brightness.light;
   final badgeBg = isPlaceholder
-      ? scheme.surfaceContainerHigh.withValues(alpha: 0.45)
-      : isCancelled
-          ? const Color(0xFFC62828)
-          : hasSubstitute
-              ? const Color(0xFFF9A825)
-              : (customPeriodColor ?? scheme.surfaceContainerHigh);
-
+      ? scheme.surfaceContainerHigh.withValues(alpha: 0.35)
+      : (isLightMode
+          ? OledTheme.semanticBadgeBg(badgeAccent, theme.brightness)
+          : badgeAccent.withValues(alpha: 0.14));
+  final badgeBorderColor = isPlaceholder
+      ? theme.dividerColor.withValues(alpha: 0.5)
+      : (isLightMode
+          ? OledTheme.semanticBadgeBorder(badgeAccent, theme.brightness)
+          : badgeAccent.withValues(alpha: 0.24));
   final badgeTextColor = isPlaceholder
-      ? scheme.onSurface.withValues(alpha: 0.45)
-      : isCancelled
-          ? Colors.white
-          : hasSubstitute
-              ? Colors.black
-              : (customPeriodColor != null
-                  ? OledTheme.contrastTextFor(customPeriodColor)
-                  : scheme.onSurface);
+      ? scheme.onSurface.withValues(alpha: 0.42)
+      : badgeAccent;
 
   final heroTag = heroPrefix != null
       ? '${heroPrefix}_${lesson.uid}'
@@ -2214,10 +2323,6 @@ Widget buildOledLessonCard(
           : lesson.substituteTeacher;
 
   final nowLocal = (nowOverride ?? DateTime.now()).toLocal();
-  final isOngoing = !isPlaceholder &&
-      !isCancelled &&
-      !nowLocal.isBefore(startLocal) &&
-      nowLocal.isBefore(endLocal);
   final showsCountdownRing = !isPlaceholder &&
       !isCancelled &&
       countdownInfo != null &&
@@ -2225,292 +2330,278 @@ Widget buildOledLessonCard(
       countdownInfo.targetLesson.uid == lesson.uid;
   final countdownFraction =
       showsCountdownRing ? countdownInfo.remainingFraction : null;
-  final ringColor = hasSubstitute
-      ? const Color(0xFFF9A825)
-      : (customPeriodColor != null
-          ? OledTheme.readableInlineColor(
-              customPeriodColor,
-              theme.brightness,
-            )
-          : scheme.primary);
+  final ringColor = hasSubstitute ? substituteAmber : scheme.primary;
 
   final effectiveTeacher = hasSubstitute && subTeacherDisplay != null
       ? subTeacherDisplay.trim()
       : (teacherDisplay?.trim() ?? '');
+  final cleanRoom = (lesson.roomName ?? '').trim();
   final trimmedTopic = lesson.theme?.trim() ?? '';
-  final secondLineTail = <String>[
+  final metaParts = <String>[
+    if (!isPlaceholder && cleanRoom.isNotEmpty) cleanRoom,
     if (effectiveTeacher.isNotEmpty) effectiveTeacher,
-    if (trimmedTopic.isNotEmpty && trimmedTopic != subjectDisplay) trimmedTopic,
-  ].join(' • ');
+    if (cleanRoom.isEmpty &&
+        effectiveTeacher.isEmpty &&
+        trimmedTopic.isNotEmpty &&
+        trimmedTopic != subjectDisplay)
+      OledTheme.capitalizeFirst(trimmedTopic),
+  ];
+  final metadataLine = metaParts.join(' • ');
 
-  Widget card = TactileBounce(
-      pressedScale: 0.97,
-      onTap: () => showLessonInspectionModal(
-        context,
-        lesson,
-        heroTag: heroTag,
-        prefs: prefs,
-        homework: homework,
-        isHomeworkCompleted: isHomeworkCompleted,
-      ),
-      child: ChristmasSnowCap(
-        enabled: prefs?.christmasModeEnabled == true,
-        child: SoftGlassCard(
-          prefs: prefs ?? const UserProfilePrefs(),
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+  final Widget card = TactileBounce(
+    pressedScale: 0.97,
+    onTap: () => showLessonInspectionModal(
+      context,
+      lesson,
+      heroTag: heroTag,
+      prefs: prefs,
+      homework: homework,
+      isHomeworkCompleted: isHomeworkCompleted,
+    ),
+    child: ChristmasSnowCap(
+      enabled: prefs?.christmasModeEnabled == true,
+      child: SoftGlassCard(
+        prefs: prefs ?? const UserProfilePrefs(),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        color: isPlaceholder
+            ? theme.cardTheme.color?.withValues(alpha: 0.45)
+            : null,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
           color: isPlaceholder
-              ? theme.cardTheme.color?.withValues(alpha: 0.45)
-              : null,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isOngoing
-                ? Colors.blueAccent
-                : isPlaceholder
-                ? theme.dividerColor.withValues(alpha: 0.45)
-                : isCancelled
-                    ? const Color(0xFFC62828).withValues(alpha: 0.75)
-                    : hasSubstitute
-                        ? const Color(0xFFF9A825).withValues(alpha: 0.65)
-                        : theme.dividerColor,
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Hero(
-                tag: heroTag,
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: PeriodCountdownBadge(
-                    label: lesson.lessonNumber != null
-                        ? '${lesson.lessonNumber}.'
-                        : '•',
-                    backgroundColor: badgeBg,
-                    textStyle: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                      color: badgeTextColor,
-                    ),
-                    ringColor: ringColor,
-                    remainingFraction: countdownFraction,
-                    startTime: showsCountdownRing ? startLocal : null,
-                    endTime: showsCountdownRing ? endLocal : null,
-                    now: showsCountdownRing ? nowLocal : null,
-                    clock: showsCountdownRing ? clock : null,
-                    border: Border.all(
-                      color: (!isPlaceholder &&
-                              !isCancelled &&
-                              !hasSubstitute &&
-                              customPeriodColor != null)
-                          ? OledTheme.contrastTextFor(customPeriodColor)
-                              .withValues(alpha: 0.22)
-                          : theme.dividerColor,
-                    ),
+              ? theme.dividerColor.withValues(alpha: 0.45)
+              : isCancelled
+                  ? cancelledRed.withValues(alpha: 0.45)
+                  : hasSubstitute
+                      ? substituteAmber.withValues(alpha: 0.45)
+                      : theme.dividerColor,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Hero(
+              tag: heroTag,
+              createRectTween: createLinearHeroRectTween,
+              flightShuttleBuilder: buildBoomerangBadgeHeroShuttle,
+              child: Material(
+                type: MaterialType.transparency,
+                child: PeriodCountdownBadge(
+                  label: lesson.lessonNumber != null
+                      ? '${lesson.lessonNumber}.'
+                      : '•',
+                  backgroundColor: badgeBg,
+                  textStyle: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: badgeTextColor,
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
+                  ringColor: ringColor,
+                  remainingFraction: countdownFraction,
+                  startTime: showsCountdownRing ? startLocal : null,
+                  endTime: showsCountdownRing ? endLocal : null,
+                  now: showsCountdownRing ? nowLocal : null,
+                  clock: showsCountdownRing ? clock : null,
+                  idleShape: BoxShape.circle,
+                  idleSize: 38,
+                  outerSize: 44,
+                  innerSize: 34,
+                  border: Border.all(color: badgeBorderColor, width: 1.0),
                 ),
               ),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          uwuLabel(
                             subjectDisplay,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w800,
-                              color: (isCancelled || isPlaceholder)
-                                  ? scheme.onSurface.withValues(alpha: 0.55)
-                                  : scheme.onSurface,
-                              decoration: isCancelled
-                                  ? TextDecoration.lineThrough
-                                  : null,
-                              decorationColor: isCancelled
-                                  ? const Color(0xFFFF5252)
-                                  : null,
-                              decorationThickness: isCancelled ? 2.2 : null,
-                            ),
+                            enabled: prefs?.uwuModeEnabled,
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          timeRange,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 11.5,
-                            color: isPlaceholder
-                                ? scheme.onSurface.withValues(alpha: 0.45)
-                                : isCancelled
-                                    ? const Color(0xFFFF5252)
-                                    : scheme.primary,
-                            fontWeight: FontWeight.w800,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: -0.2,
+                            color: (isCancelled || isPlaceholder)
+                                ? scheme.onSurface.withValues(alpha: 0.48)
+                                : scheme.onSurface,
+                            decoration: isCancelled
+                                ? TextDecoration.lineThrough
+                                : null,
+                            decorationColor: isCancelled ? cancelledRed : null,
+                            decorationThickness: isCancelled ? 1.8 : null,
                           ),
                         ),
-                        if (isCancelled || isPlaceholder) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 7,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
+                      ),
+                      if (isCancelled || isPlaceholder) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isPlaceholder
+                                ? scheme.surfaceContainerHigh
+                                : cancelledRed.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(7),
+                            border: Border.all(
                               color: isPlaceholder
-                                  ? scheme.surfaceContainerHigh
-                                  : const Color(0xFFC62828),
-                              borderRadius: BorderRadius.circular(8),
+                                  ? theme.dividerColor
+                                  : cancelledRed.withValues(alpha: 0.28),
                             ),
-                            child: Text(
+                          ),
+                          child: Text(
+                            uwuLabel(
                               isPlaceholder ? 'Nincs óra' : 'Elmarad',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w800,
-                                color: isPlaceholder
-                                    ? scheme.onSurface.withValues(alpha: 0.65)
-                                    : Colors.white,
-                              ),
+                              enabled: prefs?.uwuModeEnabled,
+                            ),
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: isPlaceholder
+                                  ? scheme.onSurface.withValues(alpha: 0.58)
+                                  : cancelledRed,
                             ),
                           ),
-                        ] else if (hasHomework) ...[
-                          const SizedBox(width: 6),
-                          GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: onToggleHomework,
-                            child: Opacity(
-                              opacity: isHomeworkCompleted ? 0.58 : 1.0,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 7,
-                                  vertical: 3,
-                                ),
-                                decoration: BoxDecoration(
+                        ),
+                      ] else if (hasHomework) ...[
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: onToggleHomework,
+                          child: Opacity(
+                            opacity: isHomeworkCompleted ? 0.58 : 1.0,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 2.5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF00BFA5)
+                                    .withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(7),
+                                border: Border.all(
                                   color: const Color(0xFF00BFA5)
-                                      .withValues(alpha: 0.16),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: const Color(0xFF00BFA5)
-                                        .withValues(alpha: 0.52),
-                                  ),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      isHomeworkCompleted
-                                          ? Icons.check_circle_rounded
-                                          : Icons.radio_button_unchecked_rounded,
-                                      size: 12,
-                                      color: const Color(0xFF00BFA5),
-                                    ),
-                                    const SizedBox(width: 3),
-                                    Text(
-                                      'Házi',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w800,
-                                        color: const Color(0xFF00BFA5),
-                                        decoration: isHomeworkCompleted
-                                            ? TextDecoration.lineThrough
-                                            : null,
-                                      ),
-                                    ),
-                                  ],
+                                      .withValues(alpha: 0.42),
                                 ),
                               ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    if ((lesson.roomName != null &&
-                            lesson.roomName!.trim().isNotEmpty) ||
-                        secondLineTail.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          if (lesson.roomName != null &&
-                              lesson.roomName!.trim().isNotEmpty) ...[
-                            Icon(
-                              Icons.meeting_room_rounded,
-                              size: 12,
-                              color: scheme.onSurface.withValues(alpha: 0.56),
-                            ),
-                            const SizedBox(width: 3),
-                            Text(
-                              lesson.roomName!.trim(),
-                              maxLines: 1,
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w700,
-                                color: scheme.onSurface.withValues(alpha: 0.78),
-                              ),
-                            ),
-                            if (secondLineTail.isNotEmpty)
-                              const SizedBox(width: 8),
-                          ],
-                          if (secondLineTail.isNotEmpty)
-                            Expanded(
                               child: Row(
+                                mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  if (hasSubstitute)
-                                    const Padding(
-                                      padding: EdgeInsets.only(right: 3),
-                                      child: Icon(
-                                        Icons.swap_horiz_rounded,
-                                        size: 13,
-                                        color: Color(0xFFFFB300),
-                                      ),
+                                  Icon(
+                                    isHomeworkCompleted
+                                        ? Icons.check_circle_rounded
+                                        : Icons.radio_button_unchecked_rounded,
+                                    size: 11.5,
+                                    color: const Color(0xFF00BFA5),
+                                  ),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    uwuLabel(
+                                      'Házi',
+                                      enabled: prefs?.uwuModeEnabled,
                                     ),
-                                  Expanded(
-                                    child: Text(
-                                      secondLineTail,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 11.5,
-                                        fontWeight: hasSubstitute
-                                            ? FontWeight.w800
-                                            : FontWeight.w500,
-                                        color: hasSubstitute
-                                            ? const Color(0xFFFFB300)
-                                            : scheme.onSurface
-                                                .withValues(alpha: 0.66),
-                                      ),
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFF00BFA5),
+                                      decoration: isHomeworkCompleted
+                                          ? TextDecoration.lineThrough
+                                          : null,
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                        ],
-                      ),
+                          ),
+                        ),
+                      ],
                     ],
+                  ),
+                  if (metadataLine.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        if (hasSubstitute)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: Icon(
+                              Icons.swap_horiz_rounded,
+                              size: 13,
+                              color: substituteAmber,
+                            ),
+                          ),
+                        Expanded(
+                          child: Text(
+                            uwuLabel(
+                              metadataLine,
+                              enabled: prefs?.uwuModeEnabled,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: hasSubstitute
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                              color: hasSubstitute
+                                  ? substituteAmber
+                                  : scheme.onSurface.withValues(alpha: 0.58),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
-                ),
+                ],
               ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  timeFormat.format(startLocal),
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    height: 1.15,
+                    color: (isCancelled || isPlaceholder)
+                        ? scheme.onSurface.withValues(alpha: 0.42)
+                        : scheme.onSurface.withValues(alpha: 0.90),
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  timeFormat.format(endLocal),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    height: 1.15,
+                    color: (isCancelled || isPlaceholder)
+                        ? scheme.onSurface.withValues(alpha: 0.30)
+                        : scheme.onSurface.withValues(alpha: 0.45),
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
-    );
-
-  if (isOngoing) {
-    card = DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.blueAccent.withValues(alpha: 0.35),
-            blurRadius: 14,
-            spreadRadius: 0.5,
-          ),
-        ],
-      ),
-      child: card,
-    );
-  }
+    ),
+  );
 
   return RepaintBoundary(
     child: Padding(

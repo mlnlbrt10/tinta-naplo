@@ -115,6 +115,7 @@ data class PhoneWearSessionSnapshot(
 
 object WearSessionBridge {
     const val WEAR_PATH_WATCH_TOKEN_SYNC = "/tinta/watch_token_sync"
+    const val WEAR_MSG_LOGOUT = "/tinta/logout"
     private const val PREFS_NAME = "tinta_phone_wear_bridge_v1"
     private const val FLUTTER_PREFS_NAME = "FlutterSharedPreferences"
     private const val FLUTTER_SESSION_BACKUP_KEY = "flutter.kreta_session_backup_v2"
@@ -152,10 +153,24 @@ object WearSessionBridge {
         pendingWatchAuthRequest.getAndSet(false)
 
     fun notifyActiveFlutterAuthRequest() {
-        val listener = activeAuthRequestListener ?: return
+        if (activeAuthRequestListener == null) return
         mainHandler.post {
-            activeAuthRequestListener?.let { listener.invoke() }
+            activeAuthRequestListener?.invoke()
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun createEncryptedPrefs(appCtx: Context): SharedPreferences {
+        val masterKey = MasterKey.Builder(appCtx)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        return EncryptedSharedPreferences.create(
+            appCtx,
+            PREFS_NAME,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
     }
 
     @Suppress("DEPRECATION")
@@ -165,18 +180,16 @@ object WearSessionBridge {
             prefsInstance?.let { return it }
             val appCtx = context.applicationContext
             val created = runCatching {
-                val masterKey = MasterKey.Builder(appCtx)
-                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                    .build()
-                EncryptedSharedPreferences.create(
-                    appCtx,
-                    PREFS_NAME,
-                    masterKey,
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-                )
+                createEncryptedPrefs(appCtx)
+            }.recoverCatching {
+                // Self-heal corrupted EncryptedSharedPreferences after KeyStore reset
+                // or device backup restore so the bridge never stays permanently broken.
+                runCatching { appCtx.deleteSharedPreferences(PREFS_NAME) }
+                createEncryptedPrefs(appCtx)
             }.getOrNull()
-            prefsInstance = created
+            if (created != null) {
+                prefsInstance = created
+            }
             created
         }
     }
@@ -218,38 +231,50 @@ object WearSessionBridge {
      * immediately persists it to both the native cache and Flutter's shared
      * session backup (`kreta_session_backup_v2`) so the phone never reuses an
      * invalidated single-use refresh_token.
+     *
+     * Synchronized to prevent concurrent `onMessageReceived` + `onDataChanged`
+     * races, and guarded against resurrecting an explicitly logged-out phone
+     * session or overwriting another student's account.
      */
+    @Synchronized
     fun ingestRotatedSessionFromWatch(
         context: Context,
         incoming: PhoneWearSessionSnapshot,
     ) {
         if (incoming.refreshToken.isBlank() ||
             incoming.accessToken.isBlank() ||
-            incoming.instituteCode.isBlank()
+            incoming.instituteCode.isBlank() ||
+            incoming.expiresAtMs <= 0L
         ) {
             return
         }
         val appCtx = context.applicationContext
-        val prev = loadCachedSession(appCtx)
-        if (prev != null) {
-            val sameAccount = prev.instituteCode.equals(incoming.instituteCode, ignoreCase = true)
-            if (!sameAccount) return
-            if (incoming.expiresAtMs > 0L &&
-                prev.expiresAtMs > 0L &&
-                incoming.expiresAtMs < prev.expiresAtMs
-            ) {
-                return
-            }
+        val prev = loadCachedSession(appCtx) ?: return
+        val sameInstitute = prev.instituteCode.equals(incoming.instituteCode, ignoreCase = true)
+        val sameUser = prev.userName.isBlank() ||
+            incoming.userName.isBlank() ||
+            prev.userName.equals(incoming.userName, ignoreCase = true)
+        if (!sameInstitute || !sameUser) return
+
+        // Ignore older or identical already-ingested rotations.
+        if (prev.expiresAtMs > 0L && incoming.expiresAtMs < prev.expiresAtMs) {
+            return
         }
+        if (incoming.refreshToken == prev.refreshToken &&
+            incoming.accessToken == prev.accessToken
+        ) {
+            return
+        }
+
         val merged = incoming.copy(
-            idToken = incoming.idToken.ifBlank { prev?.idToken.orEmpty() },
-            userName = incoming.userName.ifBlank { prev?.userName.orEmpty() },
-            studentName = incoming.studentName.ifBlank { prev?.studentName.orEmpty() },
-            studentUid = incoming.studentUid.ifBlank { prev?.studentUid.orEmpty() },
-            instituteName = incoming.instituteName.ifBlank { prev?.instituteName.orEmpty() },
-            schoolYearUid = incoming.schoolYearUid.ifBlank { prev?.schoolYearUid.orEmpty() },
-            recentGradesJson = incoming.recentGradesJson ?: prev?.recentGradesJson,
-            upcomingExamsJson = incoming.upcomingExamsJson ?: prev?.upcomingExamsJson,
+            idToken = incoming.idToken.ifBlank { prev.idToken },
+            userName = incoming.userName.ifBlank { prev.userName },
+            studentName = incoming.studentName.ifBlank { prev.studentName },
+            studentUid = incoming.studentUid.ifBlank { prev.studentUid },
+            instituteName = incoming.instituteName.ifBlank { prev.instituteName },
+            schoolYearUid = incoming.schoolYearUid.ifBlank { prev.schoolYearUid },
+            recentGradesJson = incoming.recentGradesJson ?: prev.recentGradesJson,
+            upcomingExamsJson = incoming.upcomingExamsJson ?: prev.upcomingExamsJson,
         )
         cacheSession(appCtx, merged)
 
@@ -257,11 +282,7 @@ object WearSessionBridge {
             val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
                 timeZone = TimeZone.getTimeZone("UTC")
             }
-            val isoExpires = if (merged.expiresAtMs > 0L) {
-                isoFormat.format(Date(merged.expiresAtMs))
-            } else {
-                isoFormat.format(Date(0L))
-            }
+            val isoExpires = isoFormat.format(Date(merged.expiresAtMs))
             val backupJson = JSONObject().apply {
                 put("accessToken", merged.accessToken)
                 put("refreshToken", merged.refreshToken)
@@ -273,11 +294,10 @@ object WearSessionBridge {
             appCtx.getSharedPreferences(FLUTTER_PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .putString(FLUTTER_SESSION_BACKUP_KEY, backupJson)
-                .apply()
+                .commit()
         }
 
-        val listener = activeSessionUpdatedListener
-        if (listener != null) {
+        if (activeSessionUpdatedListener != null) {
             mainHandler.post {
                 activeSessionUpdatedListener?.invoke(merged)
             }
@@ -285,15 +305,28 @@ object WearSessionBridge {
     }
 
     fun clearSession(context: Context) {
+        val appCtx = context.applicationContext
         runCatching {
-            getPrefs(context)?.edit()
+            getPrefs(appCtx)?.edit()
                 ?.remove(KEY_CACHED_SESSION)
                 ?.apply()
         }
         runCatching {
-            val client = Wearable.getDataClient(context.applicationContext)
+            val client = Wearable.getDataClient(appCtx)
             client.deleteDataItems(Uri.parse("wear://*${KretaSharedConfig.WEAR_DATA_AUTH_SESSION}"))
             client.deleteDataItems(Uri.parse("wear://*${KretaSharedConfig.WEAR_DATA_DASHBOARD_SYNC}"))
+            client.deleteDataItems(Uri.parse("wear://*$WEAR_PATH_WATCH_TOKEN_SYNC"))
+        }
+        runCatching {
+            val messageClient = Wearable.getMessageClient(appCtx)
+            Wearable.getNodeClient(appCtx).connectedNodes
+                .addOnSuccessListener { nodes ->
+                    for (node in nodes) {
+                        runCatching {
+                            messageClient.sendMessage(node.id, WEAR_MSG_LOGOUT, ByteArray(0))
+                        }
+                    }
+                }
         }
     }
 
@@ -355,8 +388,8 @@ object WearSessionBridge {
             dataMap.putString("institute_code", merged.instituteCode)
             dataMap.putString("user_name", merged.userName)
             dataMap.putLong("synced_at_ms", nowMs)
-            dataMap.putString("recent_grades_json", merged.recentGradesJson ?: "[]")
-            dataMap.putString("upcoming_exams_json", merged.upcomingExamsJson ?: "[]")
+            merged.recentGradesJson?.let { dataMap.putString("recent_grades_json", it) }
+            merged.upcomingExamsJson?.let { dataMap.putString("upcoming_exams_json", it) }
         }.asPutDataRequest().setUrgent()
 
         runCatching {

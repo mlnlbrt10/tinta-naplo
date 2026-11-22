@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,7 +22,7 @@ const String kGradesSelectedSortModeKey = 'grades_selected_sort_mode';
 
 /// Sorting modes for the Jegyek subject list.
 enum SubjectSortMode {
-  alphabetical('A–Z', Icons.sort_by_alpha_rounded),
+  alphabetical('A-Z', Icons.sort_by_alpha_rounded),
   averageAsc('Átlag ↑ (Javítandó)', Icons.trending_down_rounded),
   averageDesc('Átlag ↓ (Legjobb)', Icons.trending_up_rounded);
 
@@ -64,48 +65,48 @@ class ScholarshipTier {
   /// for szakirányú oktatás (11. évfolyamtól).
   static const List<ScholarshipTier> tiers = [
     ScholarshipTier(
-      rangeLabel: '2,00 – 2,99',
+      rangeLabel: '2,00 - 2,99',
       minAverage: 2.00,
       maxAverage: 2.99,
       title: '8 000 Ft / hó',
-      shortTitle: '2,00 – 2,99 sáv',
+      shortTitle: '2,00 - 2,99 sáv',
       monthlyAmountLabel: '8 000 Ft / hó',
       estimatedMonthlyForint: 8000,
       percent: 8,
     ),
     ScholarshipTier(
-      rangeLabel: '3,00 – 3,99',
+      rangeLabel: '3,00 - 3,99',
       minAverage: 3.00,
       maxAverage: 3.99,
       title: '25 000 Ft / hó',
-      shortTitle: '3,00 – 3,99 sáv',
+      shortTitle: '3,00 - 3,99 sáv',
       monthlyAmountLabel: '25 000 Ft / hó',
       estimatedMonthlyForint: 25000,
       percent: 25,
     ),
     ScholarshipTier(
-      rangeLabel: '4,00 – 4,49',
+      rangeLabel: '4,00 - 4,49',
       minAverage: 4.00,
       maxAverage: 4.49,
       title: '42 000 Ft / hó',
-      shortTitle: '4,00 – 4,49 sáv',
+      shortTitle: '4,00 - 4,49 sáv',
       monthlyAmountLabel: '42 000 Ft / hó',
       estimatedMonthlyForint: 42000,
       percent: 42,
     ),
     ScholarshipTier(
-      rangeLabel: '4,50 – 5,00',
+      rangeLabel: '4,50 - 5,00',
       minAverage: 4.50,
       maxAverage: 5.00,
       title: '59 000 Ft / hó',
-      shortTitle: '4,50 – 5,00 sáv',
+      shortTitle: '4,50 - 5,00 sáv',
       monthlyAmountLabel: '59 000 Ft / hó',
       estimatedMonthlyForint: 59000,
       percent: 59,
     ),
   ];
 
-  /// Fixed monthly payout during ágazati alapoktatás (9–10. évf.):
+  /// Fixed monthly payout during ágazati alapoktatás (9-10. évf.):
   /// Technikum 8 000 Ft / hó, Szakképző 16 000 Ft / hó.
   static int basicEducationMonthlyForint(String schoolType) =>
       schoolType == 'szakkepzo' ? 16000 : 8000;
@@ -200,6 +201,160 @@ class ScholarshipRecommendation {
 
   String get title => subjectName;
   int get totalCount => countNeeded;
+}
+
+/// Chronological weighted-average impact of a single grade on its subject.
+class GradeImpactDelta {
+  const GradeImpactDelta({
+    required this.delta,
+    required this.isFirstNumericGrade,
+    required this.averageBefore,
+    required this.averageAfter,
+    required this.weightPercentage,
+  });
+
+  /// Difference between the subject weighted average including this grade
+  /// and the weighted average immediately before it (`null` if non-numeric).
+  final double? delta;
+  final bool isFirstNumericGrade;
+  final double? averageBefore;
+  final double? averageAfter;
+  final int weightPercentage;
+
+  bool get isNumeric => delta != null;
+
+  /// Signed two-decimal delta string (`+0.14`, `-0.09`, or `0.00`).
+  String get formattedDelta {
+    final d = delta;
+    if (d == null) return '';
+    if (isFirstNumericGrade) return '0.00';
+    if (d > 0.0049) return '+${d.toStringAsFixed(2)}';
+    if (d < -0.0049) return d.toStringAsFixed(2);
+    return '0.00';
+  }
+
+  /// Display string for cards (`-` for the first numeric grade of a subject).
+  String get displayLabel => isFirstNumericGrade ? '-' : formattedDelta;
+
+  /// Semantic foreground color for non-zero average impact deltas.
+  Color? resolveSemanticColor(bool isDark) {
+    final d = delta;
+    if (d == null || isFirstNumericGrade) return null;
+    if (d > 0.0049) {
+      return isDark ? const Color(0xFF4ADE80) : const Color(0xFF16A34A);
+    }
+    if (d < -0.0049) {
+      return isDark ? const Color(0xFFF87171) : const Color(0xFFDC2626);
+    }
+    return null;
+  }
+}
+
+/// Shared clean translucent circular grade badge used across Home and Grades.
+class TranslucentGradeBadge extends StatelessWidget {
+  const TranslucentGradeBadge({
+    super.key,
+    required this.text,
+    required this.color,
+    this.size = 42,
+  });
+
+  final String text;
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final resolvedFg = OledTheme.semanticForeground(color, brightness);
+    final resolvedBg = OledTheme.semanticBadgeBg(color, brightness);
+    final resolvedBorder = OledTheme.semanticBadgeBorder(color, brightness);
+    final fontSize = text.length >= 3 ? 13.5 : 20.5;
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: resolvedBg,
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: resolvedBorder,
+          width: 1.2,
+        ),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        style: TextStyle(
+          color: resolvedFg,
+          fontSize: fontSize,
+          fontWeight: FontWeight.w700,
+          height: 1.0,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
+    );
+  }
+}
+
+/// Right-aligned chronological subject average impact delta (+ non-100% weight).
+class GradeImpactDeltaLabel extends StatelessWidget {
+  const GradeImpactDeltaLabel({
+    super.key,
+    required this.impact,
+    required this.weightPercentage,
+  });
+
+  final GradeImpactDelta? impact;
+  final int weightPercentage;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final showNumericDelta = impact != null && impact!.isNumeric;
+    final showWeight = weightPercentage != 100 && weightPercentage > 0;
+    if (!showNumericDelta && !showWeight) {
+      return const SizedBox.shrink();
+    }
+
+    Color deltaColor = scheme.onSurface.withValues(alpha: 0.48);
+    String deltaText = '';
+    if (showNumericDelta) {
+      deltaText = impact!.displayLabel;
+      deltaColor = impact!.resolveSemanticColor(isDark) ?? deltaColor;
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (showNumericDelta)
+          Text(
+            deltaText,
+            style: TextStyle(
+              color: deltaColor,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        if (showWeight) ...[
+          if (showNumericDelta) const SizedBox(height: 1),
+          Text(
+            '$weightPercentage%',
+            style: TextStyle(
+              color: scheme.onSurface.withValues(alpha: 0.56),
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
 }
 
 /// Represents a hypothetical ("ghost") grade added in the Szellemjegy Számoló.
@@ -841,6 +996,98 @@ class SubjectGradeSummary {
     });
     return summaries;
   }
+
+  /// Stable key mapping a [Grade] to its [GradeImpactDelta].
+  static String gradeImpactKey(Grade g) {
+    final trimmedUid = g.uid.trim();
+    if (trimmedUid.isNotEmpty) return trimmedUid;
+    return '${g.subject.uid}|${g.recordedAt.millisecondsSinceEpoch}|'
+        '${g.recordDate.millisecondsSinceEpoch}|${g.sortIndex}|'
+        '${g.numericValue}|${g.strValue}|${g.weightPercentage}|${g.topic}';
+  }
+
+  /// Computes chronological weighted-average impact per grade within each subject.
+  static Map<String, GradeImpactDelta> computeChronologicalGradeImpacts(
+    Iterable<Grade> allGrades, {
+    bool? allow200Weight,
+  }) {
+    final bySubject = <String, List<Grade>>{};
+    for (final g in allGrades) {
+      final key = g.subject.uid.trim().isNotEmpty
+          ? g.subject.uid.trim()
+          : g.subject.name.trim();
+      bySubject.putIfAbsent(key, () => <Grade>[]).add(g);
+    }
+
+    int compareChronological(Grade a, Grade b) {
+      final byRecorded = a.recordedAt.compareTo(b.recordedAt);
+      if (byRecorded != 0) return byRecorded;
+      final byRecordDate = a.recordDate.compareTo(b.recordDate);
+      if (byRecordDate != 0) return byRecordDate;
+      final bySortIndex = a.sortIndex.compareTo(b.sortIndex);
+      if (bySortIndex != 0) return bySortIndex;
+      return a.uid.compareTo(b.uid);
+    }
+
+    final result = <String, GradeImpactDelta>{};
+    for (final subjectGrades in bySubject.values) {
+      final ordered = List<Grade>.from(subjectGrades)..sort(compareChronological);
+      double weightedSum = 0.0;
+      double totalWeight = 0.0;
+
+      for (final g in ordered) {
+        final rawWeight =
+            (g.weightPercentage != null && g.weightPercentage! > 0)
+                ? g.weightPercentage!
+                : 100;
+        double effectiveWeight = rawWeight.toDouble();
+        if (allow200Weight == false && effectiveWeight > 100.0) {
+          effectiveWeight = 100.0;
+        }
+
+        final val = g.numericValue;
+        final isValidNumeric = val != null && val >= 1 && val <= 5;
+        final key = gradeImpactKey(g);
+
+        if (!isValidNumeric) {
+          final currentAvg = totalWeight > 0 ? weightedSum / totalWeight : null;
+          result[key] = GradeImpactDelta(
+            delta: null,
+            isFirstNumericGrade: false,
+            averageBefore: currentAvg,
+            averageAfter: currentAvg,
+            weightPercentage: rawWeight,
+          );
+          continue;
+        }
+
+        if (totalWeight <= 0) {
+          weightedSum += val * effectiveWeight;
+          totalWeight += effectiveWeight;
+          result[key] = GradeImpactDelta(
+            delta: 0.0,
+            isFirstNumericGrade: true,
+            averageBefore: null,
+            averageAfter: val.toDouble(),
+            weightPercentage: rawWeight,
+          );
+        } else {
+          final avgBefore = weightedSum / totalWeight;
+          weightedSum += val * effectiveWeight;
+          totalWeight += effectiveWeight;
+          final avgAfter = weightedSum / totalWeight;
+          result[key] = GradeImpactDelta(
+            delta: avgAfter - avgBefore,
+            isFirstNumericGrade: false,
+            averageBefore: avgBefore,
+            averageAfter: avgAfter,
+            weightPercentage: rawWeight,
+          );
+        }
+      }
+    }
+    return result;
+  }
 }
 
 /// "Jegyek" tab: displays cumulative weighted average (tappable for Breakdown &
@@ -896,8 +1143,9 @@ class _GradesScreenState extends State<GradesScreen>
   @override
   void initState() {
     super.initState();
+    final rawSortMode = widget.prefs.extras[kGradesSelectedSortModeKey];
     _sortMode = SubjectSortMode.fromStorageKey(
-      widget.prefs.extras[kGradesSelectedSortModeKey] as String?,
+      rawSortMode is String ? rawSortMode : null,
     );
     _sortReflowCtrl = AnimationController(
       vsync: this,
@@ -1096,16 +1344,10 @@ class _GradesScreenState extends State<GradesScreen>
     double? overallAvg,
   ) {
     HapticFeedback.lightImpact();
-    showModalBottomSheet<void>(
+    showFloatingGlassSheet<void>(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
+      prefs: widget.prefs,
       barrierColor: resolveSoftBlurBarrierColor(context, prefs: widget.prefs),
-      sheetAnimationStyle: const AnimationStyle(
-        duration: Duration(milliseconds: 250),
-        reverseDuration: Duration(milliseconds: 230),
-      ),
       builder: (modalContext) {
         return _ScholarshipAndBreakdownDialog(
           allGrades: widget.allGrades,
@@ -1168,7 +1410,10 @@ class _GradesScreenState extends State<GradesScreen>
               setState(() => _showSimulatorPanel = !_showSimulatorPanel),
           child: FloatingActionButton(
             heroTag: null,
-            tooltip: 'Szellemjegy számoló',
+            tooltip: uwuLabel(
+              'Szellemjegy számoló',
+              enabled: widget.prefs.uwuModeEnabled,
+            ),
             onPressed: null,
             backgroundColor: scheme.primary,
             foregroundColor: scheme.onPrimary,
@@ -1273,7 +1518,10 @@ class _GradesScreenState extends State<GradesScreen>
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              uwu('Tantárgyak és kerekített átlagok'),
+                              uwuLabel(
+                                'Tantárgyak és kerekített átlagok',
+                                enabled: widget.prefs.uwuModeEnabled,
+                              ),
                               style: theme.textTheme.titleMedium?.copyWith(
                                 fontWeight: FontWeight.w800,
                               ),
@@ -1289,7 +1537,10 @@ class _GradesScreenState extends State<GradesScreen>
                               borderRadius: BorderRadius.circular(22),
                             ),
                             child: Text(
-                              '${subjects.length} tantárgy',
+                              uwuLabel(
+                                '${subjects.length} tantárgy',
+                                enabled: widget.prefs.uwuModeEnabled,
+                              ),
                               style: theme.textTheme.labelMedium?.copyWith(
                                 color: scheme.onSurface.withValues(alpha: 0.72),
                               ),
@@ -1396,7 +1647,10 @@ class _GradesScreenState extends State<GradesScreen>
       items: [
         for (final mode in SubjectSortMode.values)
           LiquidBubbleTabItem(
-            label: mode.label,
+            label: uwuLabel(
+              mode.label,
+              enabled: effectivePrefs.uwuModeEnabled,
+            ),
             icon: mode.icon,
           ),
       ],
@@ -1458,7 +1712,7 @@ class _GradesScreenState extends State<GradesScreen>
                       ),
                     )
                   : Text(
-                      '–',
+                      '-',
                       style: theme.textTheme.headlineSmall?.copyWith(
                         color: Colors.white,
                         fontWeight: FontWeight.w900,
@@ -1474,10 +1728,11 @@ class _GradesScreenState extends State<GradesScreen>
                     children: [
                       Expanded(
                         child: Text(
-                          uwu(
+                          uwuLabel(
                             _overallGhostGrades.isNotEmpty
                                 ? 'Szimulált összesített átlag'
                                 : 'Összesített súlyozott átlag',
+                            enabled: widget.prefs.uwuModeEnabled,
                           ),
                           style: theme.textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.w800,
@@ -1531,8 +1786,10 @@ class _GradesScreenState extends State<GradesScreen>
                             value: delta,
                             fractionDigits: 2,
                             prefix: delta >= 0 ? '+' : '',
-                            suffix:
-                                ' (alap: ${baseAverage!.toStringAsFixed(2)})',
+                            suffix: uwuLabel(
+                              ' (alap: ${baseAverage!.toStringAsFixed(2)})',
+                              enabled: widget.prefs.uwuModeEnabled,
+                            ),
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: delta >= 0
                                   ? Colors.greenAccent
@@ -1545,7 +1802,10 @@ class _GradesScreenState extends State<GradesScreen>
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '$gradeCount db érdemjegy • $subjectCount tantárgy • Koppints az ösztöndíj kalkulátorért!',
+                    uwu(
+                      '$gradeCount db érdemjegy • $subjectCount tantárgy • Koppints az ösztöndíj kalkulátorért!',
+                      enabled: widget.prefs.uwuModeEnabled,
+                    ),
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: scheme.onSurface.withValues(alpha: 0.65),
                     ),
@@ -1587,7 +1847,10 @@ class _GradesScreenState extends State<GradesScreen>
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Szellemjegy Számoló (Összesített)',
+                        uwuLabel(
+                          'Szellemjegy Számoló (Összesített)',
+                          enabled: widget.prefs.uwuModeEnabled,
+                        ),
                         style: theme.textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w800,
                         ),
@@ -1597,13 +1860,21 @@ class _GradesScreenState extends State<GradesScreen>
                       TextButton.icon(
                         onPressed: _clearOverallGhostGrades,
                         icon: const Icon(Icons.restart_alt_rounded, size: 16),
-                        label: const Text('Törlés'),
+                        label: Text(
+                          uwuLabel(
+                            'Törlés',
+                            enabled: widget.prefs.uwuModeEnabled,
+                          ),
+                        ),
                       ),
                   ],
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Válassz súlyozást, majd koppints egy jegyre (1–5) a szimulációhoz:',
+                  uwu(
+                    'Válassz súlyozást, majd koppints egy jegyre (1-5) a szimulációhoz:',
+                    enabled: widget.prefs.uwuModeEnabled,
+                  ),
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: scheme.onSurface.withValues(alpha: 0.68),
                   ),
@@ -1617,7 +1888,10 @@ class _GradesScreenState extends State<GradesScreen>
             spacing: 8,
             children: [
               Text(
-                'Súly: $_selectedGhostWeight%',
+                uwuLabel(
+                  'Súly: $_selectedGhostWeight%',
+                  enabled: widget.prefs.uwuModeEnabled,
+                ),
                 style: theme.textTheme.labelLarge?.copyWith(
                   fontWeight: FontWeight.w800,
                   color: scheme.primary,
@@ -1730,7 +2004,10 @@ class _GradesScreenState extends State<GradesScreen>
           const SizedBox(width: 14),
           Expanded(
             child: Text(
-              'Még nem található rögzített értékelés.',
+              uwu(
+                'Még nem található rögzített értékelés.',
+                enabled: widget.prefs.uwuModeEnabled,
+              ),
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: scheme.onSurface.withValues(alpha: 0.72),
               ),
@@ -1749,7 +2026,7 @@ class _GradesScreenState extends State<GradesScreen>
     List<SubjectGradeSummary> allSubjects,
   ) {
     final avg = summary.weightedAverage;
-    final avgText = avg != null ? avg.toStringAsFixed(2) : '–';
+    final avgText = avg != null ? avg.toStringAsFixed(2) : '-';
     final customColor = widget.prefs.customColorForSubject(
       summary.heroId,
       summary.subjectName,
@@ -1767,7 +2044,7 @@ class _GradesScreenState extends State<GradesScreen>
             ? OledTheme.gradeColor(roundedStanding, widget.prefs)
             : scheme.surfaceContainerHigh);
 
-    final standingText = roundedStanding?.toString() ?? '–';
+    final standingText = roundedStanding?.toString() ?? '-';
     final displaySubjectName = widget.prefs.resolveSubjectName(
       summary.subjectName,
       summary.subjectUid,
@@ -1826,7 +2103,10 @@ class _GradesScreenState extends State<GradesScreen>
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  displaySubjectName,
+                                  uwuLabel(
+                                    displaySubjectName,
+                                    enabled: widget.prefs.uwuModeEnabled,
+                                  ),
                                   style: theme.textTheme.titleSmall?.copyWith(
                                     fontWeight: FontWeight.w800,
                                     color: scheme.onSurface,
@@ -1857,28 +2137,48 @@ class _GradesScreenState extends State<GradesScreen>
                                           ? AnimatedNumberText(
                                               value: avg,
                                               fractionDigits: 2,
-                                              prefix: 'Átlag: ',
+                                              prefix: uwuLabel(
+                                                'Átlag: ',
+                                                enabled:
+                                                    widget.prefs.uwuModeEnabled,
+                                              ),
                                               style: theme.textTheme.labelSmall
                                                   ?.copyWith(
                                                 color: scheme.onSurface,
                                                 fontWeight: FontWeight.w700,
+                                                fontFeatures: const [
+                                                  FontFeature.tabularFigures(),
+                                                ],
                                               ),
                                             )
                                           : Text(
-                                              'Átlag: $avgText',
+                                              uwuLabel(
+                                                'Átlag: $avgText',
+                                                enabled:
+                                                    widget.prefs.uwuModeEnabled,
+                                              ),
                                               style: theme.textTheme.labelSmall
                                                   ?.copyWith(
                                                 color: scheme.onSurface,
                                                 fontWeight: FontWeight.w700,
+                                                fontFeatures: const [
+                                                  FontFeature.tabularFigures(),
+                                                ],
                                               ),
                                             ),
                                     ),
                                     Text(
-                                      '${summary.grades.length} db jegy',
+                                      uwuLabel(
+                                        '${summary.grades.length} db jegy',
+                                        enabled: widget.prefs.uwuModeEnabled,
+                                      ),
                                       style:
                                           theme.textTheme.labelSmall?.copyWith(
                                         color: scheme.onSurface
                                             .withValues(alpha: 0.6),
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
                                       ),
                                     ),
                                   ],
@@ -1900,6 +2200,9 @@ class _GradesScreenState extends State<GradesScreen>
                               style: theme.textTheme.titleLarge?.copyWith(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w900,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
                               ),
                             ),
                           ),
@@ -1970,58 +2273,95 @@ class _ScholarshipAndBreakdownDialogState
     widget.onPrefsChanged?.call(next);
   }
 
+  Widget _buildSegmentedToggle<T>({
+    required ThemeData theme,
+    required ColorScheme scheme,
+    required T selectedValue,
+    required List<({T value, String label})> options,
+    required ValueChanged<T> onSelected,
+  }) {
+    final rawIdx = options.indexWhere((o) => o.value == selectedValue);
+    final selectedIdx = rawIdx < 0 ? 0 : rawIdx;
+    final liquidGlass = resolveLiquidGlassEnabled(_prefs);
+
+    return LiquidBubbleTabBar(
+      height: 42,
+      fontSize: 12.5,
+      padding: EdgeInsets.zero,
+      itemPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+      equalFlex: true,
+      liquidGlassEnabled: liquidGlass,
+      selectedIndex: selectedIdx,
+      items: [
+        for (final opt in options)
+          LiquidBubbleTabItem(
+            label: uwuLabel(opt.label, enabled: _prefs.uwuModeEnabled),
+          ),
+      ],
+      onSelected: (idx) {
+        if (idx >= 0 && idx < options.length) {
+          HapticFeedback.selectionClick();
+          onSelected(options[idx].value);
+        }
+      },
+    );
+  }
+
   Widget _buildModeSelector(ThemeData theme, ColorScheme scheme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        EdgeFadeHorizontalScroll(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          spacing: 8,
-          children: [
-            ChoiceChip(
-              showCheckmark: false,
-              label: const Text('Szakirányú oktatás'),
-              selected: !_basic,
-              onSelected: (_) => _updateScholarshipPrefs(
-                _prefs.withExtra('scholarshipBasic', false),
-              ),
-            ),
-            ChoiceChip(
-              showCheckmark: false,
-              label: const Text('Ágazati alapoktatás (9–10. évf.)'),
-              selected: _basic,
-              onSelected: (_) => _updateScholarshipPrefs(
-                _prefs.withExtra('scholarshipBasic', true),
-              ),
-            ),
-          ],
-        ),
-        if (_basic) ...[
-          const SizedBox(height: 10),
-          EdgeFadeHorizontalScroll(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            spacing: 8,
-            children: [
-              for (final entry in const {
-                'technikum': 'Technikum',
-                'szakkepzo': 'Szakképző',
-              }.entries)
-                ChoiceChip(
-                  showCheckmark: false,
-                  label: Text(entry.value),
-                  selected: _prefs.scholarshipSchoolType == entry.key,
-                  onSelected: (_) => _updateScholarshipPrefs(
-                    _prefs.withExtra('scholarshipSchoolType', entry.key),
-                  ),
-                ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildSegmentedToggle<bool>(
+            theme: theme,
+            scheme: scheme,
+            selectedValue: _basic,
+            options: const [
+              (value: false, label: 'Szakirányú'),
+              (value: true, label: 'Ágazati (9-10.)'),
             ],
+            onSelected: (isBasic) => _updateScholarshipPrefs(
+              _prefs.withExtra('scholarshipBasic', isBasic),
+            ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 240),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: _basic
+                  ? Padding(
+                      key: const ValueKey<String>('scholarship-school-type-toggle'),
+                      padding: const EdgeInsets.only(top: 8),
+                      child: _buildSegmentedToggle<String>(
+                        theme: theme,
+                        scheme: scheme,
+                        selectedValue: _prefs.scholarshipSchoolType,
+                        options: const [
+                          (value: 'technikum', label: 'Technikum'),
+                          (value: 'szakkepzo', label: 'Szakképző'),
+                        ],
+                        onSelected: (schoolType) => _updateScholarshipPrefs(
+                          _prefs.withExtra('scholarshipSchoolType', schoolType),
+                        ),
+                      ),
+                    )
+                  : const SizedBox.shrink(
+                      key: ValueKey<String>('scholarship-no-school-type'),
+                    ),
+            ),
           ),
         ],
-      ],
+      ),
     );
   }
 
   Widget _buildBasicEducationCard(ThemeData theme, ColorScheme scheme) {
+    final isDark = theme.brightness == Brightness.dark;
     final amount =
         ScholarshipTier.basicEducationMonthlyForint(_prefs.scholarshipSchoolType);
     final typeLabel =
@@ -2029,38 +2369,41 @@ class _ScholarshipAndBreakdownDialogState
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            scheme.primary.withValues(alpha: 0.22),
-            scheme.surfaceContainerHigh,
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+        color: scheme.onSurface.withValues(alpha: isDark ? 0.05 : 0.035),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: scheme.onSurface.withValues(alpha: isDark ? 0.10 : 0.08),
         ),
-        borderRadius: OledTheme.cardRadius,
-        border: Border.all(color: scheme.primary.withValues(alpha: 0.55)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.payments_rounded, color: scheme.primary, size: 30),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${ScholarshipTier.formatForint(amount)} Ft / hó',
-                  style: theme.textTheme.titleLarge
-                      ?.copyWith(fontWeight: FontWeight.w900),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Ágazati alapoktatás • $typeLabel • fix összeg, átlagtól független',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurface.withValues(alpha: 0.72),
-                  ),
-                ),
-              ],
+          Text(
+            uwuLabel('ÖSZTÖNDÍJ', enabled: _prefs.uwuModeEnabled),
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.7,
+              color: scheme.onSurface.withValues(alpha: 0.50),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${ScholarshipTier.formatForint(amount)} Ft / hó',
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w800,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            uwuLabel(
+              'Ágazati alapoktatás • $typeLabel • fix összeg, átlagtól független',
+              enabled: _prefs.uwuModeEnabled,
+            ),
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontSize: 12.5,
+              color: scheme.onSurface.withValues(alpha: 0.65),
             ),
           ),
         ],
@@ -2085,6 +2428,7 @@ class _ScholarshipAndBreakdownDialogState
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final counts = SubjectGradeSummary.computeGradeCounts(widget.allGrades);
     final totalGrades = counts.values.fold<int>(0, (a, b) => a + b);
     final currentAvg = SubjectGradeSummary.computeOverallSubjectAverage(
@@ -2122,564 +2466,845 @@ class _ScholarshipAndBreakdownDialogState
       allow200Weight: _allow200Weight,
     );
 
-    return LiquidGlassSurface(
-      prefs: _prefs,
-      highContrastExpanded: true,
-      contentOpacityAnimation: ModalRoute.of(context)?.animation,
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
-      child: DraggableScrollableSheet(
-        initialChildSize: 0.85,
-        minChildSize: 0.55,
-        maxChildSize: 0.94,
-        expand: false,
-        builder: (context, scrollController) {
-          return SingleChildScrollView(
-            controller: scrollController,
-            padding: const EdgeInsets.fromLTRB(0, 14, 0, 32),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Center(
-                  child: Container(
-                    width: 44,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: scheme.onSurface.withValues(alpha: 0.24),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.workspace_premium_rounded,
-                        color: scheme.primary,
-                        size: 26,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          uwu('Átlag elemzés & Ösztöndíj kalkulátor'),
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.close_rounded),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _buildModeSelector(theme, scheme),
-                const SizedBox(height: 12),
-                // 1. Gamified Motivational Cash Payout Milestone Card
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: _basic
-                      ? _buildBasicEducationCard(theme, scheme)
-                      : Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        scheme.primary.withValues(alpha: 0.22),
-                        scheme.surfaceContainerHigh,
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: OledTheme.cardRadius,
-                    border: Border.all(
-                      color: scheme.primary.withValues(alpha: 0.55),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
+    const achievedGreen = Color(0xFF10B981);
+    final hairline =
+        scheme.onSurface.withValues(alpha: isDark ? 0.08 : 0.07);
+    final currentAmountStr = '${ScholarshipTier.formatForint(currentForint)} Ft/hó';
+    final goalAmountStr = '${ScholarshipTier.formatForint(goalForint)} Ft/hó';
+
+    return Align(
+      alignment: Alignment.bottomCenter,
+      heightFactor: 1.0,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final bottomInset =
+                math.max(12.0, MediaQuery.paddingOf(context).bottom);
+            final maxAvailable =
+                math.max(320.0, constraints.maxHeight - bottomInset - 8.0);
+            final sheetHeight =
+                (constraints.maxHeight * 0.85).clamp(320.0, maxAvailable);
+            return FrostedBottomSheetSurface(
+              prefs: _prefs,
+              topRadius: 26,
+              showDragHandle: false,
+              includeSafeAreaBottom: true,
+              child: SizedBox(
+                height: sheetHeight,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          SizedBox(
-                            width: 54,
-                            height: 54,
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                SizedBox(
-                                  width: 54,
-                                  height: 54,
-                                  child: CircularProgressIndicator(
-                                    value: progressToGoal,
-                                    strokeWidth: 5.5,
-                                    backgroundColor:
-                                        scheme.onSurface.withValues(alpha: 0.12),
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      scheme.primary,
+                          Center(
+                            child: Container(
+                              width: 36,
+                              height: 4,
+                              decoration: BoxDecoration(
+                                color: scheme.onSurface.withValues(alpha: 0.22),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  uwuLabel(
+                                    'Ösztöndíj kalkulátor',
+                                    enabled: _prefs.uwuModeEnabled,
+                                  ),
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontSize: 18.5,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: -0.3,
+                                  ),
+                                ),
+                              ),
+                              TactileBounce(
+                                onTap: () => Navigator.of(context).pop(),
+                                child: Container(
+                                  width: 32,
+                                  height: 32,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: scheme.onSurface.withValues(
+                                      alpha: isDark ? 0.08 : 0.06,
                                     ),
                                   ),
-                                ),
-                                Text(
-                                  '${(progressToGoal * 100).round()}%',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w900,
-                                    color: scheme.primary,
+                                  child: Icon(
+                                    Icons.close_rounded,
+                                    size: 18,
+                                    color:
+                                        scheme.onSurface.withValues(alpha: 0.72),
                                   ),
                                 ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  currentTier != null
-                                      ? '${currentTier.shortTitle}: ${currentTier.monthlyAmountLabel}'
-                                      : 'Jelenleg: Nem jogosult (< 2.00)',
-                                  style: theme.textTheme.titleSmall?.copyWith(
-                                    fontWeight: FontWeight.w900,
-                                    color: scheme.onSurface,
-                                  ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  'Cél: ${goalTier.shortTitle} ${goalTier.minAverage.toStringAsFixed(2)}-tól (${goalTier.monthlyAmountLabel})',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: scheme.primary,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  currentAvg != null
-                                      ? 'Összesített tantárgyi átlagod: ${currentAvg.toStringAsFixed(2)}'
-                                      : 'Nincs rögzített átlag',
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: scheme.onSurface
-                                        .withValues(alpha: 0.72),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(999),
-                        child: LinearProgressIndicator(
-                          value: progressToGoal,
-                          minHeight: 7,
-                          backgroundColor:
-                              scheme.onSurface.withValues(alpha: 0.12),
-                          valueColor:
-                              AlwaysStoppedAnimation<Color>(scheme.primary),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Icon(
-                            avgGap <= 0
-                                ? Icons.verified_rounded
-                                : Icons.trending_up_rounded,
-                            size: 16,
-                            color: avgGap <= 0
-                                ? Colors.greenAccent
-                                : scheme.primary,
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              avgGap <= 0
-                                  ? 'Elérted a kiválasztott ${goalTier.shortTitle.toLowerCase()}ot (${goalTier.monthlyAmountLabel})!'
-                                  : extraForint > 0
-                                      ? 'Még ${avgGap.toStringAsFixed(2)} hiányzik a havi +${ScholarshipTier.formatForint(extraForint)} Ft-hoz!'
-                                      : 'Még ${avgGap.toStringAsFixed(2)} hiányzik a(z) ${goalTier.minAverage.toStringAsFixed(2)} célátlaghoz!',
-                              style: theme.textTheme.labelMedium?.copyWith(
-                                fontWeight: FontWeight.w800,
-                                color: avgGap <= 0
-                                    ? Colors.greenAccent
-                                    : scheme.onSurface,
                               ),
-                            ),
+                            ],
                           ),
                         ],
                       ),
-                    ],
-                  ),
-                ),
-                ),
-                const SizedBox(height: 18),
-                // 2. Grade Count Breakdown
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Text(
-                    'Érdemjegyek eloszlása ($totalGrades db)',
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
                     ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                EdgeFadeHorizontalScroll(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  spacing: 8,
-                  children: [5, 4, 3, 2, 1].map((g) {
-                    final count = counts[g] ?? 0;
-                    final color = OledTheme.gradeColor(g, widget.prefs);
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: color.withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: color.withValues(alpha: 0.65)),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            '${count}x',
-                            style: theme.textTheme.labelLarge?.copyWith(
-                              fontWeight: FontWeight.w900,
-                              color: scheme.onSurface,
+                    Divider(height: 1, thickness: 1, color: hairline),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(0, 14, 0, 28),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _buildModeSelector(theme, scheme),
+                            const SizedBox(height: 12),
+                            // 1. Minimal Hero Summary Card
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 20),
+                              child: AnimatedSize(
+                                duration: const Duration(milliseconds: 240),
+                                curve: Curves.easeOutCubic,
+                                alignment: Alignment.topCenter,
+                                child: AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 230),
+                                  switchInCurve: Curves.easeOutCubic,
+                                  switchOutCurve: Curves.easeInCubic,
+                                  child: _basic
+                                      ? KeyedSubtree(
+                                          key: ValueKey<String>(
+                                            'hero-basic-${_prefs.scholarshipSchoolType}',
+                                          ),
+                                          child: _buildBasicEducationCard(
+                                            theme,
+                                            scheme,
+                                          ),
+                                        )
+                                      : Container(
+                                          key: const ValueKey<String>(
+                                            'hero-vocational',
+                                          ),
+                                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: scheme.onSurface.withValues(
+                              alpha: isDark ? 0.05 : 0.035,
                             ),
-                          ),
-                          const SizedBox(width: 6),
-                          Container(
-                            width: 26,
-                            height: 26,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: color,
-                              borderRadius: BorderRadius.circular(9),
-                            ),
-                            child: Text(
-                              '$g',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 13,
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                              color: scheme.onSurface.withValues(
+                                alpha: isDark ? 0.10 : 0.08,
                               ),
                             ),
                           ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                ),
-                if (!_basic) ...[
-                const SizedBox(height: 22),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // 3. Vocational Scholarship Tier Optimizer
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.school_rounded,
-                            size: 19,
-                            color: scheme.primary,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'Szakképzési ösztöndíj kalkulátor',
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'A szakképzési ösztöndíj kizárólag az összesített súlyozott átlagtól függ (nem szükséges minden tantárgyból külön 4.00 feletti átlagot elérni). Válassz cél sávot:',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurface.withValues(alpha: 0.68),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      ...List.generate(ScholarshipTier.tiers.length, (idx) {
-                        final tier = ScholarshipTier.tiers[idx];
-                        final isCurrent = currentTierIdx == idx;
-                        final isTarget = _selectedTargetTierIdx == idx;
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: TactileBounce(
-                            onTap: () {
-                              setState(() => _selectedTargetTierIdx = idx);
-                              _updateScholarshipPrefs(
-                                _prefs.withExtras({
-                                  'scholarshipTargetTierIdx': idx,
-                                  'scholarshipTargetAverage': tier.minAverage,
-                                }),
-                              );
-                            },
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 180),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 11,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isTarget
-                                    ? scheme.primary.withValues(alpha: 0.2)
-                                    : scheme.surfaceContainerHigh,
-                                borderRadius: BorderRadius.circular(18),
-                                border: Border.all(
-                                  color: isTarget
-                                      ? scheme.primary
-                                      : isCurrent
-                                          ? Colors.greenAccent
-                                          : theme.dividerColor,
-                                  width: (isTarget || isCurrent) ? 1.5 : 1.0,
-                                ),
-                              ),
-                              child: Row(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
-                                  Icon(
-                                    isCurrent
-                                        ? Icons.check_circle_rounded
-                                        : isTarget
-                                            ? Icons.flag_circle_rounded
-                                            : Icons.circle_outlined,
-                                    size: 20,
-                                    color: isCurrent
-                                        ? Colors.greenAccent
-                                        : isTarget
-                                            ? scheme.primary
-                                            : scheme.onSurface
-                                                .withValues(alpha: 0.5),
-                                  ),
-                                  const SizedBox(width: 10),
                                   Expanded(
                                     child: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          '${tier.rangeLabel}: ${tier.title}',
-                                          style: theme.textTheme.labelLarge
-                                              ?.copyWith(
-                                            fontWeight: FontWeight.w800,
+                                          uwuLabel(
+                                            'ÁTLAG',
+                                            enabled: _prefs.uwuModeEnabled,
+                                          ),
+                                          style: TextStyle(
+                                            fontSize: 10.5,
+                                            fontWeight: FontWeight.w700,
+                                            letterSpacing: 0.7,
+                                            color: scheme.onSurface
+                                                .withValues(alpha: 0.50),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 3),
+                                        Text.rich(
+                                          TextSpan(
+                                            style: const TextStyle(
+                                              fontSize: 21,
+                                              fontWeight: FontWeight.w800,
+                                              letterSpacing: -0.3,
+                                              fontFeatures: [
+                                                FontFeature.tabularFigures(),
+                                              ],
+                                            ),
+                                            children: [
+                                              TextSpan(
+                                                text: currentAvg != null
+                                                    ? currentAvg
+                                                        .toStringAsFixed(2)
+                                                    : '-',
+                                                style: TextStyle(
+                                                  color: scheme.onSurface,
+                                                ),
+                                              ),
+                                              if (currentAvg != null &&
+                                                  avgGap > 0)
+                                                TextSpan(
+                                                  text:
+                                                      ' -> ${goalTier.minAverage.toStringAsFixed(2)}',
+                                                  style: TextStyle(
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.w700,
+                                                    color: scheme.primary,
+                                                  ),
+                                                ),
+                                            ],
                                           ),
                                         ),
                                       ],
                                     ),
                                   ),
-                                  if (isCurrent)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 3,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color:
-                                            Colors.green.withValues(alpha: 0.25),
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: const Text(
-                                        'Jelenlegi sáv',
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Text(
+                                        uwuLabel(
+                                          'ÖSZTÖNDÍJ',
+                                          enabled: _prefs.uwuModeEnabled,
+                                        ),
                                         style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w800,
-                                          color: Colors.greenAccent,
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 0.7,
+                                          color: scheme.onSurface
+                                              .withValues(alpha: 0.50),
                                         ),
                                       ),
-                                    )
-                                  else if (isTarget)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 3,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: scheme.primary
-                                            .withValues(alpha: 0.25),
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Text(
-                                        'Kiválasztott cél',
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        avgGap > 0 && goalForint > currentForint
+                                            ? '$currentAmountStr -> $goalAmountStr'
+                                            : goalAmountStr,
                                         style: TextStyle(
-                                          fontSize: 11,
+                                          fontSize: 14.5,
                                           fontWeight: FontWeight.w800,
-                                          color: scheme.primary,
+                                          color: avgGap <= 0
+                                              ? achievedGreen
+                                              : scheme.onSurface,
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
                                         ),
                                       ),
-                                    ),
+                                    ],
+                                  ),
                                 ],
                               ),
-                            ),
+                              const SizedBox(height: 12),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(999),
+                                child: LinearProgressIndicator(
+                                  value: progressToGoal,
+                                  minHeight: 4,
+                                  backgroundColor: scheme.onSurface.withValues(
+                                    alpha: isDark ? 0.12 : 0.10,
+                                  ),
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    avgGap <= 0 ? achievedGreen : scheme.primary,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 9),
+                              Text(
+                                uwuLabel(
+                                  avgGap <= 0
+                                      ? 'Elérted ezt a sávot ($goalAmountStr)'
+                                      : extraForint > 0
+                                          ? 'Még ${avgGap.toStringAsFixed(2)} kell a +${ScholarshipTier.formatForint(extraForint)} Ft-hoz'
+                                          : 'Még ${avgGap.toStringAsFixed(2)} kell a ${goalTier.minAverage.toStringAsFixed(2)} sávhoz',
+                                  enabled: _prefs.uwuModeEnabled,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: avgGap <= 0
+                                      ? achievedGreen
+                                      : scheme.onSurface
+                                          .withValues(alpha: 0.74),
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                        );
-                      }),
-                      const SizedBox(height: 14),
+                        ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                // 2. Compact 5-column Grade Distribution (never overflows)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(
+                    children: [
                       Text(
-                        'Kalkulátor jegy súlyozása:',
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          color: scheme.onSurface.withValues(alpha: 0.78),
+                        uwuLabel(
+                          'ÉRDEMJEGYEK ELOSZLÁSA',
+                          enabled: _prefs.uwuModeEnabled,
+                        ),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.6,
+                          color: scheme.onSurface.withValues(alpha: 0.52),
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '$totalGrades db',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: scheme.onSurface.withValues(alpha: 0.52),
+                          fontFeatures: const [
+                            FontFeature.tabularFigures(),
+                          ],
                         ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 6),
-                EdgeFadeHorizontalScroll(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  spacing: 8,
-                  children: [
-                    ChoiceChip(
-                      showCheckmark: false,
-                      label: const Text('100% alapeset'),
-                      selected: !_allow200Weight,
-                      onSelected: (_) {
-                        setState(() {
-                          _allow200Weight = false;
-                          _prefs = _prefs.copyWith(calcAllow200Weight: false);
-                        });
-                        widget.onPrefsChanged?.call(_prefs);
-                      },
-                    ),
-                    ChoiceChip(
-                      showCheckmark: false,
-                      label: const Text('200% témazáró engedélyezése'),
-                      selected: _allow200Weight,
-                      onSelected: (_) {
-                        setState(() {
-                          _allow200Weight = true;
-                          _prefs = _prefs.copyWith(calcAllow200Weight: true);
-                        });
-                        widget.onPrefsChanged?.call(_prefs);
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 8),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                  child: Row(
                     children: [
-                      if (currentAvg != null &&
-                          currentAvg >= targetTier.minAverage)
-                        Container(
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: Colors.green.withValues(alpha: 0.16),
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(
-                              color: Colors.greenAccent.withValues(alpha: 0.6),
-                            ),
-                          ),
-                          child: Text(
-                            'Már elérted a(z) ${targetTier.rangeLabel} ösztöndíj sávot (${currentAvg.toStringAsFixed(2)})!',
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: Colors.greenAccent,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        )
-                      else if (recommendations.isEmpty)
-                        Container(
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: scheme.surfaceContainerHigh,
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                          child: Text(
-                            'Válassz sávot vagy szerezz további jegyeket az optimalizáláshoz.',
-                            style: theme.textTheme.bodySmall,
-                          ),
-                        )
-                      else ...[
-                        Text(
-                          'Stratégiai utak a(z) ${targetTier.rangeLabel} sávhoz (csak az összesített átlag számít):',
-                          style: theme.textTheme.labelLarge?.copyWith(
-                            fontWeight: FontWeight.w800,
-                            color: scheme.primary,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        ...recommendations.map((rec) {
-                          return Container(
-                            margin: const EdgeInsets.only(bottom: 10),
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: scheme.surfaceContainerHigh,
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(color: theme.dividerColor),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
+                      for (int i = 0; i < 5; i++) ...[
+                        Expanded(
+                          child: () {
+                            final g = 5 - i;
+                            final count = counts[g] ?? 0;
+                            final color =
+                                OledTheme.gradeColor(g, widget.prefs);
+                            return Container(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 8,
+                                horizontal: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: color.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: color.withValues(alpha: 0.30),
+                                ),
+                              ),
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Expanded(
+                                    Container(
+                                      width: 20,
+                                      height: 20,
+                                      alignment: Alignment.center,
+                                      decoration: BoxDecoration(
+                                        color: color,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
                                       child: Text(
-                                        rec.title,
-                                        style:
-                                            theme.textTheme.labelLarge?.copyWith(
-                                          fontWeight: FontWeight.w900,
+                                        '$g',
+                                        style: TextStyle(
+                                          color: OledTheme.contrastTextFor(
+                                            color,
+                                          ),
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 11.5,
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
                                         ),
                                       ),
                                     ),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 3,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: scheme.primary
-                                            .withValues(alpha: 0.2),
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Text(
-                                        '${rec.countNeeded}x 5-ös • +${rec.globalBoost.toStringAsFixed(2)} átlag',
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w900,
-                                          color: scheme.primary,
-                                        ),
+                                    const SizedBox(width: 5),
+                                    Text(
+                                      '${count}x',
+                                      style:
+                                          theme.textTheme.labelMedium?.copyWith(
+                                        fontWeight: FontWeight.w800,
+                                        color: scheme.onSurface,
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
                                       ),
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  rec.explanation,
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color:
-                                        scheme.onSurface.withValues(alpha: 0.78),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        }),
+                              ),
+                            );
+                          }(),
+                        ),
+                        if (i < 4) const SizedBox(width: 6),
                       ],
                     ],
                   ),
                 ),
-                ],
-              ],
-            ),
-          );
-        },
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.topCenter,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 230),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    child: !_basic
+                        ? Padding(
+                            key: const ValueKey<String>('scholarship-vocational-body'),
+                            padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                        // 3. Clean Selectable Tier List
+                        Text(
+                          uwuLabel(
+                            'ÖSZTÖNDÍJ SÁVOK',
+                            enabled: _prefs.uwuModeEnabled,
+                          ),
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.6,
+                            color: scheme.onSurface.withValues(alpha: 0.52),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        ...List.generate(ScholarshipTier.tiers.length, (idx) {
+                          final tier = ScholarshipTier.tiers[idx];
+                          final isCurrent = currentTierIdx == idx;
+                          final isTarget = _selectedTargetTierIdx == idx;
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 7),
+                            child: TactileBounce(
+                              pressedScale: 0.985,
+                              onTap: () {
+                                setState(() => _selectedTargetTierIdx = idx);
+                                _updateScholarshipPrefs(
+                                  _prefs.withExtras({
+                                    'scholarshipTargetTierIdx': idx,
+                                    'scholarshipTargetAverage': tier.minAverage,
+                                  }),
+                                );
+                              },
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 160),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isTarget
+                                      ? scheme.primary.withValues(alpha: 0.14)
+                                      : scheme.onSurface.withValues(
+                                          alpha: isDark ? 0.04 : 0.025,
+                                        ),
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: isTarget
+                                        ? scheme.primary
+                                            .withValues(alpha: 0.65)
+                                        : isCurrent
+                                            ? achievedGreen
+                                                .withValues(alpha: 0.55)
+                                            : hairline,
+                                    width: (isTarget || isCurrent) ? 1.3 : 1.0,
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      isCurrent
+                                          ? Icons.check_circle_rounded
+                                          : isTarget
+                                              ? Icons.flag_circle_rounded
+                                              : Icons.circle_outlined,
+                                      size: 18,
+                                      color: isCurrent
+                                          ? achievedGreen
+                                          : isTarget
+                                              ? scheme.primary
+                                              : scheme.onSurface
+                                                  .withValues(alpha: 0.42),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Text(
+                                      tier.rangeLabel,
+                                      style:
+                                          theme.textTheme.labelLarge?.copyWith(
+                                        fontWeight: FontWeight.w800,
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        tier.monthlyAmountLabel,
+                                        style:
+                                            theme.textTheme.bodySmall?.copyWith(
+                                          fontWeight: FontWeight.w600,
+                                          color: scheme.onSurface
+                                              .withValues(alpha: 0.60),
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    if (isCurrent)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 3,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: achievedGreen
+                                              .withValues(alpha: 0.16),
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          uwuLabel(
+                                            'Jelenlegi',
+                                            enabled: _prefs.uwuModeEnabled,
+                                          ),
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w800,
+                                            color: achievedGreen,
+                                          ),
+                                        ),
+                                      )
+                                    else if (isTarget)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 3,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: scheme.primary
+                                              .withValues(alpha: 0.16),
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          uwuLabel(
+                                            'Cél',
+                                            enabled: _prefs.uwuModeEnabled,
+                                          ),
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w800,
+                                            color: scheme.primary,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                        const SizedBox(height: 14),
+                        // 4. Weight Toggle + Concise 2-line Strategy Rows
+                        Row(
+                          children: [
+                            Text(
+                              uwuLabel(
+                                'AJÁNLOTT LÉPÉSEK',
+                                enabled: _prefs.uwuModeEnabled,
+                              ),
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.6,
+                                color:
+                                    scheme.onSurface.withValues(alpha: 0.52),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        _buildSegmentedToggle<bool>(
+                          theme: theme,
+                          scheme: scheme,
+                          selectedValue: _allow200Weight,
+                          options: const [
+                            (value: false, label: '100%'),
+                            (value: true, label: '200% témazáró'),
+                          ],
+                          onSelected: (allow200) {
+                            setState(() {
+                              _allow200Weight = allow200;
+                              _prefs = _prefs.copyWith(
+                                calcAllow200Weight: allow200,
+                              );
+                            });
+                            widget.onPrefsChanged?.call(_prefs);
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                        AnimatedSize(
+                          duration: const Duration(milliseconds: 230),
+                          curve: Curves.easeOutCubic,
+                          alignment: Alignment.topCenter,
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 220),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            child: KeyedSubtree(
+                              key: ValueKey<String>(
+                                'strategy-$_selectedTargetTierIdx-$_allow200Weight-${recommendations.length}',
+                              ),
+                              child: (currentAvg != null &&
+                                      currentAvg >= targetTier.minAverage)
+                                  ? Container(
+                                      padding: const EdgeInsets.all(12),
+                                      decoration: BoxDecoration(
+                                        color: achievedGreen.withValues(alpha: 0.14),
+                                        borderRadius: BorderRadius.circular(14),
+                                        border: Border.all(
+                                          color: achievedGreen.withValues(alpha: 0.45),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        uwu(
+                                          'Elérted a ${targetTier.rangeLabel} sávot (${currentAvg.toStringAsFixed(2)})!',
+                                          enabled: _prefs.uwuModeEnabled,
+                                        ),
+                                        style: theme.textTheme.bodySmall?.copyWith(
+                                          color: achievedGreen,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    )
+                                  : recommendations.isEmpty
+                                      ? Container(
+                                          padding: const EdgeInsets.all(12),
+                                          decoration: BoxDecoration(
+                                            color: scheme.onSurface.withValues(
+                                              alpha: isDark ? 0.04 : 0.03,
+                                            ),
+                                            borderRadius: BorderRadius.circular(14),
+                                          ),
+                                          child: Text(
+                                            uwu(
+                                              'Válassz magasabb célsávot az ajánlásokhoz.',
+                                              enabled: _prefs.uwuModeEnabled,
+                                            ),
+                                            style: theme.textTheme.bodySmall?.copyWith(
+                                              color: scheme.onSurface
+                                                  .withValues(alpha: 0.65),
+                                            ),
+                                          ),
+                                        )
+                                      : Container(
+                                          decoration: BoxDecoration(
+                                            color: scheme.onSurface.withValues(
+                                              alpha: isDark ? 0.04 : 0.025,
+                                            ),
+                                            borderRadius: BorderRadius.circular(16),
+                                            border: Border.all(color: hairline),
+                                          ),
+                                          child: Column(
+                                            children: [
+                                              for (int i = 0;
+                                                  i < recommendations.length;
+                                                  i++) ...[
+                                                () {
+                                                  final rec = recommendations[i];
+                                                  final oldRounded = rec
+                                                      .subjectOldAverage
+                                                      .round()
+                                                      .clamp(1, 5);
+                                                  final newRounded = rec
+                                                      .subjectNewAverage
+                                                      .round()
+                                                      .clamp(1, 5);
+                                                  return Padding(
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                      horizontal: 14,
+                                                      vertical: 11,
+                                                    ),
+                                                    child: Row(
+                                                      children: [
+                                                        Expanded(
+                                                          child: Column(
+                                                            crossAxisAlignment:
+                                                                CrossAxisAlignment
+                                                                    .start,
+                                                            children: [
+                                                              Text(
+                                                                uwuLabel(
+                                                                  rec.subjectName,
+                                                                  enabled: _prefs
+                                                                      .uwuModeEnabled,
+                                                                ),
+                                                                maxLines: 1,
+                                                                overflow:
+                                                                    TextOverflow
+                                                                        .ellipsis,
+                                                                style: theme
+                                                                    .textTheme
+                                                                    .bodyMedium
+                                                                    ?.copyWith(
+                                                                  fontSize: 14,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .w700,
+                                                                  color: scheme
+                                                                      .onSurface,
+                                                                ),
+                                                              ),
+                                                              const SizedBox(
+                                                                height: 2,
+                                                              ),
+                                                              Text(
+                                                                uwuLabel(
+                                                                  '${rec.subjectOldAverage.toStringAsFixed(2)} -> ${rec.subjectNewAverage.toStringAsFixed(2)} • kerekítve $oldRounded -> $newRounded',
+                                                                  enabled: _prefs
+                                                                      .uwuModeEnabled,
+                                                                ),
+                                                                maxLines: 1,
+                                                                overflow:
+                                                                    TextOverflow
+                                                                        .ellipsis,
+                                                                style: theme
+                                                                    .textTheme
+                                                                    .bodySmall
+                                                                    ?.copyWith(
+                                                                  fontSize: 12,
+                                                                  color: scheme
+                                                                      .onSurface
+                                                                      .withValues(
+                                                                    alpha: 0.58,
+                                                                  ),
+                                                                  fontFeatures:
+                                                                      const [
+                                                                    FontFeature
+                                                                        .tabularFigures(),
+                                                                  ],
+                                                                ),
+                                                              ),
+                                                            ],
+                                                          ),
+                                                        ),
+                                                        const SizedBox(width: 10),
+                                                        Column(
+                                                          crossAxisAlignment:
+                                                              CrossAxisAlignment
+                                                                  .end,
+                                                          children: [
+                                                            Container(
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                horizontal: 8,
+                                                                vertical: 3,
+                                                              ),
+                                                              decoration:
+                                                                  BoxDecoration(
+                                                                color: scheme
+                                                                    .primary
+                                                                    .withValues(
+                                                                  alpha: 0.14,
+                                                                ),
+                                                                borderRadius:
+                                                                    BorderRadius
+                                                                        .circular(
+                                                                  8,
+                                                                ),
+                                                              ),
+                                                              child: Text(
+                                                                uwuLabel(
+                                                                  '+${rec.countNeeded} db ${rec.recommendedGrade}-ös',
+                                                                  enabled: _prefs
+                                                                      .uwuModeEnabled,
+                                                                ),
+                                                                style: TextStyle(
+                                                                  fontSize: 12,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .w800,
+                                                                  color: scheme
+                                                                      .primary,
+                                                                  fontFeatures:
+                                                                      const [
+                                                                    FontFeature
+                                                                        .tabularFigures(),
+                                                                  ],
+                                                                ),
+                                                              ),
+                                                            ),
+                                                            const SizedBox(
+                                                              height: 2,
+                                                            ),
+                                                            Text(
+                                                              '+${rec.globalBoost.toStringAsFixed(2)}',
+                                                              style:
+                                                                  const TextStyle(
+                                                                fontSize: 11.5,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w700,
+                                                                color:
+                                                                    achievedGreen,
+                                                                fontFeatures: [
+                                                                  FontFeature
+                                                                      .tabularFigures(),
+                                                                ],
+                                                              ),
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  );
+                                                }(),
+                                                if (i <
+                                                    recommendations.length - 1)
+                                                  Divider(
+                                                    height: 1,
+                                                    thickness: 1,
+                                                    indent: 14,
+                                                    endIndent: 14,
+                                                    color: hairline,
+                                                  ),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                        : const SizedBox.shrink(
+                            key: ValueKey<String>('scholarship-basic-empty'),
+                          ),
+                  ),
+                ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -2763,13 +3388,15 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
             final theme = Theme.of(ctx);
             final scheme = theme.colorScheme;
             return AlertDialog(
-              title: const Text('Szellemjegy szerkesztése'),
+              title: Text(
+                uwuLabel('Szellemjegy szerkesztése', enabled: _prefs.uwuModeEnabled),
+              ),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
-                    'Érdemjegy',
+                    uwuLabel('Érdemjegy', enabled: _prefs.uwuModeEnabled),
                     style: theme.textTheme.labelMedium?.copyWith(
                       color: scheme.onSurface.withValues(alpha: 0.7),
                       fontWeight: FontWeight.w700,
@@ -2813,7 +3440,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                   ),
                   const SizedBox(height: 14),
                   Text(
-                    'Súly',
+                    uwuLabel('Súly', enabled: _prefs.uwuModeEnabled),
                     style: theme.textTheme.labelMedium?.copyWith(
                       color: scheme.onSurface.withValues(alpha: 0.7),
                       fontWeight: FontWeight.w700,
@@ -2866,13 +3493,15 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                     Navigator.of(dialogCtx).pop();
                   },
                   child: Text(
-                    'Törlés',
+                    uwuLabel('Törlés', enabled: _prefs.uwuModeEnabled),
                     style: TextStyle(color: scheme.error),
                   ),
                 ),
                 TextButton(
                   onPressed: () => Navigator.of(dialogCtx).pop(),
-                  child: const Text('Mégse'),
+                  child: Text(
+                    uwuLabel('Mégse', enabled: _prefs.uwuModeEnabled),
+                  ),
                 ),
                 FilledButton(
                   onPressed: () {
@@ -2886,7 +3515,9 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                     });
                     Navigator.of(dialogCtx).pop();
                   },
-                  child: const Text('Mentés'),
+                  child: Text(
+                    uwuLabel('Mentés', enabled: _prefs.uwuModeEnabled),
+                  ),
                 ),
               ],
             );
@@ -2902,86 +3533,157 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
       baseOverallAvg,
       _prefs,
     );
-    var selectedIdx = resolved.tierIndex;
-    final chosenTierIdx = await showSoftBlurDialog<int>(
+    final currentIdx = resolved.tierIndex;
+    final chosenTierIdx = await showFloatingGlassSheet<int>(
       context: context,
-      builder: (dialogCtx) {
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) {
-            final scheme = Theme.of(ctx).colorScheme;
-            return AlertDialog(
-              title: const Text('Ösztöndíj célátlag kiválasztása'),
-              content: Column(
+      prefs: _prefs,
+      barrierColor: resolveSoftBlurBarrierColor(context, prefs: _prefs),
+      builder: (sheetCtx) {
+        final theme = Theme.of(sheetCtx);
+        final scheme = theme.colorScheme;
+        final isDark = theme.brightness == Brightness.dark;
+        return Align(
+          alignment: Alignment.bottomCenter,
+          heightFactor: 1.0,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 520,
+              maxHeight: MediaQuery.sizeOf(sheetCtx).height * 0.72,
+            ),
+            child: FrostedBottomSheetSurface(
+              prefs: _prefs,
+              showDragHandle: true,
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+              child: Column(
                 mainAxisSize: MainAxisSize.min,
-                children: List.generate(ScholarshipTier.tiers.length, (idx) {
-                  final tier = ScholarshipTier.tiers[idx];
-                  final isSel = selectedIdx == idx;
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(14),
-                      onTap: () => setDialogState(() => selectedIdx = idx),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: isSel
-                              ? scheme.primary.withValues(alpha: 0.16)
-                              : scheme.surfaceContainerHigh,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: isSel
-                                ? scheme.primary
-                                : scheme.outlineVariant.withValues(alpha: 0.4),
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          uwuLabel(
+                            'Ösztöndíj célátlag',
+                            enabled: _prefs.uwuModeEnabled,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.3,
                           ),
                         ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Cél: ${tier.minAverage.toStringAsFixed(2)} (${tier.rangeLabel})',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                  Text(
-                                    tier.title,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: scheme.onSurface
-                                          .withValues(alpha: 0.7),
-                                    ),
-                                  ),
-                                ],
-                              ),
+                      ),
+                      TactileBounce(
+                        onTap: () => Navigator.of(sheetCtx).pop(),
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: scheme.onSurface.withValues(
+                              alpha: isDark ? 0.08 : 0.06,
                             ),
-                            if (isSel)
-                              Icon(Icons.check_circle_rounded,
-                                  color: scheme.primary),
-                          ],
+                          ),
+                          child: Icon(
+                            Icons.close_rounded,
+                            size: 18,
+                            color: scheme.onSurface.withValues(alpha: 0.72),
+                          ),
                         ),
                       ),
-                    ),
-                  );
-                }),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  for (int idx = 0; idx < ScholarshipTier.tiers.length; idx++) ...[
+                    () {
+                      final tier = ScholarshipTier.tiers[idx];
+                      final isSel = currentIdx == idx;
+                      final amountLabel =
+                          '${ScholarshipTier.formatForint(tier.estimatedMonthlyForint)} Ft/hó';
+                      return Padding(
+                        padding: EdgeInsets.only(
+                          bottom:
+                              idx < ScholarshipTier.tiers.length - 1 ? 8 : 0,
+                        ),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(14),
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            Navigator.of(sheetCtx).pop(idx);
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 12,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isSel
+                                  ? scheme.primary.withValues(alpha: 0.14)
+                                  : scheme.onSurface.withValues(
+                                      alpha: isDark ? 0.05 : 0.035,
+                                    ),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: isSel
+                                    ? scheme.primary.withValues(alpha: 0.65)
+                                    : scheme.onSurface.withValues(
+                                        alpha: isDark ? 0.09 : 0.08,
+                                      ),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    tier.rangeLabel,
+                                    style: TextStyle(
+                                      fontSize: 14.5,
+                                      fontWeight: FontWeight.w700,
+                                      color: isSel
+                                          ? scheme.primary
+                                          : scheme.onSurface,
+                                      fontFeatures: const [
+                                        FontFeature.tabularFigures(),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  amountLabel,
+                                  style: TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: isSel
+                                        ? scheme.primary
+                                        : scheme.onSurface
+                                            .withValues(alpha: 0.72),
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures(),
+                                    ],
+                                  ),
+                                ),
+                                if (isSel) ...[
+                                  const SizedBox(width: 8),
+                                  Icon(
+                                    Icons.check_rounded,
+                                    size: 18,
+                                    color: scheme.primary,
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }(),
+                  ],
+                ],
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogCtx).pop(),
-                  child: const Text('Mégse'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(dialogCtx).pop(selectedIdx),
-                  child: const Text('Alkalmaz'),
-                ),
-              ],
-            );
-          },
+            ),
+          ),
         );
       },
     );
@@ -3019,16 +3721,10 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
     final selectedColor = _prefs.subjectCustomColors[subjectKey] ??
         _prefs.subjectCustomColors[widget.summary.subjectName];
 
-    final result = await showModalBottomSheet<_SubjectCustomizationResult>(
+    final result = await showFloatingGlassSheet<_SubjectCustomizationResult>(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
+      prefs: _prefs,
       barrierColor: resolveSoftBlurBarrierColor(context, prefs: _prefs),
-      sheetAnimationStyle: const AnimationStyle(
-        duration: Duration(milliseconds: 250),
-        reverseDuration: Duration(milliseconds: 230),
-      ),
       builder: (sheetContext) {
         return _SubjectCustomizationSheet(
           prefs: _prefs,
@@ -3183,19 +3879,33 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
     );
 
     final subjectHeroTag = widget.summary.uniqueHeroTag;
+    final gradeImpacts = SubjectGradeSummary.computeChronologicalGradeImpacts(
+      widget.summary.grades,
+    );
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(displaySubjectName),
+        surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
+        title: Text(uwuLabel(displaySubjectName, enabled: _prefs.uwuModeEnabled)),
         actions: [
           IconButton(
-            tooltip: 'Tantárgy testreszabása',
+            tooltip: uwuLabel(
+              'Tantárgy testreszabása',
+              enabled: _prefs.uwuModeEnabled,
+            ),
             onPressed: _openSubjectCustomizationModal,
             icon: const Icon(Icons.tune_rounded),
           ),
         ],
       ),
-      body: CustomScrollView(
+      body: VerticalScrollEdgeFades(
+        prefs: _prefs,
+        topHeaderHeight: 0.0,
+        topFeatherHeight: 26.0,
+        bottomFadeHeight: 36.0,
+        scrollDrivenTopFeather: true,
+        child: CustomScrollView(
         physics: const BouncingScrollPhysics(
           parent: AlwaysScrollableScrollPhysics(),
         ),
@@ -3247,7 +3957,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                           ),
                                         )
                                       : Text(
-                                          '–',
+                                          '-',
                                           style: theme.textTheme.titleLarge
                                               ?.copyWith(
                                             color: Colors.white,
@@ -3263,7 +3973,10 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        displaySubjectName,
+                                        uwuLabel(
+                                          displaySubjectName,
+                                          enabled: _prefs.uwuModeEnabled,
+                                        ),
                                         style: theme.textTheme.titleMedium
                                             ?.copyWith(
                                           fontWeight: FontWeight.w800,
@@ -3271,9 +3984,12 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
-                                        roundedStanding != null
-                                            ? '$roundedStanding (${widget.summary.grades.length} db jegy)'
-                                            : '${widget.summary.grades.length} rögzített értékelés',
+                                        uwuLabel(
+                                          roundedStanding != null
+                                              ? '$roundedStanding (${widget.summary.grades.length} db jegy)'
+                                              : '${widget.summary.grades.length} rögzített értékelés',
+                                          enabled: _prefs.uwuModeEnabled,
+                                        ),
                                         style: theme.textTheme.bodySmall
                                             ?.copyWith(
                                           color: scheme.onSurface
@@ -3284,7 +4000,10 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                           baseAvg != null) ...[
                                         const SizedBox(height: 4),
                                         Text(
-                                          'Eredeti átlag: ${baseAvg.toStringAsFixed(2)} • +${_ghostGrades.length} szellemjegy',
+                                          uwuLabel(
+                                            'Eredeti átlag: ${baseAvg.toStringAsFixed(2)} • +${_ghostGrades.length} szellemjegy',
+                                            enabled: _prefs.uwuModeEnabled,
+                                          ),
                                           style: theme.textTheme.labelSmall
                                               ?.copyWith(
                                             color: scheme.primary,
@@ -3320,22 +4039,16 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                   const SizedBox(height: 20),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Rögzített jegyek (koppints a részletekért)',
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        TextButton.icon(
-                          onPressed: _openSubjectCustomizationModal,
-                          icon: const Icon(Icons.edit_note_rounded, size: 18),
-                          label: const Text('Testreszabás'),
-                        ),
-                      ],
+                    child: Text(
+                      uwuLabel(
+                        'Rögzített jegyek',
+                        enabled: _prefs.uwuModeEnabled,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -3349,9 +4062,16 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
               delegate: SliverChildBuilderDelegate(
                 (context, idx) {
                   final grade = widget.summary.grades[idx];
+                  final impactDelta =
+                      gradeImpacts[SubjectGradeSummary.gradeImpactKey(grade)];
                   return RepaintBoundary(
-                    child: _buildGradeDetailCard(context, theme, scheme, grade)
-                        .staggeredEntrance(idx < 8 ? idx + 1 : 8),
+                    child: _buildGradeDetailCard(
+                      context,
+                      theme,
+                      scheme,
+                      grade,
+                      impactDelta: impactDelta,
+                    ).staggeredEntrance(idx < 8 ? idx + 1 : 8),
                   );
                 },
                 childCount: widget.summary.grades.length,
@@ -3359,6 +4079,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
             ),
           ),
         ],
+      ),
       ),
     );
   }
@@ -3396,6 +4117,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
           fontSize: 11.5,
           fontWeight: FontWeight.w900,
           color: color,
+          fontFeatures: const [FontFeature.tabularFigures()],
         ),
       ),
     );
@@ -3541,14 +4263,20 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Cél érdemjegy',
+                              uwuLabel(
+                                'Cél érdemjegy',
+                                enabled: _prefs.uwuModeEnabled,
+                              ),
                               style: theme.textTheme.titleSmall?.copyWith(
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
                           ),
                           Text(
-                            'Küszöb: ${targetThreshold.toStringAsFixed(2)}',
+                            uwuLabel(
+                              'Küszöb: ${targetThreshold.toStringAsFixed(2)}',
+                              enabled: _prefs.uwuModeEnabled,
+                            ),
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: scheme.onSurface.withValues(alpha: 0.65),
                               fontWeight: FontWeight.w700,
@@ -3570,7 +4298,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                       AnimatedSwitcher(
                         duration: const Duration(milliseconds: 200),
                         child: Text(
-                          needText,
+                          uwu(needText, enabled: _prefs.uwuModeEnabled),
                           key: ValueKey(needText),
                           style: theme.textTheme.bodySmall?.copyWith(
                             fontWeight: FontWeight.w600,
@@ -3624,9 +4352,12 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  _ghostGrades.isEmpty
-                                      ? 'Szellemjegyek'
-                                      : 'Szellemjegyek (${_ghostGrades.length})',
+                                  uwuLabel(
+                                    _ghostGrades.isEmpty
+                                        ? 'Szellemjegyek'
+                                        : 'Szellemjegyek (${_ghostGrades.length})',
+                                    enabled: _prefs.uwuModeEnabled,
+                                  ),
                                   style: theme.textTheme.labelLarge?.copyWith(
                                     fontWeight: FontWeight.w800,
                                     color: showImpactSummary
@@ -3658,7 +4389,12 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                           HapticFeedback.lightImpact();
                           setState(() => _ghostGrades.clear());
                         },
-                        child: const Text('Alaphelyzet'),
+                        child: Text(
+                          uwuLabel(
+                            'Alaphelyzet',
+                            enabled: _prefs.uwuModeEnabled,
+                          ),
+                        ),
                       ),
                     ],
                   ],
@@ -3702,7 +4438,10 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
                                               Text(
-                                                'Tantárgyi átlag',
+                                                uwuLabel(
+                                                  'Tantárgyi átlag',
+                                                  enabled: _prefs.uwuModeEnabled,
+                                                ),
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
                                                 style: theme
@@ -3737,7 +4476,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                                             ),
                                                           )
                                                         : Text(
-                                                            '–',
+                                                            '-',
                                                             style: theme
                                                                 .textTheme
                                                                 .titleLarge
@@ -3781,7 +4520,10 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
                                               Text(
-                                                'Összesített tanulmányi átlag',
+                                                uwuLabel(
+                                                  'Összesített tanulmányi átlag',
+                                                  enabled: _prefs.uwuModeEnabled,
+                                                ),
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
                                                 style: theme
@@ -3816,7 +4558,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                                             ),
                                                           )
                                                         : Text(
-                                                            '–',
+                                                            '-',
                                                             style: theme
                                                                 .textTheme
                                                                 .titleLarge
@@ -3882,7 +4624,11 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                               Row(
                                                 children: [
                                                   Text(
-                                                    'Ösztöndíj cél',
+                                                    uwuLabel(
+                                                      'Ösztöndíj cél',
+                                                      enabled:
+                                                          _prefs.uwuModeEnabled,
+                                                    ),
                                                     style: theme
                                                         .textTheme.labelSmall
                                                         ?.copyWith(
@@ -3896,7 +4642,11 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                                     const SizedBox(width: 6),
                                                     Expanded(
                                                       child: Text(
-                                                        '• ${scholarshipTarget.tier!.rangeLabel} (${scholarshipTarget.tier!.title})',
+                                                        uwuLabel(
+                                                          '• ${scholarshipTarget.tier!.rangeLabel} (${scholarshipTarget.tier!.title})',
+                                                          enabled: _prefs
+                                                              .uwuModeEnabled,
+                                                        ),
                                                         maxLines: 1,
                                                         overflow: TextOverflow
                                                             .ellipsis,
@@ -3917,7 +4667,10 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                               ),
                                               const SizedBox(height: 2),
                                               Text(
-                                                scholarshipStatusText,
+                                                uwuLabel(
+                                                  scholarshipStatusText,
+                                                  enabled: _prefs.uwuModeEnabled,
+                                                ),
                                                 style: theme.textTheme.bodySmall
                                                     ?.copyWith(
                                                   fontWeight: FontWeight.w800,
@@ -3959,7 +4712,10 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                               children: [
                                 const SizedBox(height: 14),
                                 Text(
-                                  'Szellemjegy súlya',
+                                  uwuLabel(
+                                    'Szellemjegy súlya',
+                                    enabled: _prefs.uwuModeEnabled,
+                                  ),
                                   style: theme.textTheme.labelMedium?.copyWith(
                                     color:
                                         scheme.onSurface.withValues(alpha: 0.6),
@@ -4097,24 +4853,41 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
     BuildContext context,
     ThemeData theme,
     ColorScheme scheme,
-    Grade grade,
-  ) {
+    Grade grade, {
+    GradeImpactDelta? impactDelta,
+  }) {
     final badgeColor = OledTheme.gradeColor(grade.numericValue, _prefs);
     final badgeText = grade.numericValue?.toString() ??
         grade.shortStrValue ??
         (grade.strValue.isNotEmpty ? grade.strValue.substring(0, 1) : '?');
 
-    final weightText = grade.weightPercentage != null
-        ? '${grade.weightPercentage}%'
-        : '100%';
-    final modeText = grade.mode?.description;
+    final weightPct =
+        (grade.weightPercentage != null && grade.weightPercentage! > 0)
+            ? grade.weightPercentage!
+            : 100;
+    final cleanTopic = OledTheme.capitalizeFirst(grade.topic ?? '');
+    final cleanMode = OledTheme.capitalizeFirst(grade.mode?.description ?? '');
+    final cleanType = OledTheme.capitalizeFirst(grade.type.description);
     final teacherDisplay = _prefs.resolveTeacherName(grade.teacher);
     final heroTag = 'subj_grade_${grade.uid}';
     final settings = AppProvidersScope.maybeOf(context)?.settings;
     final isMinimalist = (settings?.prefs ?? _prefs).minimalistModeEnabled;
-    final evalTypeText = (modeText != null && modeText.trim().isNotEmpty)
-        ? modeText.trim()
-        : grade.type.description;
+    final evalTypeText = cleanMode.isNotEmpty ? cleanMode : cleanType;
+    final hasTopic = cleanTopic.isNotEmpty;
+    final primaryTitle = hasTopic
+        ? cleanTopic
+        : (evalTypeText.isNotEmpty ? evalTypeText : grade.strValue);
+    final dateText = _dateFormat.format(grade.recordedAt.toLocal());
+
+    final subtitleText = [
+      if (hasTopic && evalTypeText.isNotEmpty)
+        evalTypeText
+      else if (!hasTopic && cleanType.isNotEmpty && cleanType != evalTypeText)
+        cleanType,
+      if (grade.strValue.trim().isNotEmpty &&
+          grade.strValue.trim() != primaryTitle)
+        grade.strValue.trim(),
+    ].join(' • ');
 
     Widget buildCard(bool isGlowing) {
       return Padding(
@@ -4123,11 +4896,14 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
           pressedScale: 0.97,
           onTap: () {
             settings?.dismissGradeGlow(grade);
+            final isDark = Theme.of(context).brightness == Brightness.dark;
             showGradeInspectionModal(
               context,
               grade,
               heroTag: heroTag,
               prefs: _prefs,
+              impactDeltaText: impactDelta?.formattedDelta,
+              impactDeltaColor: impactDelta?.resolveSemanticColor(isDark),
             );
           },
           child: GradeFirstSeenGlow(
@@ -4139,27 +4915,17 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
               padding: const EdgeInsets.all(16),
               borderRadius: OledTheme.cardRadius,
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Hero(
                     tag: heroTag,
+                    createRectTween: createLinearHeroRectTween,
+                    flightShuttleBuilder: buildBoomerangBadgeHeroShuttle,
                     child: Material(
                       type: MaterialType.transparency,
-                      child: Container(
-                        width: 48,
-                        height: 48,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: badgeColor,
-                          borderRadius: OledTheme.badgeRadius,
-                        ),
-                        child: Text(
-                          badgeText,
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
+                      child: TranslucentGradeBadge(
+                        text: badgeText,
+                        color: badgeColor,
                       ),
                     ),
                   ),
@@ -4169,47 +4935,44 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: isMinimalist
                           ? [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      evalTypeText,
-                                      style:
-                                          theme.textTheme.titleSmall?.copyWith(
-                                        fontWeight: FontWeight.w800,
-                                        color: scheme.onSurface,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    _dateFormat.format(grade.recordedAt.toLocal()),
-                                    style: theme.textTheme.labelSmall?.copyWith(
-                                      color: scheme.onSurface
-                                          .withValues(alpha: 0.65),
-                                    ),
-                                  ),
-                                ],
+                              Text(
+                                uwuLabel(
+                                  primaryTitle,
+                                  enabled: _prefs.uwuModeEnabled,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: scheme.onSurface,
+                                ),
                               ),
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 5),
                               Row(
                                 children: [
                                   Icon(
                                     Icons.person_outline_rounded,
                                     size: 14,
-                                    color:
-                                        scheme.onSurface.withValues(alpha: 0.54),
+                                    color: scheme.onSurface.withValues(
+                                      alpha: 0.54,
+                                    ),
                                   ),
                                   const SizedBox(width: 4),
                                   Expanded(
                                     child: Text(
-                                      teacherDisplay.isNotEmpty
-                                          ? teacherDisplay
-                                          : 'Ismeretlen tanár',
+                                      uwuLabel(
+                                        '${teacherDisplay.isNotEmpty ? teacherDisplay : 'Ismeretlen tanár'} • $dateText',
+                                        enabled: _prefs.uwuModeEnabled,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                       style:
                                           theme.textTheme.labelSmall?.copyWith(
                                         color: scheme.onSurface
-                                            .withValues(alpha: 0.72),
+                                            .withValues(alpha: 0.7),
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
                                       ),
                                     ),
                                   ),
@@ -4217,65 +4980,61 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                               ),
                             ]
                           : [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      '${grade.strValue} ($weightText)',
-                                      style:
-                                          theme.textTheme.titleSmall?.copyWith(
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                  ),
-                                  Text(
-                                    _dateFormat.format(grade.recordDate.toLocal()),
-                                    style: theme.textTheme.labelSmall?.copyWith(
-                                      color: scheme.onSurface
-                                          .withValues(alpha: 0.6),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
                               Text(
-                                [
-                                  grade.type.description,
-                                  if (modeText != null && modeText.isNotEmpty)
-                                    modeText,
-                                ].join(' • '),
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: scheme.primary,
-                                  fontWeight: FontWeight.w600,
+                                uwuLabel(
+                                  primaryTitle,
+                                  enabled: _prefs.uwuModeEnabled,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: scheme.onSurface,
                                 ),
                               ),
-                              if (grade.topic != null &&
-                                  grade.topic!.trim().isNotEmpty) ...[
-                                const SizedBox(height: 6),
+                              if (subtitleText.isNotEmpty) ...[
+                                const SizedBox(height: 3),
                                 Text(
-                                  'Téma: ${grade.topic}',
+                                  uwuLabel(
+                                    subtitleText,
+                                    enabled: _prefs.uwuModeEnabled,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: theme.textTheme.bodySmall?.copyWith(
-                                    color: scheme.onSurface,
+                                    color: scheme.onSurface.withValues(
+                                      alpha: 0.7,
+                                    ),
+                                    fontWeight: FontWeight.w500,
                                   ),
                                 ),
                               ],
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 5),
                               Row(
                                 children: [
                                   Icon(
                                     Icons.person_outline_rounded,
                                     size: 14,
-                                    color:
-                                        scheme.onSurface.withValues(alpha: 0.54),
+                                    color: scheme.onSurface.withValues(
+                                      alpha: 0.54,
+                                    ),
                                   ),
                                   const SizedBox(width: 4),
                                   Expanded(
                                     child: Text(
-                                      teacherDisplay,
+                                      uwuLabel(
+                                        '${teacherDisplay.isNotEmpty ? teacherDisplay : 'Ismeretlen tanár'} • $dateText',
+                                        enabled: _prefs.uwuModeEnabled,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                       style:
                                           theme.textTheme.labelSmall?.copyWith(
                                         color: scheme.onSurface
-                                            .withValues(alpha: 0.65),
+                                            .withValues(alpha: 0.62),
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
                                       ),
                                     ),
                                   ),
@@ -4284,6 +5043,14 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                             ],
                     ),
                   ),
+                  if (impactDelta != null &&
+                      (impactDelta.isNumeric || weightPct != 100)) ...[
+                    const SizedBox(width: 10),
+                    GradeImpactDeltaLabel(
+                      impact: impactDelta,
+                      weightPercentage: weightPct,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -4409,7 +5176,9 @@ class _SubjectCustomizationSheetState
     double max,
     ValueChanged<double> onChanged,
   ) {
-    final clamped = value.clamp(min, max);
+    double snap005(double v) => ((v * 20).round() / 20.0).clamp(min, max);
+    final clamped = snap005(value);
+    final divisions = ((max - min) * 20).round();
     final scheme = theme.colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -4443,7 +5212,8 @@ class _SubjectCustomizationSheetState
           value: clamped,
           min: min,
           max: max,
-          onChanged: onChanged,
+          divisions: divisions > 0 ? divisions : null,
+          onChanged: (v) => onChanged(snap005(v)),
         ),
       ],
     );
@@ -4463,13 +5233,18 @@ class _SubjectCustomizationSheetState
       },
       child: Padding(
         padding: EdgeInsets.only(bottom: bottomInset),
-        child: LiquidGlassSurface(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 560,
+            maxHeight: (MediaQuery.sizeOf(context).height - bottomInset) * 0.86,
+          ),
+          child: FrostedBottomSheetSurface(
           prefs: widget.prefs,
-          highContrastExpanded: true,
-          contentOpacityAnimation: ModalRoute.of(context)?.animation,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+          topRadius: 26,
+          showDragHandle: false,
+          includeSafeAreaBottom: true,
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(0, 14, 0, 28),
+            padding: const EdgeInsets.fromLTRB(0, 14, 0, 22),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -4492,7 +5267,10 @@ class _SubjectCustomizationSheetState
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        'Tantárgy testreszabása',
+                        uwuLabel(
+                          'Tantárgy testreszabása',
+                          enabled: widget.prefs.uwuModeEnabled,
+                        ),
                         style: theme.textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.w900,
                         ),
@@ -4502,8 +5280,14 @@ class _SubjectCustomizationSheetState
                         controller: _subjController,
                         focusNode: _subjFocusNode,
                         decoration: InputDecoration(
-                          labelText: 'Tantárgy saját elnevezése',
-                          hintText: widget.subjectName,
+                          labelText: uwuLabel(
+                            'Tantárgy saját elnevezése',
+                            enabled: widget.prefs.uwuModeEnabled,
+                          ),
+                          hintText: uwuLabel(
+                            widget.subjectName,
+                            enabled: widget.prefs.uwuModeEnabled,
+                          ),
                           prefixIcon: const Icon(Icons.edit_rounded),
                         ),
                       ),
@@ -4513,16 +5297,24 @@ class _SubjectCustomizationSheetState
                           controller: _teacherController,
                           focusNode: _teacherFocusNode,
                           decoration: InputDecoration(
-                            labelText:
-                                'Tanár átnevezése (${widget.primaryTeacher})',
-                            hintText: widget.primaryTeacher,
+                            labelText: uwuLabel(
+                              'Tanár átnevezése (${widget.primaryTeacher})',
+                              enabled: widget.prefs.uwuModeEnabled,
+                            ),
+                            hintText: uwuLabel(
+                              widget.primaryTeacher,
+                              enabled: widget.prefs.uwuModeEnabled,
+                            ),
                             prefixIcon: const Icon(Icons.person_rounded),
                           ),
                         ),
                       ],
                       const SizedBox(height: 16),
                       Text(
-                        'Egyedi tantárgy szín:',
+                        uwuLabel(
+                          'Egyedi tantárgy szín:',
+                          enabled: widget.prefs.uwuModeEnabled,
+                        ),
                         style: theme.textTheme.labelLarge?.copyWith(
                           fontWeight: FontWeight.w800,
                         ),
@@ -4536,7 +5328,12 @@ class _SubjectCustomizationSheetState
                   spacing: 8,
                   children: [
                     ChoiceChip(
-                      label: const Text('Automatikus'),
+                      label: Text(
+                        uwuLabel(
+                          'Automatikus',
+                          enabled: widget.prefs.uwuModeEnabled,
+                        ),
+                      ),
                       selected: _selectedColor == null,
                       onSelected: (_) => setState(() => _selectedColor = null),
                     ),
@@ -4582,7 +5379,10 @@ class _SubjectCustomizationSheetState
                         children: [
                           Expanded(
                             child: Text(
-                              'Tantárgyi kerekítési határok:',
+                              uwuLabel(
+                                'Tantárgyi kerekítési határok:',
+                                enabled: widget.prefs.uwuModeEnabled,
+                              ),
                               style: theme.textTheme.labelLarge?.copyWith(
                                 fontWeight: FontWeight.w800,
                               ),
@@ -4597,13 +5397,21 @@ class _SubjectCustomizationSheetState
                                 _threshold2 = widget.defaultRounding.threshold2;
                               });
                             },
-                            child: const Text('Alapértelmezett'),
+                            child: Text(
+                              uwuLabel(
+                                'Alapértelmezett',
+                                enabled: widget.prefs.uwuModeEnabled,
+                              ),
+                            ),
                           ),
                         ],
                       ),
                       _buildThresholdRow(
                         theme,
-                        '5 (Jeles) küszöb',
+                        uwuLabel(
+                          '5 (Jeles) küszöb',
+                          enabled: widget.prefs.uwuModeEnabled,
+                        ),
                         _threshold5,
                         4.00,
                         4.95,
@@ -4611,7 +5419,10 @@ class _SubjectCustomizationSheetState
                       ),
                       _buildThresholdRow(
                         theme,
-                        '4 (Jó) küszöb',
+                        uwuLabel(
+                          '4 (Jó) küszöb',
+                          enabled: widget.prefs.uwuModeEnabled,
+                        ),
                         _threshold4,
                         3.00,
                         3.95,
@@ -4619,7 +5430,10 @@ class _SubjectCustomizationSheetState
                       ),
                       _buildThresholdRow(
                         theme,
-                        '3 (Közepes) küszöb',
+                        uwuLabel(
+                          '3 (Közepes) küszöb',
+                          enabled: widget.prefs.uwuModeEnabled,
+                        ),
                         _threshold3,
                         2.00,
                         2.95,
@@ -4627,7 +5441,10 @@ class _SubjectCustomizationSheetState
                       ),
                       _buildThresholdRow(
                         theme,
-                        '2 (Elégséges) küszöb',
+                        uwuLabel(
+                          '2 (Elégséges) küszöb',
+                          enabled: widget.prefs.uwuModeEnabled,
+                        ),
                         _threshold2,
                         1.10,
                         2.20,
@@ -4637,7 +5454,12 @@ class _SubjectCustomizationSheetState
                       FilledButton.icon(
                         onPressed: _saveAndClose,
                         icon: const Icon(Icons.check_rounded),
-                        label: const Text('Mentés'),
+                        label: Text(
+                          uwuLabel(
+                            'Mentés',
+                            enabled: widget.prefs.uwuModeEnabled,
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -4647,6 +5469,7 @@ class _SubjectCustomizationSheetState
           ),
         ),
       ),
+    ),
     );
   }
 }

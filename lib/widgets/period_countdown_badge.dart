@@ -7,9 +7,8 @@ import 'package:flutter/scheduler.dart';
 import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
-import '../providers/app_providers.dart';
 import '../services/token_storage_service.dart';
-import 'glass_card.dart';
+import '../utils/uwu_helper.dart';
 
 /// Returns true if [lesson] is marked as cancelled (`Allapot.Nev == "elmaradt"`).
 bool isLessonCancelled(Lesson lesson) {
@@ -173,6 +172,27 @@ String formatCountdownRemainingLabel(
   return '$mins$minuteSuffix';
 }
 
+/// Formats remaining duration in compact Hungarian units (`1ó 10p hátra`,
+/// `6p hátra`, `45mp hátra`) without leading zeros.
+String formatCompactCountdownRemaining(
+  Duration remaining, {
+  String suffix = ' hátra',
+}) {
+  final ms = remaining.inMilliseconds;
+  if (ms <= 0) return '0mp$suffix';
+  if (ms <= 60000) {
+    final secs = ((ms + 999) ~/ 1000).clamp(1, 60);
+    return '${secs}mp$suffix';
+  }
+  final totalMins = ((ms + 59999) ~/ 60000).clamp(1, 1440);
+  if (totalMins >= 60) {
+    final hours = totalMins ~/ 60;
+    final mins = totalMins % 60;
+    return mins > 0 ? '$hoursó ${mins}p$suffix' : '$hoursó$suffix';
+  }
+  return '${totalMins}p$suffix';
+}
+
 /// Snapshot emitted by [LiveCountdownProgressScope] for countdown rings and
 /// perimeter borders.
 class LiveCountdownSnapshot {
@@ -200,6 +220,9 @@ class LiveCountdownSnapshot {
         finalSuffix: finalSuffix,
         minuteSuffix: minuteSuffix,
       );
+
+  String formattedCompactRemaining({String suffix = ' hátra'}) =>
+      formatCompactCountdownRemaining(remainingDuration, suffix: suffix);
 }
 
 /// Scopes final-minute (`<= 60s`) 500ms easeOutCubic refill and smooth 120Hz
@@ -267,13 +290,13 @@ class _LiveCountdownProgressScopeState
       _wasAboveOneMinute = true;
       _refillCtrl.value = 1.0;
     }
-    _syncTimingState(allowRefillTrigger: false);
+    _syncTimingState(allowRefillTrigger: false, checkTickerMode: false);
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _syncTimingState(allowRefillTrigger: true);
+    _syncTimingState(allowRefillTrigger: true, checkTickerMode: true);
   }
 
   @override
@@ -287,10 +310,13 @@ class _LiveCountdownProgressScopeState
       _wasAboveOneMinute = remMs > 60000;
       _refillCtrl.value = 1.0;
     }
-    _syncTimingState(allowRefillTrigger: !windowChanged);
+    _syncTimingState(allowRefillTrigger: !windowChanged, checkTickerMode: true);
   }
 
-  void _syncTimingState({required bool allowRefillTrigger}) {
+  void _syncTimingState({
+    required bool allowRefillTrigger,
+    bool checkTickerMode = true,
+  }) {
     final remMs = widget.endTime.difference(_sampleNow()).inMilliseconds;
     if (remMs > 60000) {
       _wasAboveOneMinute = true;
@@ -317,9 +343,11 @@ class _LiveCountdownProgressScopeState
       _wasAboveOneMinute = false;
     }
 
-    if (widget.clock == null && TickerMode.valuesOf(context).enabled) {
+    if (widget.clock == null &&
+        checkTickerMode &&
+        TickerMode.valuesOf(context).enabled) {
       _ensureFinalMinuteTicker();
-    } else {
+    } else if (checkTickerMode) {
       _stopFinalMinuteTicker();
     }
   }
@@ -479,9 +507,9 @@ class PeriodCountdownRingPainter extends CustomPainter {
       oldDelegate.glowSigma != glowSigma;
 }
 
-/// Period number badge that displays either a quiet rounded-square badge or,
-/// when [remainingFraction] (or a live [startTime]/[endTime] window) is active,
-/// a circular badge encircled by [PeriodCountdownRingPainter].
+/// Period number badge that displays either a quiet circular (or custom-shaped)
+/// badge or, when [remainingFraction] (or a live [startTime]/[endTime] window)
+/// is active, a circular badge encircled by [PeriodCountdownRingPainter].
 class PeriodCountdownBadge extends StatelessWidget {
   final String label;
   final Widget? centerChild;
@@ -499,6 +527,7 @@ class PeriodCountdownBadge extends StatelessWidget {
   final double idleSize;
   final double strokeWidth;
   final double glowSigma;
+  final BoxShape idleShape;
   final BorderRadius idleBorderRadius;
 
   const PeriodCountdownBadge({
@@ -515,10 +544,11 @@ class PeriodCountdownBadge extends StatelessWidget {
     this.clock,
     this.border,
     this.outerSize = 44,
-    this.innerSize = 30,
-    this.idleSize = 34,
+    this.innerSize = 34,
+    this.idleSize = 38,
     this.strokeWidth = 3.2,
     this.glowSigma = 4.5,
+    this.idleShape = BoxShape.circle,
     this.idleBorderRadius = const BorderRadius.all(Radius.circular(10)),
   });
 
@@ -526,11 +556,26 @@ class PeriodCountdownBadge extends StatelessWidget {
     if (centerChild != null) return centerChild!;
     final existingFeatures = textStyle.fontFeatures;
     final tabularStyle = textStyle.copyWith(
+      height: 1.0,
       fontFeatures: (existingFeatures != null && existingFeatures.isNotEmpty)
           ? existingFeatures
           : const [ui.FontFeature.tabularFigures()],
     );
-    return Text(label, style: tabularStyle);
+    final leftOpticalShift = label.endsWith('.') ? 1.5 : 0.0;
+    return Center(
+      child: Padding(
+        padding: EdgeInsets.only(left: leftOpticalShift),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          textHeightBehavior: const TextHeightBehavior(
+            applyHeightToFirstAscent: false,
+            applyHeightToLastDescent: false,
+          ),
+          style: tabularStyle,
+        ),
+      ),
+    );
   }
 
   Widget _buildActiveRingBadge(double fraction) {
@@ -579,7 +624,8 @@ class PeriodCountdownBadge extends StatelessWidget {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: backgroundColor,
-          borderRadius: idleBorderRadius,
+          shape: idleShape,
+          borderRadius: idleShape == BoxShape.circle ? null : idleBorderRadius,
           border: border,
         ),
         child: _buildCenterContent(),
@@ -701,10 +747,8 @@ class BreakPerimeterCountdownPainter extends CustomPainter {
       oldDelegate.glowSigma != glowSigma;
 }
 
-/// Dedicated glowing full-perimeter Break (`Szünet`) card rendered between
-/// consecutive lessons during an active break. Uses a 120Hz GPU-friendly
-/// multi-stop Liquid Glass gradient surface wrapped in [RepaintBoundary] when
-/// Liquid Glass mode is enabled (zero per-item BackdropFilter stalls).
+/// Compact, low-profile Break (`Szünet`) strip rendered between consecutive
+/// lessons during an active break without heavy glows or bulky boxes.
 class BreakCountdownCard extends StatelessWidget {
   final DateTime breakStart;
   final DateTime breakEnd;
@@ -728,35 +772,10 @@ class BreakCountdownCard extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final transform = textTransform ?? (s) => s;
+    final transform = textTransform ??
+        (s) => uwuLabel(s, enabled: prefs?.uwuModeEnabled);
     final timeFormat = DateFormat('HH:mm');
     final accent = scheme.primary;
-    final effectivePrefs =
-        prefs ?? AppProvidersScope.maybeOf(context)?.settings.prefs;
-    final liquidGlass = resolveLiquidGlassEnabled(effectivePrefs);
-    final solidFill =
-        scheme.surfaceContainerHigh.withValues(alpha: isDark ? 0.92 : 0.98);
-    final glassGradient = isDark
-        ? LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            stops: const [0.0, 0.38, 1.0],
-            colors: [
-              Colors.white.withValues(alpha: 0.09),
-              const Color(0xFF141820).withValues(alpha: 0.56),
-              const Color(0xFF0A0D13).withValues(alpha: 0.68),
-            ],
-          )
-        : LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            stops: const [0.0, 0.4, 1.0],
-            colors: [
-              Colors.white.withValues(alpha: 0.84),
-              scheme.surfaceContainerHigh.withValues(alpha: 0.62),
-              scheme.surfaceContainer.withValues(alpha: 0.72),
-            ],
-          );
 
     return RepaintBoundary(
       child: LiveCountdownProgressScope(
@@ -766,127 +785,101 @@ class BreakCountdownCard extends StatelessWidget {
         clock: clock,
         builder: (context, snapshot) {
           final remainingLabel = transform(
-            snapshot.formattedRemaining(
-              finalSuffix: ' mp',
-              minuteSuffix: ' perc van hátra',
-            ),
+            snapshot.formattedCompactRemaining(suffix: ' hátra'),
           );
-          final Widget body = Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: liquidGlass
-                ? BoxDecoration(
-                    gradient: glassGradient,
-                    border: Border(
-                      top: BorderSide(
-                        color: Colors.white.withValues(
-                          alpha: isDark ? 0.20 : 0.62,
-                        ),
-                        width: 0.85,
-                      ),
-                    ),
-                  )
-                : BoxDecoration(color: solidFill),
-            child: Row(
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: accent.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(11),
-                  ),
-                  child: Icon(
-                    Icons.pause_rounded,
-                    color: accent,
-                    size: 20,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        transform('Szünet'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w900,
-                          color: scheme.onSurface,
-                        ),
-                      ),
-                      const SizedBox(height: 1),
-                      Text(
-                        '${timeFormat.format(breakStart)} – ${timeFormat.format(breakEnd)}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: scheme.onSurface.withValues(alpha: 0.68),
-                          fontWeight: FontWeight.w700,
-                          fontFeatures: const [
-                            ui.FontFeature.tabularFigures(),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: accent.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Text(
-                    remainingLabel,
-                    maxLines: 1,
-                    softWrap: false,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: accent,
-                      fontWeight: FontWeight.w900,
-                      fontFeatures: const [
-                        ui.FontFeature.tabularFigures(),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-
-          final Widget clippedSurface = ClipRRect(
-            borderRadius: BorderRadius.circular(20),
-            child: body,
-          );
+          final elapsed = (1.0 - snapshot.progress).clamp(0.02, 1.0);
 
           return Container(
-            margin: const EdgeInsets.only(bottom: 8),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: accent.withValues(alpha: isDark ? 0.16 : 0.10),
-                  blurRadius: 14,
-                  spreadRadius: -2,
+            margin: const EdgeInsets.only(bottom: 7),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHigh.withValues(
+                    alpha: isDark ? 0.48 : 0.72,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: theme.dividerColor.withValues(
+                      alpha: isDark ? 0.8 : 0.9,
+                    ),
+                    width: 1.0,
+                  ),
                 ),
-              ],
-            ),
-            child: CustomPaint(
-              foregroundPainter: BreakPerimeterCountdownPainter(
-                progress: snapshot.progress,
-                color: accent,
-                trackColor: accent.withValues(alpha: isDark ? 0.18 : 0.16),
-                radius: 20.0,
-                strokeWidth: 2.2,
-                glowSigma: 6.0,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 8,
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              color: accent,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            transform('Szünet'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              color: scheme.onSurface,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${timeFormat.format(breakStart)} - ${timeFormat.format(breakEnd)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              fontSize: 12,
+                              color: scheme.onSurface.withValues(alpha: 0.54),
+                              fontWeight: FontWeight.w500,
+                              fontFeatures: const [
+                                ui.FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            remainingLabel,
+                            maxLines: 1,
+                            softWrap: false,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              fontSize: 12,
+                              color: accent.withValues(alpha: 0.9),
+                              fontWeight: FontWeight.w600,
+                              fontFeatures: const [
+                                ui.FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    LinearProgressIndicator(
+                      value: elapsed,
+                      minHeight: 2,
+                      backgroundColor: accent.withValues(
+                        alpha: isDark ? 0.12 : 0.10,
+                      ),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        accent.withValues(alpha: 0.75),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              child: clippedSurface,
             ),
           );
         },

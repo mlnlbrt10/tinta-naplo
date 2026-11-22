@@ -181,7 +181,7 @@ void main() {
     );
     expect(farBefore.phase, NextLessonPhase.beforeFirstFarAway);
     expect(farBefore.headline, 'Matematika');
-    expect(farBefore.countdownLabel, 'Kezdés: 2ó 30p 0mp');
+    expect(farBefore.countdownLabel, 'Kezdés: 2ó 30p múlva');
 
     // 2. Within 2 hours before first lesson (07:15 -> 45 mins before 08:00)
     final nearBefore = NextLessonStatus.evaluate(
@@ -189,7 +189,7 @@ void main() {
       DateTime(2026, 11, 10, 7, 15),
     );
     expect(nearBefore.phase, NextLessonPhase.beforeFirstWithinTwoHours);
-    expect(nearBefore.countdownLabel, 'Kezdés: 45p 0mp');
+    expect(nearBefore.countdownLabel, 'Kezdés: 45p múlva');
 
     expect(
       NextLessonStatus.formatRemainingLessonsLabel(1),
@@ -249,7 +249,7 @@ void main() {
     expect(ScholarshipTier.tiers.map((t) => t.percent).toList(), [8, 25, 42, 59]);
     expect(ScholarshipTier.basicEducationMonthlyForint('technikum'), 8000);
     expect(ScholarshipTier.basicEducationMonthlyForint('szakkepzo'), 16000);
-    expect(ScholarshipTier.tiers[tierIdx].rangeLabel, '4,00 – 4,49');
+    expect(ScholarshipTier.tiers[tierIdx].rangeLabel, '4,00 - 4,49');
 
     final recs = SubjectGradeSummary.buildScholarshipRecommendations(
       allGrades: grades,
@@ -263,7 +263,6 @@ void main() {
     const prefs = UserProfilePrefs(
       nickname: 'Mili',
       uwuModeEnabled: true,
-      tsundereModeEnabled: true,
       christmasModeEnabled: true,
       showCancelledLessons: true,
       appIconPreset: 'christmas',
@@ -281,7 +280,6 @@ void main() {
 
     expect(restored.nickname, 'Mili');
     expect(restored.uwuModeEnabled, isTrue);
-    expect(restored.tsundereModeEnabled, isTrue);
     expect(restored.christmasModeEnabled, isTrue);
     expect(restored.showCancelledLessons, isTrue);
     expect(restored.appIconPreset, 'christmas');
@@ -395,7 +393,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('Karácsonyi OLED'), findsOneWidget);
-    expect(find.text('v2.0.2'), findsOneWidget);
+    expect(find.text('v3.0.0'), findsOneWidget);
   });
 
   testWidgets(
@@ -624,10 +622,19 @@ void main() {
         accentColor: Colors.blue,
         title: 'Frosted modal',
         rows: const [],
-        prefs: const UserProfilePrefs(cardBlurEnabled: true, cardBlurSigma: 4.0),
+        prefs: const UserProfilePrefs(liquidGlassEnabled: true, cardBlurSigma: 4.0),
       );
       await tester.pumpAndSettle();
+      // Translucent bottom sheet uses a single BackdropFilter(sigma: 14) when Liquid Glass is ON.
+      expect(find.text('Frosted modal'), findsOneWidget);
       expect(find.byType(BackdropFilter), findsOneWidget);
+      final modalBackdrop = tester.widget<BackdropFilter>(
+        find.byType(BackdropFilter),
+      );
+      expect(
+        modalBackdrop.filter,
+        ImageFilter.blur(sigmaX: 14.0, sigmaY: 14.0),
+      );
 
       Navigator.of(capturedCtx).pop();
       await tester.pumpAndSettle();
@@ -639,9 +646,10 @@ void main() {
         accentColor: Colors.blue,
         title: 'Solid modal',
         rows: const [],
-        prefs: const UserProfilePrefs(cardBlurEnabled: false, cardBlurSigma: 4.0),
+        prefs: const UserProfilePrefs(liquidGlassEnabled: false, cardBlurSigma: 4.0),
       );
       await tester.pumpAndSettle();
+      expect(find.text('Solid modal'), findsOneWidget);
       expect(find.byType(BackdropFilter), findsNothing);
     },
   );
@@ -812,6 +820,7 @@ void main() {
   testWidgets(
     'TintaNaploApp startup uses TintaSplashOverlay with zero CircularProgressIndicator and dissolves cleanly',
     (tester) async {
+      SharedPreferences.setMockInitialValues({});
       FlutterSecureStorage.setMockInitialValues({});
       await tester.pumpWidget(
         const TintaNaploApp(tokenStorage: TokenStorageService()),
@@ -820,9 +829,15 @@ void main() {
       expect(find.byType(TintaSplashOverlay), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsNothing);
 
-      await tester.pumpAndSettle(const Duration(milliseconds: 100));
+      // Advance bounded frames so async session restore + 450ms splash dissolve
+      // finish cleanly without blocking on LoginScreen's continuous carousel timer.
+      for (int i = 0; i < 32; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
       expect(find.byType(TintaSplashOverlay), findsNothing);
       expect(find.text('Tinta Napló'), findsWidgets);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 5));
     },
   );
 
@@ -1014,6 +1029,7 @@ void main() {
       expect(find.text('Fizika'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 16));
     },
   );
 
@@ -1121,15 +1137,15 @@ void main() {
     (tester) async {
       const blurOnPrefs = UserProfilePrefs(
         themeStyle: AppThemeStyle.oledPureBlack,
-        cardBlurEnabled: true,
+        liquidGlassEnabled: true,
         cardBlurSigma: 2.0,
       );
       const blurOffPrefs = UserProfilePrefs(
         themeStyle: AppThemeStyle.oledPureBlack,
-        cardBlurEnabled: false,
+        liquidGlassEnabled: false,
       );
 
-      expect(resolveSoftBlurBackdropSigma(blurOnPrefs), closeTo(16.0, 0.01));
+      expect(resolveSoftBlurBackdropSigma(blurOnPrefs), closeTo(10.0, 0.01));
 
       late Color barrierBlurOn;
       late Color barrierBlurOff;
@@ -1287,7 +1303,7 @@ void main() {
   );
 
   testWidgets(
-    'Hiányzások tab renders daily cards below summary ordered newest-first with period ascending, filtering, and detail modal',
+    'Hiányzások tab renders subject absence cards with percentages, filtering, subject bottom sheet, and detail modal',
     (tester) async {
       final session = StoredSession(
         accessToken: 'acc',
@@ -1353,34 +1369,17 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
 
       final nov12Label = formatHungarianOmissionDay(nov12);
-      final nov10Label = formatHungarianOmissionDay(nov10);
 
       expect(find.text('Hiányzások és Késések'), findsOneWidget);
-      expect(find.text(nov12Label), findsOneWidget);
-      expect(find.text(nov10Label), findsOneWidget);
-      expect(find.text('2 óra • 1 késés'), findsOneWidget);
-      expect(
-        find.descendant(
-          of: find.byType(SoftGlassCard).last,
-          matching: find.text('1 óra'),
-        ),
-        findsOneWidget,
-      );
+      expect(find.text('Fizika'), findsOneWidget);
+      expect(find.text('Matematika'), findsOneWidget);
+      expect(find.text('Történelem'), findsOneWidget);
+      expect(find.text('Irodalom'), findsOneWidget);
+      expect(find.textContaining(' / '), findsAtLeastNWidgets(4));
+      expect(find.textContaining('%'), findsAtLeastNWidgets(4));
+      expect(find.byType(LinearProgressIndicator), findsAtLeastNWidgets(4));
 
-      // Newest day card appears above older day card
-      expect(
-        tester.getTopLeft(find.text(nov12Label)).dy,
-        lessThan(tester.getTopLeft(find.text(nov10Label)).dy),
-      );
-
-      // Periods inside Nov. 12 daily card are ordered ascending (1., 12 p, 5.)
-      final y1 = tester.getTopLeft(find.text('1. óra')).dy;
-      final y2 = tester.getTopLeft(find.text('12 p')).dy;
-      final y5 = tester.getTopLeft(find.text('5. óra')).dy;
-      expect(y1, lessThan(y2));
-      expect(y2, lessThan(y5));
-
-      // Filter by 'Igazolatlan' leaves only Fizika on Nov 12
+      // Filter by 'Igazolatlan' leaves only Fizika
       await tester.tap(
         find.descendant(
           of: find.byWidgetPredicate((w) => w is LiquidBubbleTabBar),
@@ -1388,16 +1387,21 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text(nov10Label), findsNothing);
-      expect(find.text(nov12Label), findsOneWidget);
       expect(find.text('Fizika'), findsOneWidget);
       expect(find.text('Matematika'), findsNothing);
+      expect(find.text('Történelem'), findsNothing);
 
-      // Tapping an entry inside the daily card opens its detail modal
+      // Tapping a Subject Card opens the subject absences bottom sheet
       await tester.tap(find.text('Fizika'));
       await tester.pumpAndSettle();
-      expect(find.text('Rögzítő tanár'), findsOneWidget);
-      expect(find.text('Mulasztás / Hiányzás'), findsOneWidget);
+      expect(find.text(nov12Label), findsOneWidget);
+      expect(find.text('5.'), findsOneWidget);
+
+      // Tapping an entry inside the subject bottom sheet opens its detail modal
+      await tester.tap(find.text(nov12Label));
+      await tester.pumpAndSettle();
+      expect(find.text('Tanár'), findsOneWidget);
+      expect(find.text('Hiányzás • Igazolatlan'), findsOneWidget);
     },
   );
 
@@ -1528,20 +1532,23 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.text('Matematika'), findsOneWidget);
-      expect(find.text('Még 5 órád van hátra'), findsOneWidget);
+      expect(find.text('Még 5 óra'), findsOneWidget);
       expect(find.text('Dr. Ujvári Sándor'), findsOneWidget);
       expect(find.textContaining('Kezdés:'), findsOneWidget);
       await tester.pump(const Duration(seconds: 1));
       expect(find.textContaining('Kezdés:'), findsOneWidget);
       expect(find.text('Dr. Ujvári Sándor'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 16));
     },
   );
 
   testWidgets(
-    'showFrostedModal and showSoftBlurDialog render BackdropFilter from frame 0 through smooth reverse fade-out without Opacity or FadeTransition ancestors',
+    'showFrostedModal and showSoftBlurDialog open and close cleanly without double-blur BackdropFilter stacking',
     (tester) async {
       late BuildContext capturedCtx;
       await tester.pumpWidget(
@@ -1557,7 +1564,7 @@ void main() {
         ),
       );
 
-      // Soft Blur ON: showFrostedModal blurs immediately mid-open and fades blur smoothly on close.
+      // Liquid Glass ON: showFrostedModal renders translucent bottom sheet with 1 flat blur.
       showFrostedModal(
         context: capturedCtx,
         categoryLabel: 'TESZT',
@@ -1571,75 +1578,33 @@ void main() {
             value: '08:00',
           ),
         ],
-        prefs: const UserProfilePrefs(cardBlurEnabled: true),
+        prefs: const UserProfilePrefs(liquidGlassEnabled: true),
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 24));
+      expect(find.text('Azonnali elmosódás'), findsOneWidget);
       expect(find.byType(BackdropFilter), findsOneWidget);
-      expect(
-        find.ancestor(
-          of: find.byType(BackdropFilter),
-          matching: find.byType(Opacity),
-        ),
-        findsNothing,
-      );
-      expect(
-        find.ancestor(
-          of: find.byType(BackdropFilter),
-          matching: find.byType(FadeTransition),
-        ),
-        findsNothing,
-      );
       await tester.pumpAndSettle();
-      final modalSettledFilter =
-          tester.widget<BackdropFilter>(find.byType(BackdropFilter)).filter;
 
       Navigator.of(capturedCtx).pop();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 115));
-      expect(find.byType(BackdropFilter), findsOneWidget);
-      final modalMidCloseFilter =
-          tester.widget<BackdropFilter>(find.byType(BackdropFilter)).filter;
-      expect(modalMidCloseFilter, isNot(equals(modalSettledFilter)));
       await tester.pumpAndSettle();
-      expect(find.byType(BackdropFilter), findsNothing);
+      expect(find.text('Azonnali elmosódás'), findsNothing);
 
-      // Soft Blur ON: showSoftBlurDialog blurs immediately mid-open and fades blur smoothly on close.
+      // Liquid Glass ON: showSoftBlurDialog renders cleanly with highContrastExpanded: true.
       showSoftBlurDialog<void>(
         context: capturedCtx,
-        prefs: const UserProfilePrefs(cardBlurEnabled: true),
+        prefs: const UserProfilePrefs(liquidGlassEnabled: true),
         builder: (_) => const Text('Dialog tartalom'),
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 24));
-      expect(find.byType(BackdropFilter), findsOneWidget);
-      expect(
-        find.ancestor(
-          of: find.byType(BackdropFilter),
-          matching: find.byType(Opacity),
-        ),
-        findsNothing,
-      );
-      expect(
-        find.ancestor(
-          of: find.byType(BackdropFilter),
-          matching: find.byType(FadeTransition),
-        ),
-        findsNothing,
-      );
+      expect(find.text('Dialog tartalom'), findsOneWidget);
+      expect(find.byType(BackdropFilter), findsNothing);
       await tester.pumpAndSettle();
-      final dialogSettledFilter =
-          tester.widget<BackdropFilter>(find.byType(BackdropFilter)).filter;
 
       Navigator.of(capturedCtx).pop();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 115));
-      expect(find.byType(BackdropFilter), findsOneWidget);
-      final dialogMidCloseFilter =
-          tester.widget<BackdropFilter>(find.byType(BackdropFilter)).filter;
-      expect(dialogMidCloseFilter, isNot(equals(dialogSettledFilter)));
       await tester.pumpAndSettle();
-      expect(find.byType(BackdropFilter), findsNothing);
+      expect(find.text('Dialog tartalom'), findsNothing);
 
       // Soft Blur OFF: zero BackdropFilter even on frame 0 and settled.
       showFrostedModal(
@@ -1824,6 +1789,264 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.getSize(hwSlotFinder).height, greaterThan(0));
       expect(tester.getSize(bioSlotFinder).height, equals(0.0));
+    },
+  );
+
+  test(
+    'groupOmissionsBySubject computes missed hours vs total held lessons and percentage cleanly',
+    () {
+      final groups = groupOmissionsBySubject(
+        [
+          _makeOmission(
+            uid: 'm1',
+            subjectName: 'Matematika',
+            date: DateTime(2026, 11, 3),
+            classNo: 1,
+            state: OmissionState.excused,
+          ),
+          _makeOmission(
+            uid: 'm2',
+            subjectName: 'Matematika',
+            date: DateTime(2026, 11, 3),
+            classNo: 2,
+            state: OmissionState.excused,
+          ),
+          _makeOmission(
+            uid: 'm3',
+            subjectName: 'Matematika',
+            date: DateTime(2026, 11, 4),
+            classNo: 3,
+            state: OmissionState.unexcused,
+          ),
+          _makeOmission(
+            uid: 'm4',
+            subjectName: 'Matematika',
+            date: DateTime(2026, 11, 5),
+            classNo: 4,
+            state: OmissionState.excused,
+          ),
+        ],
+        heldLessonsBySubject: const {'Matematika': 32},
+      );
+      expect(groups.length, 1);
+      expect(groups.first.subjectName, 'Matematika');
+      expect(groups.first.missedHours, 4);
+      expect(groups.first.totalHeldLessons, 32);
+      expect(groups.first.uncertifiedHours, 1);
+      expect(groups.first.absencePercentage, closeTo(12.5, 0.01));
+    },
+  );
+
+  testWidgets(
+    'AllOmissionsScreen shows compact day cards and opens Timetable-Style Day View highlighting missed lessons in red',
+    (tester) async {
+      final nov12 = DateTime(DateTime.now().year, 11, 12);
+      final dayLessons = [
+        _makeLesson(
+          uid: 'l1',
+          subjectName: 'Irodalom',
+          start: DateTime(nov12.year, nov12.month, nov12.day, 8, 0),
+          end: DateTime(nov12.year, nov12.month, nov12.day, 8, 45),
+        ),
+        _makeLesson(
+          uid: 'l2',
+          subjectName: 'Matematika',
+          start: DateTime(nov12.year, nov12.month, nov12.day, 8, 55),
+          end: DateTime(nov12.year, nov12.month, nov12.day, 9, 40),
+        ),
+      ];
+      final omissions = [
+        _makeOmission(
+          uid: 'om-day-2',
+          subjectName: 'Matematika',
+          date: nov12,
+          classNo: 2,
+          state: OmissionState.unexcused,
+        ),
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: OledTheme.buildTheme(prefs: const UserProfilePrefs()),
+          home: AllOmissionsScreen(
+            omissions: omissions,
+            prefs: const UserProfilePrefs(),
+            referenceLessons: dayLessons,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Compact day card does NOT dump individual period badges on main list
+      expect(find.text(formatHungarianOmissionDay(nov12)), findsOneWidget);
+      expect(find.text('1 óra'), findsOneWidget);
+      expect(find.text('2. óra'), findsNothing);
+
+      // Tap day card -> opens Timetable-Style Day View bottom sheet
+      await tester.tap(find.text(formatHungarianOmissionDay(nov12)));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Napi órarend nézet'), findsOneWidget);
+      expect(find.text('Hiányzás • Igazolatlan'), findsOneWidget);
+      expect(find.text('2.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Scholarship Calculator renders clean segmented control, minimal hero summary, 5-column distribution, and 2-line strategy rows',
+    (tester) async {
+      final now = DateTime(2026, 11, 12, 10, 0);
+      final grades = [
+        Grade.fromJson({
+          'Uid': 'g1',
+          'Tantargy': {'Uid': 'math', 'Nev': 'Matematika', 'SortIndex': 1},
+          'Tema': 'Dolgozat',
+          'Datum': now.toIso8601String(),
+          'KeszitesDatuma': now.toIso8601String(),
+          'RogzitoTanarNeve': 'Tanár A',
+          'SzamErtek': 4,
+          'Ertek': 'Jó (4)',
+          'SulySzazalekErteke': 100,
+          'Tipus': {'Uid': 'evk', 'Nev': 'Evkozi', 'Leiras': 'Évközi'},
+        }),
+        Grade.fromJson({
+          'Uid': 'g2',
+          'Tantargy': {'Uid': 'phys', 'Nev': 'Fizika', 'SortIndex': 2},
+          'Tema': 'Felelés',
+          'Datum': now.toIso8601String(),
+          'KeszitesDatuma': now.toIso8601String(),
+          'RogzitoTanarNeve': 'Tanár B',
+          'SzamErtek': 3,
+          'Ertek': 'Közepes (3)',
+          'SulySzazalekErteke': 100,
+          'Tipus': {'Uid': 'evk', 'Nev': 'Evkozi', 'Leiras': 'Évközi'},
+        }),
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: OledTheme.buildTheme(
+            prefs: const UserProfilePrefs(liquidGlassEnabled: true),
+          ),
+          home: Scaffold(
+            body: GradesScreen(
+              allGrades: grades,
+              prefs: const UserProfilePrefs(liquidGlassEnabled: true),
+              onPrefsChanged: (_) {},
+              onRefresh: () async {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Open Scholarship Calculator bottom sheet
+      await tester.tap(find.text('Összesített súlyozott átlag'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ösztöndíj kalkulátor'), findsOneWidget);
+      expect(find.text('Szakirányú'), findsOneWidget);
+      expect(find.text('Ágazati (9-10.)'), findsOneWidget);
+      expect(find.text('ÁTLAG'), findsOneWidget);
+      expect(find.text('ÖSZTÖNDÍJ'), findsOneWidget);
+      expect(find.text('ÉRDEMJEGYEK ELOSZLÁSA'), findsOneWidget);
+      // 5 evenly-spaced columns: 5, 4, 3, 2, 1
+      expect(find.text('5'), findsAtLeastNWidgets(1));
+      expect(find.text('1'), findsAtLeastNWidgets(1));
+      // Concise 2-line strategy rows + weight toggle
+      expect(find.text('100%'), findsOneWidget);
+      expect(find.text('200% témazáró'), findsOneWidget);
+      expect(find.textContaining('kerekítve'), findsAtLeastNWidgets(1));
+      // Translucent bottom sheet uses single flat BackdropFilter blur + floating margins
+      expect(find.byType(BackdropFilter), findsOneWidget);
+      final sheetClip = tester.widget<ClipRRect>(
+        find.descendant(
+          of: find.byType(FrostedBottomSheetSurface),
+          matching: find.byType(ClipRRect),
+        ).first,
+      );
+      expect(sheetClip.borderRadius, BorderRadius.circular(26));
+      // Elastic Liquid Glass draggable sliders use LiquidBubbleTabBar inside the sheet
+      expect(
+        find.descendant(
+          of: find.byType(FrostedBottomSheetSurface),
+          matching: find.byType(LiquidBubbleTabBar),
+        ),
+        findsAtLeastNWidgets(2),
+      );
+
+      // Switch segmented mode cleanly without overflow
+      await tester.tap(find.text('Ágazati (9-10.)'));
+      await tester.pumpAndSettle();
+      expect(find.text('Technikum'), findsOneWidget);
+      expect(find.text('Szakképző'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'SubjectGradesDetailScreen removes duplicate customization button, shows single-line Rögzített jegyek, and opens compact floating Ösztöndíj célátlag sheet',
+    (tester) async {
+      final now = DateTime(2026, 11, 12, 10, 0);
+      final grades = [
+        Grade.fromJson({
+          'Uid': 's1',
+          'Tantargy': {'Uid': 'eng', 'Nev': 'Angol nyelv', 'SortIndex': 1},
+          'Tema': 'Szódolgozat',
+          'Datum': now.toIso8601String(),
+          'KeszitesDatuma': now.toIso8601String(),
+          'RogzitoTanarNeve': 'Tanár E',
+          'SzamErtek': 4,
+          'Ertek': 'Jó (4)',
+          'SulySzazalekErteke': 100,
+          'Tipus': {'Uid': 'evk', 'Nev': 'Evkozi', 'Leiras': 'Évközi'},
+        }),
+      ];
+      final summaries = SubjectGradeSummary.groupBySubject(grades);
+      UserProfilePrefs updatedPrefs = const UserProfilePrefs();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: OledTheme.buildTheme(prefs: updatedPrefs),
+          home: SubjectGradesDetailScreen(
+            summary: summaries.first,
+            allSubjects: summaries,
+            prefs: updatedPrefs,
+            onPrefsChanged: (next) => updatedPrefs = next,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Single top-right AppBar tune button, zero duplicate inline 'Testreszabás'
+      expect(find.byIcon(Icons.tune_rounded), findsOneWidget);
+      expect(find.text('Testreszabás'), findsNothing);
+      expect(find.text('Rögzített jegyek'), findsOneWidget);
+      expect(
+        find.text('Rögzített jegyek (koppints a részletekért)'),
+        findsNothing,
+      );
+      expect(find.byType(VerticalScrollEdgeFades), findsOneWidget);
+
+      // Open Szellemjegyek panel and tap Ösztöndíj cél
+      await tester.tap(find.text('Szellemjegyek'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Ösztöndíj cél'));
+      await tester.tap(find.text('Ösztöndíj cél'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ösztöndíj célátlag'), findsOneWidget);
+      expect(find.text('4,50 - 5,00'), findsOneWidget);
+      expect(find.text('59 000 Ft/hó'), findsOneWidget);
+      expect(find.text('Mégse'), findsNothing);
+      expect(find.text('Alkalmaz'), findsNothing);
+
+      // Tapping an option immediately applies and closes the compact sheet
+      await tester.tap(find.text('4,50 - 5,00'));
+      await tester.pumpAndSettle();
+      expect(find.text('Ösztöndíj célátlag'), findsNothing);
+      expect(updatedPrefs.extras['scholarshipTargetTierIdx'], 3);
+      expect(updatedPrefs.extras['scholarshipTargetAverage'], 4.50);
     },
   );
 }

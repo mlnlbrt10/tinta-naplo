@@ -1,10 +1,7 @@
-/// Global UwU and Tsundere text transformers for Tinta Napló's Developer Mode Easter Eggs.
+/// Global UwU text transformers for Tinta Napló's Developer Mode Easter Eggs.
 class UwuHelper {
   /// Synchronized with `UserProfilePrefs.uwuModeEnabled`.
   static bool isEnabled = false;
-
-  /// Synchronized with `UserProfilePrefs.tsundereModeEnabled`.
-  static bool isTsundereEnabled = false;
 
   /// Synchronized with `UserProfilePrefs.fitymaModeEnabled`.
   static bool isFitymaEnabled = false;
@@ -16,52 +13,66 @@ class UwuHelper {
 
   static const List<String> _suffixes = [
     'uwu',
-    ':3',
     'owo',
+    ':3',
     '>w<',
-    'nya~',
   ];
 
-  static const List<String> tsundereAlerts = [
-    'N-nem mintha érdekelne a házi feladatod, b-baka~!',
-    'M-megint egy hármas? Nem mintha figyeltem volna rád, h-hülye...~',
-    'N-nehogy azt hidd, hogy miattad töltöttem be az órarendedet, b-baka~!',
-    'H-hmph~! N-ne bámulj így a jegyeidre, b-baka~!',
-    'A-ahh~... nem miattad frissítettem ám az adatokat, csak unatkoztam~!',
-  ];
+  static final RegExp _tokenSplitter = RegExp(r'(\s+)');
+  static final RegExp _leadingTrailingPunct = RegExp(
+    r'^([^A-Za-zÁÉÍÓÖŐÚÜŰáéíóöőúüű]*)([A-Za-zÁÉÍÓÖŐÚÜŰáéíóöőúüű]+)([^A-Za-zÁÉÍÓÖŐÚÜŰáéíóöőúüű]*)$',
+  );
+  static final RegExp _upperAcronym = RegExp(r'^[A-ZÁÉÍÓÖŐÚÜŰ]{2,5}$');
+  static final RegExp _nasalVowel = RegExp(r'([nN])([aeiouáéíóöőúüű])');
+  static final RegExp _protectedSuffixGuard = RegExp(
+    r'[\d\)\]]$|ft(/hó|-[A-Za-zÁÉÍÓÖŐÚÜŰáéíóöőúüű]+)?$',
+    caseSensitive: false,
+  );
+  static final RegExp _ftHyphenGuard = RegExp(r'^ft-', caseSensitive: false);
 
-  /// Returns an expressive Tsundere comment for a grade or alert.
-  static String tsundereCommentForGrade(int? grade) {
-    switch (grade) {
-      case 5:
-        return 'Ö-ötös?! N-nehogy azt hidd, hogy büszke vagyok rád vagy ilyesmi, b-baka~!';
-      case 4:
-        return 'N-négyes~? Pff, tudnál te ennél jobbat is... n-nem mintha érdekelne, b-baka~!';
-      case 3:
-        return 'M-megint egy hármas? Nem mintha figyeltem volna rád, h-hülye...~';
-      case 2:
-        return 'K-kettes?! H-hé, tanulj már egy kicsit... n-nem mintha aggódnék érted, b-baka~!';
-      case 1:
-        return 'E-egyes?! B-baka~! A-azonnal ülj le tanulni, de n-nehogy azt hidd, hogy érdekel~!';
-      default:
-        return 'N-nem mintha érdekelne a házi feladatod, b-baka~!';
-    }
-  }
+  static const Set<String> _protectedTokens = {
+    'ft',
+    'huf',
+    'eur',
+    'usd',
+    'km',
+    'cm',
+    'mm',
+    'db',
+    'fszt',
+    'em',
+    'évf',
+    'dr',
+    'prof',
+    'jan',
+    'feb',
+    'már',
+    'ápr',
+    'máj',
+    'jún',
+    'júl',
+    'aug',
+    'szept',
+    'okt',
+    'nov',
+    'dec',
+  };
 
   /// Convenience alias for [transform].
   static String apply(
     String input, {
     bool? enabled,
-    bool? tsundere,
+    bool allowSuffix = true,
   }) =>
-      transform(input, enabled: enabled, tsundere: tsundere);
+      transform(input, enabled: enabled, allowSuffix: allowSuffix);
 
-  /// Transforms [input] with cute UwU phonetic replacements or Tsundere sassy
-  /// overrides when enabled.
+  /// Transforms [input] with dynamic, readable UwU phonetics when enabled,
+  /// preserving numbers, timestamps, dates, percentages, room codes, currency,
+  /// and acronyms.
   static String transform(
     String input, {
     bool? enabled,
-    bool? tsundere,
+    bool allowSuffix = true,
   }) {
     if (input.trim().isEmpty) {
       return input;
@@ -74,86 +85,151 @@ class UwuHelper {
           .replaceAll('Tinta Nyapló', 'Fityma Nyapló');
     }
 
-    final tsundereActive = tsundere ?? isTsundereEnabled;
-    if (tsundereActive && enabled != true) {
-      return _transformTsundere(source);
-    }
-
     final active = enabled ?? isEnabled;
     if (!active) {
       return source;
     }
 
-    // Specific phrase overrides requested in spec
-    String out = source
+    // Preserve greetings and specific iconic phrases cleanly
+    var out = source
         .replaceAll('Szép napot', 'Szép nyapot')
         .replaceAll('szép napot', 'szép nyapot')
         .replaceAll('Jó éjszakát', 'Jó éccakát')
         .replaceAll('jó éjszakát', 'jó éccakát')
         .replaceAll('Szép reggelt', 'Szép weggewt')
-        .replaceAll('Szép estét', 'Szép estét');
+        .replaceAll('szép reggelt', 'szép weggewt');
 
-    // Phonetic replacements: 'r'/'l' -> 'w', 'th' -> 'd', 'na/no/ne' -> 'nya/nyo/nye'
-    out = out
-        .replaceAll('th', 'd')
-        .replaceAll('Th', 'D')
-        .replaceAll('TH', 'D')
-        .replaceAll(RegExp(r'n([aeiouáéíóöőúüű])'), r'ny$1')
-        .replaceAll(RegExp(r'N([aeiouáéíóöőúüű])'), r'Ny$1')
-        .replaceAll('r', 'w')
-        .replaceAll('l', 'w')
-        .replaceAll('R', 'W')
-        .replaceAll('L', 'W');
+    // Token-aware transformation so numbers, times, percentages, and URLs remain intact
+    final buffer = StringBuffer();
+    var searchStart = 0;
+    for (final match in _tokenSplitter.allMatches(out)) {
+      if (match.start > searchStart) {
+        buffer.write(_transformWordToken(out.substring(searchStart, match.start)));
+      }
+      buffer.write(match.group(0));
+      searchStart = match.end;
+    }
+    if (searchStart < out.length) {
+      buffer.write(_transformWordToken(out.substring(searchStart)));
+    }
+    out = buffer.toString();
 
-    // Avoid duplicating suffixes if already present
-    final lower = out.toLowerCase();
+    if (!allowSuffix) {
+      return out;
+    }
+
+    final trimmed = out.trimRight();
+    final lower = trimmed.toLowerCase();
     for (final s in _suffixes) {
-      if (lower.endsWith(s)) {
+      if (lower.contains(s)) {
         return out;
       }
     }
+    if (lower.endsWith('nya~')) {
+      return out;
+    }
 
-    // Deterministically append a cute suffix to longer phrases or titles
-    if (input.length >= 6) {
-      final suffix = _suffixes[input.hashCode.abs() % _suffixes.length];
-      return '$out $suffix';
+    // Append a subtle kaomoji only on longer conversational sentences, dynamically
+    if (trimmed.length >= 18 &&
+        !trimmed.contains('\n') &&
+        !trimmed.contains('->') &&
+        !trimmed.endsWith(':') &&
+        !trimmed.endsWith('%') &&
+        !_protectedSuffixGuard.hasMatch(trimmed)) {
+      final hash = _stableHash(source);
+      if (trimmed.endsWith('!') ||
+          trimmed.endsWith('?') ||
+          trimmed.endsWith('.') ||
+          hash % 3 == 0) {
+        final suffix = source.startsWith('Szép napot')
+            ? 'uwu'
+            : _suffixes[hash % _suffixes.length];
+        return '$out $suffix';
+      }
     }
     return out;
   }
 
-  static String _transformTsundere(String input) {
-    if (input.contains('Házik') || input.contains('Házi feladat')) {
-      return '$input (n-nem mintha érdekelne, b-baka~!)';
+  static String _transformWordToken(String token) {
+    if (token.length <= 2) return token;
+    if (token.contains(RegExp(r'[0-9@/\\:%#=&]')) ||
+        token.toLowerCase().startsWith('http')) {
+      return token;
     }
-    if (input.contains('Nincs megjeleníthető elem')) {
-      return 'N-nincs itt semmi~! N-nehogy azt hidd, hogy neked kerestem, b-baka~!';
-    }
-    if (input.contains('Mára vége az óráknak')) {
-      return 'M-mára vége az óráknak~! N-nehogy azt hidd, hogy hiányozni fogsz, b-baka~!';
-    }
-    if (input.contains('A legfrissebb verziót használod')) {
-      return 'M-már a legújabb verzión vagy, b-baka~! M-minek nyomkodod~?!';
-    }
-    if (input.contains('Aktivitási hírfolyam')) {
-      return 'A-aktivitási hírfolyam (H-hmph~!)';
-    }
-    if (input.contains('Következő óra')) {
-      return 'K-következő óra (N-ne késs el, b-baka~!)';
-    }
-    if (input.contains('Tanulmányi átlag')) {
-      return 'T-tanulmányi átlag (H-hmph~)';
-    }
-    // Add subtle stutter & trailing tilde to longer sentences when Tsundere mode is active
-    if (input.length > 14 && !input.endsWith('~') && !input.endsWith('~!')) {
-      final firstChar = input[0];
-      if (RegExp(r'[A-ZÁÉÍÓÖŐÚÜŰ]').hasMatch(firstChar)) {
-        return '$firstChar-${input.toLowerCase()[0]}${input.substring(1)}~';
+
+    if (token.contains('-')) {
+      if (_ftHyphenGuard.hasMatch(token)) {
+        return token;
       }
+      final parts = token.split('-');
+      return parts.map(_transformWordToken).join('-');
     }
-    return input;
+
+    final m = _leadingTrailingPunct.firstMatch(token);
+    if (m == null) {
+      return token;
+    }
+    final prefix = m.group(1)!;
+    final core = m.group(2)!;
+    final suffix = m.group(3)!;
+
+    if (core.length <= 2 ||
+        _upperAcronym.hasMatch(core) ||
+        _protectedTokens.contains(core.toLowerCase())) {
+      return token;
+    }
+
+    var transformed = core
+        .replaceAll('th', 'd')
+        .replaceAll('Th', 'D')
+        .replaceAll('TH', 'D');
+
+    // Fix nasal vowel expansions safely using replaceAllMapped (never literal '$1')
+    transformed = transformed.replaceAllMapped(_nasalVowel, (match) {
+      final n = match.group(1)!;
+      final v = match.group(2)!;
+      // Avoid double ny if already followed by y semantics or inside short roots
+      return '${n}y$v';
+    });
+    // Collapse accidental 'nyy' -> 'ny'
+    transformed = transformed
+        .replaceAll('nyy', 'ny')
+        .replaceAll('Nyy', 'Ny');
+
+    // Selectively soften 'r'/'l' -> 'w' up to 2 swaps per word to keep Hungarian legible
+    final chars = transformed.split('');
+    var swaps = 0;
+    for (var i = 0; i < chars.length; i++) {
+      final ch = chars[i];
+      if (ch == 'r' || ch == 'l') {
+        chars[i] = 'w';
+        swaps++;
+      } else if (ch == 'R' || ch == 'L') {
+        chars[i] = 'W';
+        swaps++;
+      }
+      if (swaps >= 2) break;
+    }
+    transformed = chars.join();
+
+    return '$prefix$transformed$suffix';
+  }
+
+  static int _stableHash(String value) {
+    var hash = 0x811c9dc5;
+    for (final unit in value.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0x7fffffff;
+    }
+    return hash;
   }
 }
 
-/// Shorthand global helper for UwU / Tsundere text transformation.
-String uwu(String text, {bool? enabled, bool? tsundere}) =>
-    UwuHelper.transform(text, enabled: enabled, tsundere: tsundere);
+/// Shorthand global helper for UwU text transformation.
+String uwu(String text, {bool? enabled, bool allowSuffix = true}) =>
+    UwuHelper.transform(text, enabled: enabled, allowSuffix: allowSuffix);
+
+/// Shorthand UwU helper for compact UI labels, names, badges, and table rows
+/// (transforms text without appending trailing kaomojis).
+String uwuLabel(String text, {bool? enabled}) =>
+    UwuHelper.transform(text, enabled: enabled, allowSuffix: false);

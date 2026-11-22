@@ -474,7 +474,7 @@ void main() {
 
           // Initial day = Wednesday of Week 0, and adjacent weeks (-1 and +1) are pre-fetched
           expect(find.text('W0_Wed'), findsOneWidget);
-          expect(find.text('11. 16.–11. 20.'), findsOneWidget);
+          expect(find.text('11.16-20.'), findsOneWidget);
           expect(
             tester.widget<LiquidBubbleTabBar>(find.byType(LiquidBubbleTabBar))
                 .selectedIndex,
@@ -502,7 +502,7 @@ void main() {
 
           expect(outerTabController.page, 2.0);
           expect(find.text('W-1_Fri'), findsOneWidget);
-          expect(find.text('11. 09.–11. 13.'), findsOneWidget);
+          expect(find.text('11.09-13.'), findsOneWidget);
           final prevFriTabBar = tester.widget<LiquidBubbleTabBar>(
             find.byType(LiquidBubbleTabBar),
           );
@@ -516,7 +516,7 @@ void main() {
           await tester.pump(const Duration(milliseconds: 300));
 
           expect(find.text('W0_Mon'), findsOneWidget);
-          expect(find.text('11. 16.–11. 20.'), findsOneWidget);
+          expect(find.text('11.16-20.'), findsOneWidget);
           final backToMonTabBar = tester.widget<LiquidBubbleTabBar>(
             find.byType(LiquidBubbleTabBar),
           );
@@ -534,7 +534,7 @@ void main() {
           await tester.pump(const Duration(milliseconds: 120));
           await tester.pump(const Duration(milliseconds: 220));
           expect(find.text('W-1_Mon'), findsOneWidget);
-          expect(find.text('11. 09.–11. 13.'), findsOneWidget);
+          expect(find.text('11.09-13.'), findsOneWidget);
           expect(
             tester.widget<LiquidBubbleTabBar>(find.byType(LiquidBubbleTabBar))
                 .selectedIndex,
@@ -552,7 +552,7 @@ void main() {
           await tester.pump(const Duration(milliseconds: 120));
           await tester.pump(const Duration(milliseconds: 220));
           expect(find.text('W0_Mon'), findsOneWidget);
-          expect(find.text('11. 16.–11. 20.'), findsOneWidget);
+          expect(find.text('11.16-20.'), findsOneWidget);
           expect(
             tester.widget<LiquidBubbleTabBar>(find.byType(LiquidBubbleTabBar))
                 .selectedIndex,
@@ -615,7 +615,7 @@ void main() {
           int dayOffset, {
           required bool expectFirstLesson,
         }) {
-          final dayTitle = '2026. 11. ${16 + dayOffset}.';
+          final dayTitle = '11. ${16 + dayOffset}.';
           expect(find.textContaining(dayTitle), findsOneWidget);
           final dayListViewFinder = find.ancestor(
             of: find.textContaining(dayTitle),

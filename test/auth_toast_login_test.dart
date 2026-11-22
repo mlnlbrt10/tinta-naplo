@@ -49,7 +49,6 @@ void main() {
       expect(find.byType(TextField), findsNothing);
       expect(find.byType(TextFormField), findsNothing);
       expect(find.text('OAuth2 PKCE'), findsNothing);
-      expect(find.textContaining('igazán jóra'), findsNothing);
       expect(
         find.textContaining('Lépj be biztonságosan'),
         findsNothing,
@@ -59,25 +58,20 @@ void main() {
       expect(scaffold.backgroundColor, const Color(0xFF000000));
 
       expect(find.text('Tinta Napló'), findsOneWidget);
-      expect(find.text('Készen állsz?'), findsOneWidget);
       expect(find.text('Bejelentkezés KRÉTA-val'), findsOneWidget);
 
-      final ctaHeadline = tester.widget<Text>(
-        find.text('Készen állsz?'),
+      final ctaHeadline = tester.widget<RichText>(
+        find.byKey(const ValueKey<String>('login-hero-headline')),
       );
-      expect(ctaHeadline.style?.color, Colors.white);
-      expect(ctaHeadline.style?.fontSize, 28.0);
-      expect(ctaHeadline.style?.fontWeight, FontWeight.w800);
-      expect(ctaHeadline.style?.letterSpacing, -0.6);
-      expect(
-        find.ancestor(
-          of: find.text('Készen állsz?'),
-          matching: find.byWidgetPredicate(
-            (w) => w is ShaderMask && w.blendMode == BlendMode.srcIn,
-          ),
-        ),
-        findsOneWidget,
-      );
+      final rootSpan = ctaHeadline.text as TextSpan;
+      final children = rootSpan.children!;
+      expect(children.length, 2);
+      expect((children[0] as TextSpan).text, 'Készen állsz valami\n');
+      final secondSpan = children[1] as TextSpan;
+      expect(secondSpan.text, 'igazán jóra?');
+      expect(secondSpan.style?.color, const Color(0xFF3B82F6));
+      expect(secondSpan.style?.fontWeight, FontWeight.w900);
+      expect(rootSpan.style?.fontFamily, OledTheme.defaultFontFamily);
 
       final pageView = tester.widget<PageView>(find.byType(PageView));
       expect(pageView.clipBehavior, Clip.none);
@@ -102,14 +96,33 @@ void main() {
           .evaluate()
           .isNotEmpty;
 
+      // Realistic Phone Mockup bezel + fixed 08:02 status bar clock & zero screenshot vignette fade
+      expect(
+        find.byKey(const ValueKey<String>('login-phone-mockup-0')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('login-phone-mockup-0')),
+          matching: find.byType(ShaderMask),
+        ),
+        findsNothing,
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey<String>('login-phone-time-0')))
+            .data,
+        '08:02',
+      );
+
       // Slide 1
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_1_lesson.webp'),
+        hasShowcaseImage('assets/images/showcase/showcase_home.jpg'),
         isTrue,
       );
       expect(
         find.text(
-          'Kövesd az órád, lásd a következőt. Mindig képben lehetsz a napod menetével.',
+          'Minden fontos infó egy helyen - aktuális óra, házik és jegyek átlaghatással.',
         ),
         findsOneWidget,
       );
@@ -118,12 +131,18 @@ void main() {
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
       await tester.pumpAndSettle();
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_2_scholarship.webp'),
+        tester
+            .widget<Text>(find.byKey(const ValueKey<String>('login-phone-time-1')))
+            .data,
+        '08:02',
+      );
+      expect(
+        hasShowcaseImage('assets/images/showcase/showcase_timetable.jpg'),
         isTrue,
       );
       expect(
         find.text(
-          'Tűzd ki, érd el. Az ösztöndíj-kalkulátorral semmi se lehetetlen.',
+          'Átlátható heti órarend helyettesítésekkel, elmaradt órákkal és házikkal.',
         ),
         findsOneWidget,
       );
@@ -132,12 +151,18 @@ void main() {
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
       await tester.pumpAndSettle();
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_3_timetable.webp'),
+        tester
+            .widget<Text>(find.byKey(const ValueKey<String>('login-phone-time-2')))
+            .data,
+        '08:02',
+      );
+      expect(
+        hasShowcaseImage('assets/images/showcase/showcase_grades.jpg'),
         isTrue,
       );
       expect(
         find.text(
-          'Egyből csak a lényeg. Lásd könnyen, milyen órád marad el, és melyik lesz helyettesítve.',
+          'Tantárgyankénti átlagok és jegyek, rendezhetően és azonnal átláthatóan.',
         ),
         findsOneWidget,
       );
@@ -146,19 +171,71 @@ void main() {
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
       await tester.pumpAndSettle();
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_4_themes.webp'),
+        tester
+            .widget<Text>(find.byKey(const ValueKey<String>('login-phone-time-3')))
+            .data,
+        '08:02',
+      );
+      expect(
+        hasShowcaseImage('assets/images/showcase/showcase_scholarship.jpg'),
         isTrue,
       );
       expect(
         find.text(
-          'A végtelen személyre szabásnak köszönhetően igazán olyan lehet az app, amilyennek Te elképzelted.',
+          'Tűzd ki, érd el - kövesd az ösztöndíjadat és a következő sávhoz szükséges lépéseket.',
         ),
         findsOneWidget,
       );
 
-      // Slide 5 (Expanded MenetrendGO card + interactive caption link)
+      // Slide 5
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
       await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey<String>('login-phone-time-4')))
+            .data,
+        '08:02',
+      );
+      expect(
+        hasShowcaseImage('assets/images/showcase/showcase_absences.jpg'),
+        isTrue,
+      );
+      expect(
+        find.text(
+          'Hiányzások tantárgyanként és napi órarend-nézetben, pirossal kiemelve.',
+        ),
+        findsOneWidget,
+      );
+
+      // Slide 6
+      await tester.drag(find.byType(PageView), const Offset(-350, 0));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey<String>('login-phone-time-5')))
+            .data,
+        '08:02',
+      );
+      expect(
+        hasShowcaseImage('assets/images/showcase/showcase_themes.jpg'),
+        isTrue,
+      );
+      expect(
+        find.text(
+          'OLED fekete, Material You és Liquid Glass - szabd teljesen magadra az appot.',
+        ),
+        findsOneWidget,
+      );
+
+      // Slide 7 (Expanded MenetrendGO card inside Phone Frame + interactive caption link)
+      await tester.drag(find.byType(PageView), const Offset(-350, 0));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey<String>('login-phone-time-6')))
+            .data,
+        '08:02',
+      );
       expect(find.text('Időben'), findsOneWidget);
       expect(find.text('MenetrendGO'), findsOneWidget);
       expect(find.text('28 perc'), findsOneWidget);
@@ -197,9 +274,37 @@ void main() {
         isTrue,
       );
 
+      // Infinite loop: swiping past Slide 7 wraps seamlessly back to Slide 1
+      await tester.drag(find.byType(PageView), const Offset(-350, 0));
+      await tester.pumpAndSettle();
+      expect(
+        hasShowcaseImage('assets/images/showcase/showcase_home.jpg'),
+        isTrue,
+      );
+      // Verify pagination indicator dots are completely removed
+      expect(find.byType(AnimatedContainer), findsNothing);
+
       await tester.tap(find.text('Bejelentkezés KRÉTA-val'));
       await tester.pump(const Duration(milliseconds: 200));
       expect(webAuthTapped, isTrue);
+
+      // Subtle footer link below CTA opens the Privacy Policy & Legal Disclaimer modal
+      final footerLink = find.text('Nem hivatalos e-KRÉTA kliens • Adatvédelem');
+      expect(footerLink, findsOneWidget);
+      expect(
+        tester.getRect(footerLink).top,
+        greaterThan(tester.getRect(find.text('Bejelentkezés KRÉTA-val')).bottom),
+      );
+      await tester.tap(footerLink);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Adatvédelem és jogi nyilatkozat'), findsOneWidget);
+      expect(find.text('Nem hivatalos kliens'), findsOneWidget);
+      expect(find.text('Adatkezelés & Biztonság'), findsOneWidget);
+      expect(find.text('Hibajelentések'), findsOneWidget);
+      await tester.tap(find.text('Rendben'));
+      await tester.pumpAndSettle();
+      expect(find.text('Adatvédelem és jogi nyilatkozat'), findsNothing);
     },
   );
 
@@ -225,7 +330,7 @@ void main() {
       );
       await tester.pumpAndSettle(const Duration(milliseconds: 100));
 
-      for (int i = 0; i < 4; i++) {
+      for (int i = 0; i < 6; i++) {
         await tester.drag(find.byType(PageView), const Offset(-300, 0));
         await tester.pumpAndSettle();
       }

@@ -5,6 +5,7 @@ import 'package:tinta_naplo/providers/app_providers.dart';
 import 'package:tinta_naplo/screens/grades_screen.dart';
 import 'package:tinta_naplo/services/token_storage_service.dart';
 import 'package:tinta_naplo/theme/oled_theme.dart';
+import 'package:tinta_naplo/widgets/frosted_inspection_modal.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Grade _sampleGrade({
@@ -121,7 +122,7 @@ void main() {
 
       // Tap a custom palette color dot (InkWell next to Automatikus ChoiceChip).
       final customColorDot = find.descendant(
-        of: find.byType(BottomSheet),
+        of: find.byType(FrostedBottomSheetSurface),
         matching: find.byWidgetPredicate(
           (w) =>
               w is Container &&

@@ -16,6 +16,21 @@ export 'animated_backdrops.dart'
 
 /// Visual App Icon theme presets selectable in Personalization.
 class AppIconPresetInfo {
+  static const String defaultIconAsset = 'assets/images/tinta_icon.png';
+  static const String classicIconAsset = 'assets/images/tinta_icon_classic.png';
+  static const String fitymaIconAsset = 'assets/images/fityma-icon.png';
+
+  static const AppIconPresetInfo fitymaPreset = AppIconPresetInfo(
+    id: 'icon_fityma',
+    label: 'Fityma Napló',
+    subtitle: 'Titkos kiadás',
+    assetPath: fitymaIconAsset,
+    activityAlias: '.MainActivityFityma',
+    icon: Icons.auto_awesome_rounded,
+    primaryColor: Color(0xFFFFB74D),
+    backgroundColor: Color(0xFF14101C),
+  );
+
   final String id;
   final String label;
   final String subtitle;
@@ -39,11 +54,21 @@ class AppIconPresetInfo {
   static const List<AppIconPresetInfo> presets = [
     AppIconPresetInfo(
       id: 'icon_normal',
-      label: 'Normál',
-      subtitle: 'Alapértelmezett',
-      assetPath: 'assets/images/tinta_icon.png',
+      label: 'Alapértelmezett',
+      subtitle: 'Új Tinta ikon',
+      assetPath: defaultIconAsset,
       activityAlias: '.MainActivityNormal',
       icon: Icons.school_rounded,
+      primaryColor: Colors.white,
+      backgroundColor: Colors.black,
+    ),
+    AppIconPresetInfo(
+      id: 'classic',
+      label: 'Klasszikus',
+      subtitle: 'Korábbi ikon',
+      assetPath: classicIconAsset,
+      activityAlias: '.MainActivityClassic',
+      icon: Icons.history_edu_rounded,
       primaryColor: Colors.white,
       backgroundColor: Colors.black,
     ),
@@ -51,7 +76,7 @@ class AppIconPresetInfo {
       id: 'icon_oled',
       label: 'OLED Fekete',
       subtitle: 'Sötét OLED',
-      assetPath: 'assets/images/tinta_icon.png',
+      assetPath: defaultIconAsset,
       activityAlias: '.MainActivityOled',
       icon: Icons.dark_mode_rounded,
       primaryColor: Colors.white,
@@ -61,7 +86,7 @@ class AppIconPresetInfo {
       id: 'icon_christmas',
       label: 'Karácsonyi',
       subtitle: 'Ünnepi Normál',
-      assetPath: 'assets/images/tinta_icon.png',
+      assetPath: defaultIconAsset,
       activityAlias: '.MainActivityChristmas',
       icon: Icons.ac_unit_rounded,
       primaryColor: Color(0xFFFF5252),
@@ -71,7 +96,7 @@ class AppIconPresetInfo {
       id: 'icon_christmas_oled',
       label: 'Karácsonyi OLED',
       subtitle: 'Ünnepi OLED',
-      assetPath: 'assets/images/tinta_icon.png',
+      assetPath: defaultIconAsset,
       activityAlias: '.MainActivityChristmasOled',
       icon: Icons.severe_cold_rounded,
       primaryColor: Color(0xFFFFD54F),
@@ -81,19 +106,29 @@ class AppIconPresetInfo {
 
   static AppIconPresetInfo fromId(String rawId) {
     switch (rawId) {
+      case 'icon_fityma':
+      case 'fityma':
+      case '.MainActivityFityma':
+      case 'MainActivityFityma':
+        return fitymaPreset;
+      case 'classic':
+      case 'icon_classic':
+      case '.MainActivityClassic':
+      case 'MainActivityClassic':
+        return presets[1];
       case 'icon_oled':
       case 'oled':
       case 'minimal_oled':
       case '.MainActivityOled':
-        return presets[1];
+        return presets[2];
       case 'icon_christmas':
       case 'christmas':
       case '.MainActivityChristmas':
-        return presets[2];
+        return presets[3];
       case 'icon_christmas_oled':
       case 'christmas_oled':
       case '.MainActivityChristmasOled':
-        return presets[3];
+        return presets[4];
       case 'icon_normal':
       case 'normal':
       case 'default':
@@ -104,13 +139,21 @@ class AppIconPresetInfo {
   }
 
   /// Resolves the active icon variant based on [prefs].
-  /// - When an explicit icon preset (`icon_normal`, `icon_oled`, `icon_christmas`,
-  ///   `icon_christmas_oled`) has been selected, it is respected.
+  /// - When an explicit icon preset (`classic`, `icon_normal`, `icon_oled`,
+  ///   `icon_christmas`, `icon_christmas_oled`) has been selected, it is respected.
   /// - When `appIconPreset` is `'default'`, Christmas Mode automatically selects
   ///   `icon_christmas_oled` (when OLED theme is active) or `icon_christmas`
   ///   (when normal theme is active).
   static AppIconPresetInfo resolve(UserProfilePrefs prefs) {
+    if (prefs.fitymaModeEnabled) {
+      return fitymaPreset;
+    }
     final raw = prefs.appIconPreset;
+    if (raw == 'classic' ||
+        raw == 'icon_classic' ||
+        raw == '.MainActivityClassic') {
+      return fromId('classic');
+    }
     if (raw == 'icon_normal' ||
         raw == 'icon_oled' ||
         raw == 'icon_christmas' ||
@@ -136,9 +179,18 @@ class FitymaBrandIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CustomPaint(
-      size: Size.square(size),
-      painter: _FitymaCartoonPainter(),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(size * 0.24),
+      child: Image.asset(
+        AppIconPresetInfo.fitymaIconAsset,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => CustomPaint(
+          size: Size.square(size),
+          painter: _FitymaCartoonPainter(),
+        ),
+      ),
     );
   }
 }
@@ -471,15 +523,15 @@ class _ChristmasAndBackgroundOverlayState
                     ? bgPreset.gradientColors
                     : [
                         Color.alphaBlend(
-                          primary.withValues(alpha: isLight ? 0.14 : 0.22),
+                          primary.withValues(alpha: isLight ? 0.05 : 0.22),
                           baseBg,
                         ),
                         Color.alphaBlend(
-                          primary.withValues(alpha: isLight ? 0.04 : 0.07),
+                          primary.withValues(alpha: isLight ? 0.015 : 0.07),
                           baseBg,
                         ),
                         Color.alphaBlend(
-                          secondary.withValues(alpha: isLight ? 0.12 : 0.18),
+                          secondary.withValues(alpha: isLight ? 0.04 : 0.18),
                           baseBg,
                         ),
                       ],
@@ -594,7 +646,7 @@ class _ChristmasAndBackgroundOverlayState
                     shape: BoxShape.circle,
                     gradient: RadialGradient(
                       colors: [
-                        primary.withValues(alpha: isLight ? 0.26 : 0.34),
+                        primary.withValues(alpha: isLight ? 0.10 : 0.34),
                         primary.withValues(alpha: 0.0),
                       ],
                     ),
@@ -613,7 +665,7 @@ class _ChristmasAndBackgroundOverlayState
                     shape: BoxShape.circle,
                     gradient: RadialGradient(
                       colors: [
-                        secondary.withValues(alpha: isLight ? 0.22 : 0.28),
+                        secondary.withValues(alpha: isLight ? 0.08 : 0.28),
                         secondary.withValues(alpha: 0.0),
                       ],
                     ),
@@ -632,7 +684,7 @@ class _ChristmasAndBackgroundOverlayState
                     shape: BoxShape.circle,
                     gradient: RadialGradient(
                       colors: [
-                        primary.withValues(alpha: isLight ? 0.22 : 0.28),
+                        primary.withValues(alpha: isLight ? 0.08 : 0.28),
                         primary.withValues(alpha: 0.0),
                       ],
                     ),
@@ -755,7 +807,205 @@ PreferredSizeWidget buildAdaptiveTransparentAppBar(
     surfaceTintColor: Colors.transparent,
     scrolledUnderElevation: 0,
     foregroundColor: Theme.of(context).colorScheme.onSurface,
+    systemOverlayStyle: OledTheme.systemOverlayStyleForBrightness(
+      Theme.of(context).brightness,
+    ),
   );
+}
+
+/// Reusable `IgnorePointer` top & bottom scroll-edge fade overlay.
+///
+/// Sits above the scrollable list content and cleanly below AppBar titles /
+/// floating bottom navigation bars:
+/// - **Top fade:** Masks [topHeaderHeight] (e.g. status bar + transparent
+///   AppBar) cleanly and feathers out over [topFeatherHeight], ramping in
+///   smoothly from `0.0` once scrolled when [scrollDrivenTopFeather] is true
+///   so resting cards at `scrollOffset == 0` remain crisp.
+/// - **Bottom fade:** Feathers smoothly into the scaffold background over
+///   [bottomFadeHeight] inside `IgnorePointer` (using `ShaderMask` `dstIn` when
+///   an ambient shader/wallpaper is active so the background is never tinted).
+class VerticalScrollEdgeFades extends StatefulWidget {
+  final Widget child;
+  final UserProfilePrefs? prefs;
+  final double topHeaderHeight;
+  final double topFeatherHeight;
+  final double bottomFadeHeight;
+  final bool scrollDrivenTopFeather;
+
+  const VerticalScrollEdgeFades({
+    super.key,
+    required this.child,
+    this.prefs,
+    this.topHeaderHeight = 0.0,
+    this.topFeatherHeight = 26.0,
+    this.bottomFadeHeight = 36.0,
+    this.scrollDrivenTopFeather = true,
+  });
+
+  @override
+  State<VerticalScrollEdgeFades> createState() =>
+      _VerticalScrollEdgeFadesState();
+}
+
+class _VerticalScrollEdgeFadesState extends State<VerticalScrollEdgeFades> {
+  final ValueNotifier<double> _scrollOffset = ValueNotifier<double>(0.0);
+
+  @override
+  void dispose() {
+    _scrollOffset.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasAmbient = widget.prefs != null &&
+        ChristmasAndBackgroundOverlay.hasAmbientBackdrop(
+          context,
+          widget.prefs!,
+        );
+    final fadeColor = Theme.of(context).scaffoldBackgroundColor;
+    final totalTopHeight = widget.topHeaderHeight + widget.topFeatherHeight;
+
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (notification.metrics.axis == Axis.vertical) {
+          final next = notification.metrics.pixels.clamp(0.0, 120.0);
+          if ((_scrollOffset.value - next).abs() > 0.5) {
+            _scrollOffset.value = next;
+          }
+        }
+        return false;
+      },
+      child: ValueListenableBuilder<double>(
+        valueListenable: _scrollOffset,
+        child: widget.child,
+        builder: (context, offset, child) {
+          final topFactor = widget.scrollDrivenTopFeather
+              ? (offset / 18.0).clamp(0.0, 1.0)
+              : 1.0;
+
+          if (hasAmbient) {
+            return ShaderMask(
+              shaderCallback: (Rect bounds) {
+                if (bounds.height <= 0) {
+                  return const LinearGradient(
+                    colors: [Colors.black, Colors.black],
+                  ).createShader(bounds);
+                }
+                final headerStop = (widget.topHeaderHeight / bounds.height)
+                    .clamp(0.0, 0.35);
+                final topFeatherStop =
+                    (totalTopHeight / bounds.height).clamp(headerStop, 0.45);
+                final bottomStartStop =
+                    ((bounds.height - widget.bottomFadeHeight) / bounds.height)
+                        .clamp(topFeatherStop, 1.0);
+
+                final stops = <double>[
+                  0.0,
+                  if (widget.topHeaderHeight > 0) headerStop,
+                  topFeatherStop,
+                  bottomStartStop,
+                  1.0,
+                ];
+                final topEdgeAlpha = 1.0 - topFactor;
+                final bottomEdgeColor = widget.bottomFadeHeight > 0
+                    ? Colors.transparent
+                    : Colors.black;
+                final topColor = Color.lerp(
+                  Colors.black,
+                  Colors.transparent,
+                  topFactor,
+                )!;
+                final colors = <Color>[
+                  if (widget.topHeaderHeight > 0) ...[
+                    topEdgeAlpha < 0.99 ? topColor : Colors.black,
+                    topEdgeAlpha < 0.99 ? topColor : Colors.black,
+                  ] else
+                    topColor,
+                  Colors.black,
+                  Colors.black,
+                  bottomEdgeColor,
+                ];
+                return LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  stops: stops,
+                  colors: colors,
+                ).createShader(bounds);
+              },
+              blendMode: BlendMode.dstIn,
+              child: child,
+            );
+          }
+
+          return Stack(
+            fit: StackFit.passthrough,
+            children: [
+              child!,
+              if (totalTopHeight > 0 && topFactor > 0.01)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: totalTopHeight,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          stops: widget.topHeaderHeight > 0
+                              ? [
+                                  0.0,
+                                  (widget.topHeaderHeight / totalTopHeight)
+                                      .clamp(0.0, 0.92),
+                                  1.0,
+                                ]
+                              : const [0.0, 1.0],
+                          colors: widget.topHeaderHeight > 0
+                              ? [
+                                  fadeColor.withValues(alpha: topFactor),
+                                  fadeColor.withValues(alpha: topFactor),
+                                  fadeColor.withValues(alpha: 0.0),
+                                ]
+                              : [
+                                  fadeColor.withValues(alpha: topFactor),
+                                  fadeColor.withValues(alpha: 0.0),
+                                ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (widget.bottomFadeHeight > 0)
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  height: widget.bottomFadeHeight,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          stops: const [0.0, 0.65, 1.0],
+                          colors: [
+                            fadeColor.withValues(alpha: 0.0),
+                            fadeColor.withValues(alpha: 0.72),
+                            fadeColor,
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
 }
 
 /// [Scaffold] that extends its background and effects behind a transparent
@@ -781,11 +1031,22 @@ class AdaptiveBackgroundScaffold extends StatelessWidget {
           context,
           effectivePrefs,
         );
+    final topHeaderH =
+        MediaQuery.paddingOf(context).top + appBar.preferredSize.height;
     final scaffold = Scaffold(
       backgroundColor: hasAmbient ? Colors.transparent : null,
       extendBodyBehindAppBar: true,
       appBar: appBar,
-      body: _AdaptiveScaffoldBodyScope(child: body),
+      body: _AdaptiveScaffoldBodyScope(
+        child: VerticalScrollEdgeFades(
+          prefs: effectivePrefs,
+          topHeaderHeight: topHeaderH,
+          topFeatherHeight: 28.0,
+          bottomFadeHeight: 36.0,
+          scrollDrivenTopFeather: true,
+          child: body,
+        ),
+      ),
     );
     if (effectivePrefs == null) {
       return scaffold;

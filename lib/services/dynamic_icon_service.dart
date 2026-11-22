@@ -13,6 +13,7 @@ class DynamicIconService {
 
   static String? _lastSyncedIconId;
   static String? _pendingIconId;
+  static int _requestEpoch = 0;
 
   /// Resolves the active icon preset for [prefs] and updates the Android
   /// launcher `<activity-alias>` if running on Android.
@@ -22,7 +23,8 @@ class DynamicIconService {
   }
 
   /// Switches the active Android launcher icon to [iconId]
-  /// (`icon_normal`, `icon_oled`, `icon_christmas`, or `icon_christmas_oled`).
+  /// (`default` / `icon_normal`, `classic`, `icon_oled`, `icon_christmas`,
+  /// `icon_christmas_oled`, or `icon_fityma`).
   static Future<String?> setAppIcon(String iconId) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       _lastSyncedIconId = iconId;
@@ -31,25 +33,37 @@ class DynamicIconService {
     if (_lastSyncedIconId == iconId || _pendingIconId == iconId) {
       return null;
     }
+    final epoch = ++_requestEpoch;
     _pendingIconId = iconId;
     try {
-      // Android may restart the process when the alias changes; give the UI
-      // time to show feedback and prefs time to persist first.
-      await Future<void>.delayed(const Duration(milliseconds: 1500));
       final preset = AppIconPresetInfo.fromId(iconId);
-      final isFityma = iconId == 'icon_fityma' || iconId == '.MainActivityFityma';
+      final isFityma =
+          iconId == 'icon_fityma' || iconId == '.MainActivityFityma';
+      final isClassic = iconId == 'classic' ||
+          iconId == 'icon_classic' ||
+          iconId == '.MainActivityClassic';
       final appliedAlias = await _channel.invokeMethod<String>(
         'setAppIcon',
         <String, dynamic>{
-          'iconName': isFityma ? 'icon_fityma' : preset.id,
-          'alias': isFityma ? '.MainActivityFityma' : preset.activityAlias,
+          'iconName': isFityma
+              ? 'icon_fityma'
+              : (isClassic ? 'classic' : preset.id),
+          'alias': isFityma
+              ? '.MainActivityFityma'
+              : (isClassic ? '.MainActivityClassic' : preset.activityAlias),
         },
       );
-      _lastSyncedIconId = isFityma ? 'icon_fityma' : preset.id;
-      _pendingIconId = null;
+      if (epoch == _requestEpoch) {
+        _lastSyncedIconId = isFityma
+            ? 'icon_fityma'
+            : (isClassic ? 'classic' : preset.id);
+        _pendingIconId = null;
+      }
       return appliedAlias;
     } catch (_) {
-      _pendingIconId = null;
+      if (epoch == _requestEpoch) {
+        _pendingIconId = null;
+      }
       // Ignore MissingPluginException in widget tests or non-Android hosts.
       return null;
     }

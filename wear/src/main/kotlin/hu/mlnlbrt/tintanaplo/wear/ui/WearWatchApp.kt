@@ -38,7 +38,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -68,7 +67,6 @@ import androidx.wear.compose.foundation.pager.PagerDefaults
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.foundation.requestFocusOnHierarchyActive
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
-import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.HorizontalPageIndicator
 import androidx.wear.compose.material.PageIndicatorState
@@ -163,12 +161,13 @@ fun TintaWearApp(resumeEpoch: Int = 0) {
         KretaWearApiClient(
             tokenStore = tokenStore,
             onSessionRefreshed = { refreshed ->
-                remoteAuth.pushRefreshedSessionToPhone(refreshed)
+                remoteAuth.pushRefreshedSessionToPhoneSuspend(refreshed)
             },
         )
     }
     val authStatus by remoteAuth.status.collectAsState()
     val dashboardSyncEpoch by remoteAuth.dashboardSyncEpoch.collectAsState()
+    val logoutEpoch by remoteAuth.logoutEpoch.collectAsState()
     val scope = rememberCoroutineScope()
 
     var session by remember {
@@ -193,13 +192,18 @@ fun TintaWearApp(resumeEpoch: Int = 0) {
         }
     }
 
+    LaunchedEffect(logoutEpoch) {
+        if (logoutEpoch > 0L) {
+            session = null
+            loginNotice = "Kijelentkeztél a telefonon."
+        }
+    }
+
     LaunchedEffect(resumeEpoch) {
         val loaded = withContext(Dispatchers.IO) {
             runCatching { tokenStore.loadSession() }.getOrNull()
         }
-        if (loaded != null) {
-            session = loaded
-        }
+        session = loaded
     }
 
     TintaWearTheme {
@@ -239,33 +243,31 @@ private fun WearThreePageWatchUi(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val pagerState = rememberPagerState(pageCount = { 3 })
-    val timetableListState = rememberScalingLazyListState()
-    val gradesExamsListState = rememberScalingLazyListState()
+    val timetableListState = rememberScalingLazyListState(initialCenterItemIndex = 0)
+    val gradesExamsListState = rememberScalingLazyListState(initialCenterItemIndex = 0)
 
-    val instituteKey = remember(session.instituteCode) {
-        session.instituteCode.trim().lowercase()
-    }
     val accountKey = remember(session.instituteCode, session.userName) {
         SecureTokenStorage.accountKeyFor(session)
     }
 
-    val initialCache = remember(instituteKey) {
+    val initialCache = remember(accountKey) {
         runCatching {
             tokenStore.loadWearDataCache(accountKey, KretaDateParser.dateKeyFor())
         }.getOrNull()
     }
 
-    var lessons by remember(instituteKey) {
+    var lessons by remember(accountKey) {
         mutableStateOf(initialCache?.lessons ?: emptyList())
     }
-    var grades by remember(instituteKey) {
+    var grades by remember(accountKey) {
         mutableStateOf(initialCache?.grades ?: emptyList())
     }
-    var exams by remember(instituteKey) {
+    var exams by remember(accountKey) {
         mutableStateOf(initialCache?.exams ?: emptyList())
     }
-    var isSyncing by remember(instituteKey) { mutableStateOf(false) }
-    var hasLoadedOnce by remember(instituteKey) { mutableStateOf(initialCache != null) }
+    var isSyncing by remember(accountKey) { mutableStateOf(false) }
+    var hasLoadedOnce by remember(accountKey) { mutableStateOf(initialCache != null) }
+    var lastForegroundSyncAtMs by remember(accountKey) { mutableLongStateOf(0L) }
 
     var boundaryNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var liveNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -290,7 +292,7 @@ private fun WearThreePageWatchUi(
         KretaDateParser.localDateFor(boundaryNowMs)
     }
 
-    var manualDayOverride by remember(instituteKey) {
+    var manualDayOverride by remember(accountKey) {
         mutableStateOf<TimetableDayFilter?>(null)
     }
     LaunchedEffect(todayDate) {
@@ -346,7 +348,7 @@ private fun WearThreePageWatchUi(
     }
 
     // Reload offline cache immediately when DataLayer pushes new grades/exams from phone.
-    LaunchedEffect(instituteKey, dashboardSyncEpoch) {
+    LaunchedEffect(accountKey, dashboardSyncEpoch) {
         if (dashboardSyncEpoch <= 0L) return@LaunchedEffect
         val cached = withContext(Dispatchers.IO) {
             runCatching {
@@ -363,9 +365,10 @@ private fun WearThreePageWatchUi(
         }
     }
 
-    // Reload freshest cache on resume and refresh silently against KRÉTA in the background.
-    // Never clear session or cached timetable data on network/token errors.
-    LaunchedEffect(instituteKey, resumeEpoch) {
+    // Reload freshest cache on resume and refresh silently against KRÉTA in the background,
+    // throttled to at most once every 60s so wrist-raise glances never spam token refreshes.
+    // Runs inside LaunchedEffect's scope so account switches cancel in-flight syncs cleanly.
+    LaunchedEffect(accountKey, resumeEpoch) {
         val cached = withContext(Dispatchers.IO) {
             runCatching {
                 tokenStore.loadWearDataCache(accountKey, KretaDateParser.dateKeyFor())
@@ -377,36 +380,38 @@ private fun WearThreePageWatchUi(
             exams = cached.exams
             hasLoadedOnce = true
         }
-        if (isSyncing) return@LaunchedEffect
+        val nowMs = System.currentTimeMillis()
+        if (isSyncing || (lastForegroundSyncAtMs > 0L && nowMs - lastForegroundSyncAtMs < 60_000L)) {
+            return@LaunchedEffect
+        }
         isSyncing = true
-        scope.launch {
-            try {
-                val latestSession = withContext(Dispatchers.IO) {
-                    runCatching { tokenStore.loadSession() }.getOrNull()
-                } ?: session
-                val synced = apiClient.syncAll(latestSession)
-                lessons = synced.lessons
-                grades = synced.grades
-                exams = synced.exams
-                hasLoadedOnce = true
-                KretaSyncScheduler.ensurePeriodicSync(context)
-                KretaSyncScheduler.scheduleNextTransitionUpdate(context, synced.lessons)
-                KretaSyncWorker.requestTileUpdate(context)
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (_: TokenExpiredException) {
-                hasLoadedOnce = true
-            } catch (_: InvalidGrantException) {
-                hasLoadedOnce = true
-            } catch (_: Throwable) {
-                hasLoadedOnce = true
-            } finally {
-                isSyncing = false
-            }
+        try {
+            val latestSession = withContext(Dispatchers.IO) {
+                runCatching { tokenStore.loadSession() }.getOrNull()
+            } ?: session
+            val synced = apiClient.syncAll(latestSession)
+            lastForegroundSyncAtMs = System.currentTimeMillis()
+            lessons = synced.lessons
+            grades = synced.grades
+            exams = synced.exams
+            hasLoadedOnce = true
+            KretaSyncScheduler.ensurePeriodicSync(context)
+            KretaSyncScheduler.scheduleNextTransitionUpdate(context, synced.lessons)
+            KretaSyncWorker.requestTileUpdate(context)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: TokenExpiredException) {
+            hasLoadedOnce = true
+        } catch (_: InvalidGrantException) {
+            hasLoadedOnce = true
+        } catch (_: Throwable) {
+            hasLoadedOnce = true
+        } finally {
+            isSyncing = false
         }
     }
 
-    val overlayAlpha by remember {
+    val overlayAlphaState = remember {
         derivedStateOf {
             (pagerState.currentPage + pagerState.currentPageOffsetFraction).coerceIn(0f, 1f)
         }
@@ -433,7 +438,7 @@ private fun WearThreePageWatchUi(
         timeText = {
             if (showSecondaryOverlay) {
                 TimeText(
-                    modifier = Modifier.graphicsLayer { alpha = overlayAlpha },
+                    modifier = Modifier.graphicsLayer { alpha = overlayAlphaState.value },
                 )
             }
         },
@@ -446,7 +451,7 @@ private fun WearThreePageWatchUi(
                 }
                 PositionIndicator(
                     scalingLazyListState = activeListState,
-                    modifier = Modifier.graphicsLayer { alpha = overlayAlpha },
+                    modifier = Modifier.graphicsLayer { alpha = overlayAlphaState.value },
                 )
             }
         },
@@ -1119,7 +1124,6 @@ private fun TimetablePage(
     onSelectDay: (TimetableDayFilter) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val focusRequester = remember { FocusRequester() }
     val scalingParams = remember {
         ScalingLazyColumnDefaults.scalingParams(
             edgeScale = 0.78f,
@@ -1135,18 +1139,15 @@ private fun TimetablePage(
     ScalingLazyColumn(
         state = listState,
         scalingParams = scalingParams,
-        rotaryScrollableBehavior = null,
+        autoCentering = null,
+        rotaryScrollableBehavior = RotaryScrollableDefaults.behavior(
+            scrollableState = listState,
+            hapticFeedbackEnabled = true,
+        ),
         modifier = modifier
             .fillMaxSize()
             .background(TintaColors.PureBlack)
-            .requestFocusOnHierarchyActive()
-            .rotaryScrollable(
-                behavior = RotaryScrollableDefaults.behavior(
-                    scrollableState = listState,
-                    hapticFeedbackEnabled = true,
-                ),
-                focusRequester = focusRequester,
-            ),
+            .requestFocusOnHierarchyActive(),
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 30.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1360,7 +1361,6 @@ private fun GradesAndExamsPage(
     isLoadingInitial: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val focusRequester = remember { FocusRequester() }
     val scalingParams = remember {
         ScalingLazyColumnDefaults.scalingParams(
             edgeScale = 0.78f,
@@ -1376,18 +1376,15 @@ private fun GradesAndExamsPage(
     ScalingLazyColumn(
         state = listState,
         scalingParams = scalingParams,
-        rotaryScrollableBehavior = null,
+        autoCentering = null,
+        rotaryScrollableBehavior = RotaryScrollableDefaults.behavior(
+            scrollableState = listState,
+            hapticFeedbackEnabled = true,
+        ),
         modifier = modifier
             .fillMaxSize()
             .background(TintaColors.PureBlack)
-            .requestFocusOnHierarchyActive()
-            .rotaryScrollable(
-                behavior = RotaryScrollableDefaults.behavior(
-                    scrollableState = listState,
-                    hapticFeedbackEnabled = true,
-                ),
-                focusRequester = focusRequester,
-            ),
+            .requestFocusOnHierarchyActive(),
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 30.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

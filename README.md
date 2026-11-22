@@ -16,19 +16,19 @@
 
 ## Fő funkciók
 
-- **Letisztult, minimalista OLED (`#000000`) dizájn** — valódi mélyfekete felület testreszabható háttéreffektekkel, opcionális soft blur megjelenéssel és 120 fps-es animációkkal.
-- **MenetrendGo integráció** — közvetlen helyi és helyközi menetrend-elérés közvetlenül az alkalmazásból.
-- **Ösztöndíj kalkulátor** — automatikus tanulmányi átlag- és várható ösztöndíjbecslés a jegyek alapján.
-- **Villámgyors offline gyorsítótár** — jegyek, órarend, hiányzások, házi feladatok és üzenetek azonnali megjelenítése internetkapcsolat nélkül is.
-- **Határidő szerint rendezett dolgozatok és házik** — a közelgő számonkérések és házi feladatok mindig a határidő szerint rendezve jelennek meg.
-- **Beépített OTA frissítő** — új kiadás megjelenésekor egyetlen érintéssel frissíthető közvetlenül a GitHub Releasesből.
-- **Zéró adatgyűjtés** — nincs köztes szerver vagy telemetria; minden adat kizárólag közvetlenül a hivatalos KRÉTA szerverekkel kommunikál.
+- **Letisztult, minimalista OLED (`#000000`) dizájn** - valódi mélyfekete felület testreszabható háttéreffektekkel, opcionális soft blur megjelenéssel és 120 fps-es animációkkal.
+- **MenetrendGo integráció** - közvetlen helyi és helyközi menetrend-elérés közvetlenül az alkalmazásból.
+- **Ösztöndíj kalkulátor** - automatikus tanulmányi átlag- és várható ösztöndíjbecslés a jegyek alapján.
+- **Villámgyors offline gyorsítótár** - jegyek, órarend, hiányzások, házi feladatok és üzenetek azonnali megjelenítése internetkapcsolat nélkül is.
+- **Határidő szerint rendezett dolgozatok és házik** - a közelgő számonkérések és házi feladatok mindig a határidő szerint rendezve jelennek meg.
+- **Beépített OTA frissítő** - új kiadás megjelenésekor egyetlen érintéssel frissíthető közvetlenül a GitHub Releasesből.
+- **Zéró adatgyűjtés** - nincs köztes szerver vagy telemetria; minden adat kizárólag közvetlenül a hivatalos KRÉTA szerverekkel kommunikál.
 
 ---
 
 ## Letöltés és telepítés
 
-A legfrissebb kiadás (`tinta-naplo-v2.0.2-arm64-v8a.apk`) elérhető a [GitHub Releases](https://github.com/mlnlbrt10/tinta-naplo/releases/latest) oldalon:
+A legfrissebb kiadás (`tinta-naplo-v3.0.0-arm64-v8a.apk`) elérhető a [GitHub Releases](https://github.com/mlnlbrt10/tinta-naplo/releases/latest) oldalon:
 
 1. Töltsd le a legfrissebb `tinta-naplo-v*.apk` fájlt a [Releases](https://github.com/mlnlbrt10/tinta-naplo/releases/latest) oldalról.
 2. Engedélyezd az ismeretlen forrásból származó alkalmazások telepítését.
@@ -46,13 +46,15 @@ Előfeltételek: Flutter SDK, Android SDK / JDK.
 git clone https://github.com/mlnlbrt10/tinta-naplo.git
 cd tinta-naplo
 flutter pub get
-flutter build apk --release --target-platform android-arm64 --obfuscate --split-debug-info=build/app/outputs/symbols
+flutter build apk --release --target-platform android-arm64 --tree-shake-icons --obfuscate --split-debug-info=build/app/outputs/symbols
 ```
 
-A lefordított APK helye: `build/app/outputs/flutter-apk/tinta-naplo-v2.0.2-arm64-v8a.apk`.
+A lefordított APK helye: `build/app/outputs/flutter-apk/tinta-naplo-v3.0.0-arm64-v8a.apk`.
 
 ---
 
-## Jogi nyilatkozat
+## Jogi nyilatkozat & Köszönetnyilvánítás
 
 A **Tinta Napló** egy független, nyílt forráskódú kliensalkalmazás, és nem áll kapcsolatban az eKRÉTA Informatikai Zrt.-vel.
+
+- **Ikonok inspirációja:** Az alkalmazás ikonjait a [Firka (QwIT)](https://firka.app/) inspirálta.

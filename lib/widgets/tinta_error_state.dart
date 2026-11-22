@@ -65,8 +65,14 @@ class TintaErrorState extends StatelessWidget {
     final activePrefs = prefs ?? const UserProfilePrefs();
     final networkErr = isNetworkError(error);
     final iconAccent = networkErr ? const Color(0xFFF59E0B) : scheme.primary;
-    final title = uwu(titleOverride ?? friendlyTitleFor(error));
-    final subtitle = uwu(subtitleOverride ?? friendlySubtitleFor(error));
+    final title = uwu(
+      titleOverride ?? friendlyTitleFor(error),
+      enabled: activePrefs.uwuModeEnabled,
+    );
+    final subtitle = uwu(
+      subtitleOverride ?? friendlySubtitleFor(error),
+      enabled: activePrefs.uwuModeEnabled,
+    );
 
     return SoftGlassCard(
       prefs: activePrefs,
@@ -137,7 +143,10 @@ class TintaErrorState extends StatelessWidget {
                 ),
                 icon: const Icon(Icons.refresh_rounded, size: 18),
                 label: Text(
-                  uwu('Újrapróbálás'),
+                  uwu(
+                    'Újrapróbálás',
+                    enabled: activePrefs.uwuModeEnabled,
+                  ),
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),

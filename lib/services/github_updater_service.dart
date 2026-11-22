@@ -113,21 +113,22 @@ class GitHubUpdaterService {
   static const String repoUrl = 'https://github.com/mlnlbrt10/tinta-naplo';
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest';
-  static const String fallbackAppVersion = '2.0.2';
-  static const String fallbackBuildNumber = '18';
-  static const String defaultApkFileName = 'tinta-naplo-v2.0.2-arm64-v8a.apk';
+  static const String fallbackAppVersion = '3.0.0';
+  static const String fallbackBuildNumber = '19';
+  static const String defaultApkFileName = 'tinta-naplo-v3.0.0-arm64-v8a.apk';
 
   static bool _hasCheckedOnStartup = false;
 
-  /// Resolves the target APK file name for a given release tag (`tinta-naplo-v2.0.2-arm64-v8a.apk`).
+  /// Resolves the target APK file name for a given release tag (`tinta-naplo-v3.0.0-arm64-v8a.apk`).
   static String apkFileNameForTag(String tagName) {
     final clean = _stripPrefix(tagName);
     if (clean.isEmpty) return defaultApkFileName;
     return 'tinta-naplo-v$clean-arm64-v8a.apk';
   }
 
-  /// Queries GitHub Releases API for the latest tag name, falling back to `v2.0.2`.
+  /// Queries GitHub Releases API for the latest tag name, falling back to `v3.0.0`.
   static Future<String> fetchLatestReleaseTag({http.Client? httpClient}) async {
+    final ownedClient = httpClient == null;
     final client = httpClient ?? http.Client();
     try {
       final response = await client
@@ -140,17 +141,23 @@ class GitHubUpdaterService {
           )
           .timeout(const Duration(seconds: 8));
       if (response.statusCode == 200) {
-        final decoded =
-            jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
-        final release = GitHubReleaseInfo.fromJson(decoded);
-        if (release.tagName.isNotEmpty) {
-          return release.tagName.startsWith('v')
-              ? release.tagName
-              : 'v${release.tagName}';
+        final raw = jsonDecode(utf8.decode(response.bodyBytes));
+        if (raw is Map) {
+          final decoded = Map<String, dynamic>.from(raw);
+          final release = GitHubReleaseInfo.fromJson(decoded);
+          if (release.tagName.isNotEmpty) {
+            return release.tagName.startsWith('v')
+                ? release.tagName
+                : 'v${release.tagName}';
+          }
         }
       }
     } catch (_) {
       // Fallback below
+    } finally {
+      if (ownedClient) {
+        client.close();
+      }
     }
     return 'v$fallbackAppVersion';
   }
@@ -285,6 +292,7 @@ class GitHubUpdaterService {
       _hasCheckedOnStartup = true;
     }
 
+    final ownedClient = httpClient == null;
     final client = httpClient ?? http.Client();
     final (currentVersion, _) = await getAppVersionInfo();
 
@@ -302,8 +310,9 @@ class GitHubUpdaterService {
       if (!context.mounted) return;
 
       if (response.statusCode == 200) {
-        final decoded =
-            jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+        final raw = jsonDecode(utf8.decode(response.bodyBytes));
+        if (raw is! Map) return;
+        final decoded = Map<String, dynamic>.from(raw);
         final release = GitHubReleaseInfo.fromJson(decoded);
 
         if (isRemoteVersionNewer(
@@ -341,6 +350,10 @@ class GitHubUpdaterService {
           context,
           uwu('Hálózati hiba a GitHub frissítések ellenőrzésekor.'),
         );
+      }
+    } finally {
+      if (ownedClient) {
+        client.close();
       }
     }
   }
@@ -454,13 +467,19 @@ class _FrostedUpdateDialogContentState
       _statusMessage = uwu('$targetApkFileName letöltése...');
     });
 
+    HttpClient? client;
+    IOSink? sink;
     try {
-      final client = HttpClient();
-      final request = await client.getUrl(Uri.parse(apkUrl));
+      client = HttpClient();
+      try {
+        client.connectionTimeout = const Duration(seconds: 15);
+      } catch (_) {}
+      final request = await client
+          .getUrl(Uri.parse(apkUrl))
+          .timeout(const Duration(seconds: 15));
       request.headers.set('User-Agent', 'TintaNaplo-Android-Updater');
-      final response = await request.close();
+      final response = await request.close().timeout(const Duration(seconds: 20));
       if (response.statusCode != 200) {
-        client.close();
         await _showInstallError(
             'A letöltés sikertelen (HTTP ${response.statusCode}).', apkUrl);
         return;
@@ -474,14 +493,17 @@ class _FrostedUpdateDialogContentState
       }
       final file = File('${cacheDir.path}/$targetApkFileName');
       if (await file.exists()) await file.delete();
-      final sink = file.openWrite();
+      sink = file.openWrite();
       var received = 0;
       var lastPct = -1;
       var lastMbTick = -1;
-      await for (final chunk in response) {
+      await for (final chunk
+          in response.timeout(const Duration(seconds: 30))) {
+        if (!mounted) {
+          return;
+        }
         sink.add(chunk);
         received += chunk.length;
-        if (!mounted) continue;
         if (total > 0) {
           final pct = (received * 100 / total).floor();
           if (pct != lastPct) {
@@ -505,7 +527,9 @@ class _FrostedUpdateDialogContentState
       }
       await sink.flush();
       await sink.close();
-      client.close();
+      sink = null;
+      client.close(force: true);
+      client = null;
       if (!mounted) return;
       setState(() {
         _downloadProgress = 1.0;
@@ -524,6 +548,11 @@ class _FrostedUpdateDialogContentState
       });
     } catch (e) {
       await _showInstallError('Hiba a frissítés közben: $e', apkUrl);
+    } finally {
+      try {
+        await sink?.close();
+      } catch (_) {}
+      client?.close(force: true);
     }
   }
 

@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:dynamic_color/dynamic_color.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'providers/app_providers.dart';
 import 'screens/home_screen.dart';
@@ -51,6 +53,7 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
 
   StoredSession? _session;
   DashboardData? _cachedDashboard;
+  UserProfilePrefs? _lastSyncedPrefs;
   UserProfilePrefs get _prefs => _settingsProvider.prefs;
   bool _isRestoringSession = true;
   bool _isSplashLoading = true;
@@ -64,6 +67,7 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
   bool _isHandlingWatchAuth = false;
   bool _pendingWatchAuthDuringRestore = false;
   DateTime? _lastWatchSyncFeedbackAt;
+  Brightness? _lastAppliedOverlayBrightness;
 
   /// Bumped on every state change so routes created via named navigation
   /// (e.g. `/login`) always render the up-to-date root content.
@@ -99,29 +103,38 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
   }
 
   Future<void> _ingestRotatedWatchSession(StoredSession rotated) async {
-    if (_prefs.demoModeEnabled) return;
-    final current = _session ?? TokenStorageService.latestSession;
-    if (current != null &&
-        current.instituteCode.toLowerCase() !=
-            rotated.instituteCode.toLowerCase()) {
-      return;
-    }
-    if (current != null &&
-        rotated.expiresAt.isBefore(current.expiresAt) &&
-        rotated.refreshToken == current.refreshToken) {
-      return;
-    }
-    await _tokenStorage.saveSession(rotated);
-    if (mounted) {
-      _set(() => _session = rotated);
-    }
+    try {
+      if (_prefs.demoModeEnabled) return;
+      final current = _session ?? TokenStorageService.latestSession;
+      if (current != null &&
+          current.instituteCode.toLowerCase() !=
+              rotated.instituteCode.toLowerCase()) {
+        return;
+      }
+      if (current != null &&
+          rotated.expiresAt.isBefore(current.expiresAt) &&
+          rotated.refreshToken == current.refreshToken) {
+        return;
+      }
+      await _tokenStorage.saveSession(rotated);
+      await TokenStorageService.recordAuthEvent(
+        caller: 'TintaNaploApp._ingestRotatedWatchSession',
+        action: 'watch_rotated_session_ingested',
+      );
+      if (mounted) {
+        _set(() => _session = rotated);
+      }
+    } catch (_) {}
   }
 
   void _onGlobalSessionChanged() {
     if (!mounted || _prefs.demoModeEnabled) return;
     final next = TokenStorageService.sessionNotifier.value;
-    if (next != null && next.accessToken != _session?.accessToken) {
-      setState(() => _session = next);
+    if (next != null &&
+        (next.accessToken != _session?.accessToken ||
+            next.refreshToken != _session?.refreshToken ||
+            next.expiresAt != _session?.expiresAt)) {
+      _set(() => _session = next);
     }
   }
 
@@ -135,7 +148,10 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
     super.didChangeDependencies();
     if (!_splashIconPrecached) {
       _splashIconPrecached = true;
-      precacheImage(const AssetImage('assets/images/tinta_icon.png'), context);
+      unawaited(
+        precacheImage(AssetImage(_prefs.activeAppIconAsset), context)
+            .catchError((_) {}),
+      );
     }
   }
 
@@ -151,32 +167,61 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
     _commuteProvider.dispose();
     _themeProvider.dispose();
     _settingsProvider.dispose();
+    if (widget.kretaClient == null) {
+      _kretaClient.close();
+    }
     _rootRevision.dispose();
     super.dispose();
   }
 
   Future<void> _restoreSavedSessionAndPrefs() async {
+    StoredSession? restoredSession;
+    UserProfilePrefs restoredPrefs = _settingsProvider.prefs;
+    DashboardData? restoredCache;
+
+    // 1. Isolate session loading so a corrupted prefs/cache entry can NEVER
+    // wipe out `_session` and kick the user back to LoginScreen!
     try {
-      final results = await Future.wait<Object?>([
-        _tokenStorage.loadSession(),
-        _settingsProvider.load(),
-      ]);
-      if (!mounted) return;
-      final restoredSession = results[0] as StoredSession?;
-      final restoredPrefs = results[1] as UserProfilePrefs;
-      DashboardData? restoredCache;
-      UserProfilePrefs.syncActiveGlobals(restoredPrefs);
+      restoredSession = await _tokenStorage.loadSession();
+    } catch (e) {
+      await TokenStorageService.recordAuthEvent(
+        caller: 'TintaNaploApp._restoreSavedSessionAndPrefs',
+        action: 'startup_load_session_error',
+        errorSnippet: e.toString(),
+      );
+      restoredSession = TokenStorageService.latestSession;
+    }
+
+    // 2. Load preferences independently.
+    try {
+      restoredPrefs = await _settingsProvider.load();
+    } catch (_) {
+      restoredPrefs = _settingsProvider.prefs;
+    }
+    if (!mounted) return;
+
+    UserProfilePrefs.syncActiveGlobals(restoredPrefs);
+    _lastSyncedPrefs = restoredPrefs;
+
+    // 3. Load cached dashboard independently (corrupted cache must never drop session).
+    try {
       if (restoredSession != null && !restoredPrefs.demoModeEnabled) {
-        restoredCache =
-            await _kretaClient.loadCachedDashboard(restoredSession);
+        try {
+          restoredCache =
+              await _kretaClient.loadCachedDashboard(restoredSession);
+        } catch (_) {
+          restoredCache = null;
+        }
         unawaited(
-          WearSyncService.instance.cacheSessionSnapshot(
-            session: restoredSession,
-            student: restoredCache?.student,
-            nickname: restoredPrefs.nickname,
-            recentGrades: restoredCache?.allGrades,
-            upcomingExams: restoredCache?.tests,
-          ),
+          WearSyncService.instance
+              .cacheSessionSnapshot(
+                session: restoredSession,
+                student: restoredCache?.student,
+                nickname: restoredPrefs.nickname,
+                recentGrades: restoredCache?.allGrades,
+                upcomingExams: restoredCache?.tests,
+              )
+              .catchError((_) => false),
         );
       } else if (restoredPrefs.demoModeEnabled) {
         restoredCache = DemoDataService.instance.buildDashboardData();
@@ -189,19 +234,17 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
               'no_stored_session_found',
         );
       }
-      if (!mounted) return;
-      if (restoredCache != null) {
-        _commuteProvider.setLessons(restoredCache.todaysLessons);
-      }
-      _set(() {
-        _session = restoredSession;
-        _cachedDashboard = restoredCache;
-        _isRestoringSession = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      _set(() => _isRestoringSession = false);
+    } catch (_) {}
+
+    if (!mounted) return;
+    if (restoredCache != null) {
+      _commuteProvider.setLessons(restoredCache.todaysLessons);
     }
+    _set(() {
+      _session = restoredSession;
+      _cachedDashboard = restoredCache;
+      _isRestoringSession = false;
+    });
 
     // Dismiss the splash overlay only after the real HomeScreen/LoginScreen frame
     // has built and painted its first frame underneath so zero white/blank flicker occurs.
@@ -219,12 +262,14 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
   }
 
   Future<void> _checkPendingWatchAuthOnStartup() async {
-    final pendingWatchAuth = _pendingWatchAuthDuringRestore ||
-        await WearSyncService.instance.consumePendingWatchAuthRequest();
-    _pendingWatchAuthDuringRestore = false;
-    if (pendingWatchAuth && mounted) {
-      await _handleWatchAuthRequested();
-    }
+    try {
+      final pendingWatchAuth = _pendingWatchAuthDuringRestore ||
+          await WearSyncService.instance.consumePendingWatchAuthRequest();
+      _pendingWatchAuthDuringRestore = false;
+      if (pendingWatchAuth && mounted) {
+        await _handleWatchAuthRequested();
+      }
+    } catch (_) {}
   }
 
   void _showWatchSyncFeedback(String message) {
@@ -251,14 +296,12 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
     }
     if (_isHandlingWatchAuth) return;
     _isHandlingWatchAuth = true;
-    await WearSyncService.instance.consumePendingWatchAuthRequest();
-    if (!mounted) {
-      _isHandlingWatchAuth = false;
-      return;
-    }
     try {
+      await WearSyncService.instance.consumePendingWatchAuthRequest();
+      if (!mounted) return;
       final currentSession =
           await _tokenStorage.loadSession() ?? _session;
+      if (!mounted) return;
       if (currentSession != null) {
         StoredSession active = currentSession;
         if (active.isExpired) {
@@ -268,14 +311,21 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
               _set(() => _session = active);
             }
           } on VerifiedInvalidGrantException catch (e) {
-            await TokenStorageService.recordLogoutReason(
-              caller: 'TintaNaploApp._handleWatchAuthRequested',
-              reason: 'Verified permanent invalid_grant during watch auth sync',
-              httpStatusCode: e.httpStatusCode,
-              errorBody: e.responseBody,
+            // ZERO AUTO-KICK: never wipe tokens or kick the user out to LoginScreen!
+            // Keep cached data intact, flag the non-destructive re-auth banner, and
+            // offer in-place re-authentication.
+            TokenStorageService.markReauthRequired(
+              'A munkamenet lejárt óra szinkronizálás közben (HTTP ${e.httpStatusCode}).',
             );
-            await _handleLogout();
-            if (mounted) await _openWatchRequestedLogin();
+            await TokenStorageService.recordAuthEvent(
+              caller: 'TintaNaploApp._handleWatchAuthRequested',
+              action: 'watch_sync_verified_invalid_grant_no_kick',
+              httpStatus: e.httpStatusCode,
+              errorSnippet: e.responseBody,
+            );
+            if (mounted) {
+              await _openWatchRequestedLogin(preserveCache: true);
+            }
             return;
           } catch (_) {
             // Keep existing session on transient offline or unverified errors;
@@ -294,7 +344,7 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
           _showWatchSyncFeedback('Munkamenet szinkronizálva az órával');
         }
       } else {
-        if (_isSplashLoading) {
+        if (_isSplashLoading && mounted) {
           _set(() {
             _isSplashLoading = false;
             _showSplashOverlay = false;
@@ -302,44 +352,60 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
         }
         await _openWatchRequestedLogin();
       }
+    } catch (_) {
+      // Never propagate unhandled async exceptions from watch sync callbacks.
     } finally {
       _isHandlingWatchAuth = false;
     }
   }
 
-  Future<void> _openWatchRequestedLogin() async {
+  Future<void> _openWatchRequestedLogin({bool preserveCache = false}) async {
     final nav = _navigatorKey.currentState;
     if (nav == null || _isLoginWebViewOpen) return;
-    await _launchWebViewLoginWithNavigator(nav);
+    await _launchWebViewLoginWithNavigator(
+      nav,
+      preserveCache: preserveCache,
+    );
   }
 
   Future<void> _updatePrefs(UserProfilePrefs nextPrefs) async {
-    final prevPrefs = _prefs;
+    final prevPrefs = _lastSyncedPrefs ?? _prefs;
+    _lastSyncedPrefs = nextPrefs;
     final ctx = _navigatorKey.currentContext;
     final themeAccent = ctx != null ? Theme.of(ctx).colorScheme.primary : null;
     // Update reactive provider immediately + persist to SharedPreferences & SecureStorage.
-    await _settingsProvider.updatePrefs(nextPrefs);
-    if (nextPrefs.appIconPreset != prevPrefs.appIconPreset) {
-      await DynamicIconService.syncIconWithPrefs(nextPrefs);
+    if (!identical(_settingsProvider.prefs, nextPrefs)) {
+      await _settingsProvider.updatePrefs(nextPrefs);
+    }
+    if (nextPrefs.appIconPreset != prevPrefs.appIconPreset ||
+        nextPrefs.fitymaModeEnabled != prevPrefs.fitymaModeEnabled) {
+      unawaited(
+        DynamicIconService.syncIconWithPrefs(nextPrefs).catchError((_) {}),
+      );
     }
     final affectsWidgets =
         nextPrefs.seedColorValue != prevPrefs.seedColorValue ||
             nextPrefs.themeStyle != prevPrefs.themeStyle ||
             nextPrefs.uwuModeEnabled != prevPrefs.uwuModeEnabled ||
-            nextPrefs.tsundereModeEnabled != prevPrefs.tsundereModeEnabled ||
             nextPrefs.liveActivityEnabled != prevPrefs.liveActivityEnabled ||
             nextPrefs.demoModeEnabled != prevPrefs.demoModeEnabled ||
             nextPrefs.hideCancelledLessons != prevPrefs.hideCancelledLessons ||
-            nextPrefs.subjectCustomNames.length !=
-                prevPrefs.subjectCustomNames.length ||
-            nextPrefs.teacherCustomNames.length !=
-                prevPrefs.teacherCustomNames.length;
+            !mapEquals(
+              nextPrefs.subjectCustomNames,
+              prevPrefs.subjectCustomNames,
+            ) ||
+            !mapEquals(
+              nextPrefs.teacherCustomNames,
+              prevPrefs.teacherCustomNames,
+            );
     if (affectsWidgets) {
       unawaited(
-        HomeWidgetSyncService.instance.syncPreferencesWithCachedLessons(
-          prefs: nextPrefs,
-          themeAccent: themeAccent,
-        ),
+        HomeWidgetSyncService.instance
+            .syncPreferencesWithCachedLessons(
+              prefs: nextPrefs,
+              themeAccent: themeAccent,
+            )
+            .catchError((_) => false),
       );
     }
   }
@@ -348,57 +414,103 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
     await _launchWebViewLoginWithNavigator(Navigator.of(navContext));
   }
 
-  Future<void> _launchWebViewLoginWithNavigator(
-    NavigatorState navigator,
+  Future<StoredSession?> _handleReauthenticateInPlace(
+    BuildContext navContext,
   ) async {
-    if (_isLoginWebViewOpen) return;
+    return _launchWebViewLoginWithNavigator(
+      Navigator.of(navContext),
+      preserveCache: true,
+    );
+  }
+
+  Future<StoredSession?> _launchWebViewLoginWithNavigator(
+    NavigatorState navigator, {
+    bool preserveCache = false,
+  }) async {
+    if (_isLoginWebViewOpen) return null;
     _isLoginWebViewOpen = true;
     try {
       final session = await navigator.push<StoredSession>(
         MaterialPageRoute(
           builder: (_) => WebViewLoginScreen(
             kretaClient: _kretaClient,
+            initialInstituteCode: preserveCache ? _session?.instituteCode : null,
+            initialUsername: preserveCache ? _session?.userName : null,
           ),
         ),
       );
 
       if (session != null && mounted) {
+        TokenStorageService.clearReauthRequired();
+        await TokenStorageService.recordAuthEvent(
+          caller: 'TintaNaploApp._launchWebViewLoginWithNavigator',
+          action: preserveCache ? 'in_place_reauth_succeeded' : 'login_succeeded',
+        );
         _set(() {
           _session = session;
-          _cachedDashboard = null;
+          if (!preserveCache) {
+            _cachedDashboard = null;
+          }
         });
-        final pushed = await WearSyncService.instance.syncSessionToWatch(
-          session: session,
-          nickname: _prefs.nickname,
-          forceSync: true,
+        unawaited(
+          WearSyncService.instance
+              .syncSessionToWatch(
+                session: session,
+                student: _cachedDashboard?.student,
+                nickname: _prefs.nickname,
+                forceSync: true,
+                recentGrades: _cachedDashboard?.allGrades,
+                upcomingExams: _cachedDashboard?.tests,
+              )
+              .then((pushed) {
+                if (pushed && mounted) {
+                  _showWatchSyncFeedback('Munkamenet elküldve az órára');
+                }
+              })
+              .catchError((_) {}),
         );
-        if (pushed && mounted) {
-          _showWatchSyncFeedback('Munkamenet elküldve az órára');
-        }
       }
+      return session;
     } finally {
       _isLoginWebViewOpen = false;
     }
   }
 
+  /// Explicit user-initiated logout (ONLY called from the "Kijelentkezés" button).
   Future<void> _handleLogout() async {
     final previousSession = _session;
-    if (previousSession != null) {
-      await _tokenStorage.clearDashboardCache(
-        TokenStorageService.accountKeyForSession(previousSession),
+    try {
+      if (previousSession != null) {
+        await _tokenStorage.clearDashboardCache(
+          TokenStorageService.accountKeyForSession(previousSession),
+        );
+      }
+    } catch (_) {}
+    try {
+      await _tokenStorage.clearSession(
+        caller: 'TintaNaploApp._handleLogout',
+        reason: 'Felhasználói kijelentkezés',
+        isUserInitiated: true,
       );
+    } catch (_) {}
+    if (_prefs.demoModeEnabled) {
+      try {
+        await _settingsProvider.updatePrefs(
+          _prefs.withExtra('demoModeEnabled', false),
+        );
+      } catch (_) {}
     }
-    await _tokenStorage.clearSession(
-      caller: 'TintaNaploApp._handleLogout',
-      reason: 'Munkamenet lezárva (_handleLogout)',
-    );
+    _kretaClient.clearLocalState();
     HomeWidgetSyncService.instance.clearMemoryCache();
-    unawaited(WearSyncService.instance.clearWatchSession());
+    unawaited(
+      WearSyncService.instance.clearWatchSession().catchError((_) => false),
+    );
     if (!mounted) return;
     _set(() {
       _session = null;
       _cachedDashboard = null;
     });
+    _navigatorKey.currentState?.popUntil((route) => route.isFirst);
   }
 
   @override
@@ -417,7 +529,25 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
                 prefs: _prefs,
                 dynamicScheme: isLight ? lightDynamic : darkDynamic,
               );
+              final isShowingLoginScreen = !_isRestoringSession &&
+                  _session == null &&
+                  !_prefs.demoModeEnabled;
+              final effectiveOverlayBrightness = isShowingLoginScreen
+                  ? Brightness.dark
+                  : activeTheme.brightness;
+              final overlayStyle = OledTheme.systemOverlayStyleForBrightness(
+                effectiveOverlayBrightness,
+              );
+              if (_lastAppliedOverlayBrightness != effectiveOverlayBrightness) {
+                _lastAppliedOverlayBrightness = effectiveOverlayBrightness;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) {
+                    SystemChrome.setSystemUIOverlayStyle(overlayStyle);
+                  }
+                });
+              }
 
+              final activeIsLight = activeTheme.brightness == Brightness.light;
               return MaterialApp(
                 navigatorKey: _navigatorKey,
                 scaffoldMessengerKey: _scaffoldMessengerKey,
@@ -425,24 +555,28 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
                 debugShowCheckedModeBanner: false,
                 theme: activeTheme,
                 darkTheme: activeTheme,
-                themeMode: isLight ? ThemeMode.light : ThemeMode.dark,
+                themeMode: activeIsLight ? ThemeMode.light : ThemeMode.dark,
                 themeAnimationDuration: Duration.zero,
+                themeAnimationStyle: AnimationStyle.noAnimation,
                 builder: (context, child) {
-                  return Stack(
-                    children: [
-                      child ?? const SizedBox.shrink(),
-                      if (_showSplashOverlay)
-                        TintaSplashOverlay(
-                          key: const ValueKey<String>('tinta-splash-overlay'),
-                          isLoading: _isSplashLoading,
-                          accentColor: activeTheme.colorScheme.primary,
-                          onDismissed: () {
-                            if (mounted) {
-                              setState(() => _showSplashOverlay = false);
-                            }
-                          },
-                        ),
-                    ],
+                  return AnnotatedRegion<SystemUiOverlayStyle>(
+                    value: overlayStyle,
+                    child: Stack(
+                      children: [
+                        child ?? const SizedBox.shrink(),
+                        if (_showSplashOverlay)
+                          TintaSplashOverlay(
+                            key: const ValueKey<String>('tinta-splash-overlay'),
+                            isLoading: _isSplashLoading,
+                            accentColor: activeTheme.colorScheme.primary,
+                            onDismissed: () {
+                              if (mounted) {
+                                setState(() => _showSplashOverlay = false);
+                              }
+                            },
+                          ),
+                      ],
+                    ),
                   );
                 },
                 home: _rootRoute(),
@@ -464,13 +598,19 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
     }
 
     if (_session != null || _prefs.demoModeEnabled) {
-      return HomeScreen(
-        initialSession: _session ?? DemoDataService.instance.buildDemoSession(),
-        initialCachedData: _cachedDashboard,
-        kretaClient: _kretaClient,
-        prefs: _prefs,
-        onPrefsChanged: _updatePrefs,
-        onLogout: _handleLogout,
+      return Builder(
+        builder: (navContext) {
+          return HomeScreen(
+            initialSession:
+                _session ?? DemoDataService.instance.buildDemoSession(),
+            initialCachedData: _cachedDashboard,
+            kretaClient: _kretaClient,
+            prefs: _prefs,
+            onPrefsChanged: _updatePrefs,
+            onLogout: _handleLogout,
+            onReauthenticate: () => _handleReauthenticateInPlace(navContext),
+          );
+        },
       );
     }
 

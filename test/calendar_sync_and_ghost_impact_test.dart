@@ -426,7 +426,7 @@ void main() {
         expect(
           titles,
           containsAll([
-            '[Dolgozat] Fizika – Newton törvényei',
+            '[Dolgozat] Fizika - Newton törvényei',
             '[Számonkérés] Kémia',
             '[Házi] Magyar',
           ]),
@@ -476,7 +476,7 @@ void main() {
         expect(fakeNative.storedEvents.length, 3);
         expect(
           fakeNative.storedEvents.values.any(
-            (e) => e['title'] == '[Dolgozat] Fizika – Mechanika frissítve',
+            (e) => e['title'] == '[Dolgozat] Fizika - Mechanika frissítve',
           ),
           isTrue,
         );
@@ -503,7 +503,7 @@ void main() {
     );
 
     testWidgets(
-      'AppSettingsScreen renders Google Naptár szinkronizálás card, toggles OFF by default, switches scope & clears events',
+      'AppSettingsScreen renders Naptár szinkronizálás card, toggles OFF by default, switches scope & clears events',
       (tester) async {
         SharedPreferences.setMockInitialValues({});
         final fakeNative = _FakeNativeCalendarPlatform();
@@ -577,8 +577,8 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text('Google Naptár szinkronizálás'), findsOneWidget);
-        await tester.tap(find.text('Google Naptár szinkronizálás'));
+        expect(find.text('Naptár szinkronizálás'), findsOneWidget);
+        await tester.tap(find.text('Naptár szinkronizálás'));
         await tester.pumpAndSettle();
 
         // Default OFF

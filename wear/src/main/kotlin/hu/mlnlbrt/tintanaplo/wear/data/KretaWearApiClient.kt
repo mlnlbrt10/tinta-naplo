@@ -36,10 +36,28 @@ class KretaWearApiClient(
     private val clientId: String = KretaSharedConfig.CLIENT_ID_IOS,
     private val idpBaseUrlOverride: String? = null,
     private val tenantBaseUrlOverride: String? = null,
-    private val onSessionRefreshed: ((StoredSession) -> Unit)? = null,
+    private val onSessionRefreshed: (suspend (StoredSession) -> Unit)? = null,
 ) {
     @Volatile
-    private var latestSession: StoredSession? = null
+    private var localLatestSession: StoredSession? = null
+
+    private fun matchingGlobalSession(target: StoredSession?): StoredSession? {
+        if (idpBaseUrlOverride != null) return localLatestSession
+        val g = globalLatestSession ?: return localLatestSession
+        if (target == null) return null
+        val sameInstitute = g.instituteCode.equals(target.instituteCode, ignoreCase = true)
+        val sameUser = target.userName.isNullOrBlank() ||
+            g.userName.isNullOrBlank() ||
+            g.userName.equals(target.userName, ignoreCase = true)
+        return if (sameInstitute && sameUser) g else null
+    }
+
+    private fun recordLatestSession(session: StoredSession) {
+        localLatestSession = session
+        if (idpBaseUrlOverride == null) {
+            globalLatestSession = session
+        }
+    }
 
     private val idpBaseUrl: String
         get() = (idpBaseUrlOverride ?: KretaSharedConfig.IDP_BASE_URL).trimEnd('/')
@@ -52,23 +70,20 @@ class KretaWearApiClient(
         if (tenantBaseUrlOverride != null) {
             return tenantBaseUrlOverride.trimEnd('/')
         }
-        return if (instituteCode == "firka-test") {
-            "https://${KretaSharedConfig.KRETA_BASE_DOMAIN}"
-        } else {
-            "https://$instituteCode.${KretaSharedConfig.KRETA_BASE_DOMAIN}"
-        }
+        return "https://$instituteCode.${KretaSharedConfig.KRETA_BASE_DOMAIN}"
     }
 
     suspend fun refreshSession(current: StoredSession): StoredSession = globalRefreshMutex.withLock {
         val stored = tokenStore.loadSession()
-        val candidate = stored?.takeIf { !it.isExpired() } ?: latestSession?.takeIf { !it.isExpired() }
+        val globalMatch = matchingGlobalSession(stored ?: current)
+        val candidate = stored?.takeIf { !it.isExpired() } ?: globalMatch?.takeIf { !it.isExpired() }
         if (candidate != null && candidate.accessToken != current.accessToken) {
-            latestSession = candidate
+            recordLatestSession(candidate)
             return@withLock candidate
         }
 
         val active = stored?.takeIf { it.refreshToken.isNotBlank() }
-            ?: latestSession?.takeIf { it.refreshToken.isNotBlank() }
+            ?: globalMatch?.takeIf { it.refreshToken.isNotBlank() }
             ?: current
         if (active.refreshToken.isBlank()) {
             throw TokenExpiredException()
@@ -97,7 +112,9 @@ class KretaWearApiClient(
                 400 -> throw TokenExpiredException()
                 401 -> throw InvalidGrantException()
                 200 -> {
-                    val json = JSONObject(resp.body)
+                    val json = runCatching { JSONObject(resp.body) }.getOrElse {
+                        throw KretaApiException(200, "Érvénytelen JSON válasz a token frissítés során")
+                    }
                     StoredSession.fromTokenGrantJson(
                         json = json,
                         fallbackInstituteCode = active.instituteCode,
@@ -116,21 +133,27 @@ class KretaWearApiClient(
             }
         }
 
-        latestSession = refreshed
+        recordLatestSession(refreshed)
         tokenStore.saveSession(refreshed)
-        runCatching { onSessionRefreshed?.invoke(refreshed) }
+        try {
+            onSessionRefreshed?.invoke(refreshed)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+        }
         refreshed
     }
 
     suspend fun ensureValidSession(session: StoredSession): StoredSession {
         val stored = tokenStore.loadSession()
+        val globalMatch = matchingGlobalSession(stored ?: session)
         val active = stored?.takeIf { !it.isExpired() }
-            ?: latestSession?.takeIf { !it.isExpired() }
+            ?: globalMatch?.takeIf { !it.isExpired() }
             ?: stored
-            ?: latestSession
+            ?: globalMatch
             ?: session
         if (!active.isExpired()) {
-            latestSession = active
+            recordLatestSession(active)
             return active
         }
         return refreshSession(active)
@@ -233,7 +256,7 @@ class KretaWearApiClient(
     ): CachedWearData = coroutineScope {
         val validSession = ensureValidSession(session)
         val dateKey = targetDate.toString()
-        val initialAccountKey = SecureTokenStorage.accountKeyFor(latestSession ?: validSession)
+        val initialAccountKey = SecureTokenStorage.accountKeyFor(matchingGlobalSession(validSession) ?: validSession)
         val existingCache = tokenStore.loadWearDataCache(initialAccountKey, dateKey)
 
         val lessonsDeferred = async {
@@ -273,7 +296,7 @@ class KretaWearApiClient(
         val exams = examsDeferred.await()
 
         val syncedAt = System.currentTimeMillis()
-        val effectiveSession = latestSession ?: tokenStore.loadSession() ?: validSession
+        val effectiveSession = matchingGlobalSession(validSession) ?: tokenStore.loadSession() ?: validSession
         val accountKey = SecureTokenStorage.accountKeyFor(effectiveSession)
         tokenStore.saveWearDataCache(
             accountKey = accountKey,
@@ -308,7 +331,10 @@ class KretaWearApiClient(
     }
 
     fun resetMemoryCache() {
-        latestSession = null
+        localLatestSession = null
+        if (idpBaseUrlOverride == null) {
+            globalLatestSession = null
+        }
     }
 
     private suspend fun getAuthenticatedBody(session: StoredSession, url: String): String {
@@ -385,6 +411,12 @@ class KretaWearApiClient(
         private const val DEFAULT_UPCOMING_DAYS = 10
         private const val DEFAULT_EXAMS_DAYS_AHEAD = 30
         private val globalRefreshMutex = Mutex()
+        @Volatile
+        private var globalLatestSession: StoredSession? = null
+
+        fun clearGlobalSessionCache() {
+            globalLatestSession = null
+        }
 
         fun firstSchoolDay(reference: LocalDate = LocalDate.now()): LocalDate {
             val sept1 = LocalDate.of(reference.year, 9, 1)

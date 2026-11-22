@@ -153,12 +153,11 @@ void main() {
     expect(authRequested, isTrue);
   });
 
-  testWidgets('Profile sheet shows Szinkronizálás órával only when a Wear watch is connected',
+  testWidgets('Profile sheet shows connected Wear watch without Szinkronizálás órával button',
       (tester) async {
     const channel = MethodChannel('test.profile.wear');
     final service = WearSyncService(channel: channel);
     var connected = false;
-    Map<Object?, Object?>? pushedArgs;
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
@@ -172,10 +171,6 @@ void main() {
                 ]
               : <Map<String, Object?>>[],
         };
-      }
-      if (call.method == 'pushSessionToWatch') {
-        pushedArgs = call.arguments as Map<Object?, Object?>?;
-        return true;
       }
       return true;
     });
@@ -220,26 +215,19 @@ void main() {
     await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();
 
-    // 2. Connected -> shows watch name + Szinkronizálás órával button and pushes on tap
+    // 2. Connected -> shows watch name without redundant manual sync button
     connected = true;
     await tester.tap(find.text('OpenProfile'));
     await tester.pumpAndSettle();
     expect(find.text('Galaxy Watch6'), findsOneWidget);
-    expect(find.text('Szinkronizálás órával'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey<String>('profile-wear-sync-button')));
-    await tester.pumpAndSettle();
-    expect(pushedArgs, isNotNull);
-    expect(pushedArgs!['refreshToken'], 'refresh_tok_456');
-    expect(pushedArgs!['instituteCode'], 'klik035277001');
-    expect(pushedArgs!['studentName'], 'Kovács Milán');
+    expect(find.text('Szinkronizálás órával'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('profile-wear-sync-button')), findsNothing);
   });
 
-  testWidgets('AppSettingsScreen shows Wear OS indicator and sync button inside Fiók és munkamenet',
+  testWidgets('AppSettingsScreen shows Wear OS indicator inside Fiók és munkamenet without Szinkronizálás órával button',
       (tester) async {
     const channel = MethodChannel('test.settings.wear');
     final service = WearSyncService(channel: channel);
-    Map<Object?, Object?>? pushedArgs;
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
@@ -251,10 +239,6 @@ void main() {
             {'id': 'n1', 'displayName': 'Pixel Watch 3', 'isNearby': true},
           ],
         };
-      }
-      if (call.method == 'pushSessionToWatch') {
-        pushedArgs = call.arguments as Map<Object?, Object?>?;
-        return true;
       }
       return true;
     });
@@ -285,13 +269,8 @@ void main() {
 
     expect(find.text('Wear OS óra'), findsOneWidget);
     expect(find.text('Csatlakozva (Pixel Watch 3)'), findsOneWidget);
-    expect(find.text('Szinkronizálás órával'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey<String>('settings-wear-sync-button')));
-    await tester.pumpAndSettle();
-    expect(pushedArgs, isNotNull);
-    expect(pushedArgs!['refreshToken'], 'refresh_tok_456');
-    expect(pushedArgs!['forceSync'], isTrue);
+    expect(find.text('Szinkronizálás órával'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('settings-wear-sync-button')), findsNothing);
   });
 
   testWidgets('TintaNaploApp immediately pushes active session on watch auth request when logged in',
@@ -373,7 +352,7 @@ void main() {
           .setMockMethodCallHandler(channel, null);
     });
 
-    final now = DateTime(2026, 11, 19, 12, 0);
+    final now = DateTime.now();
     final grades = List<Grade>.generate(7, (i) {
       return Grade(
         uid: 'g$i',

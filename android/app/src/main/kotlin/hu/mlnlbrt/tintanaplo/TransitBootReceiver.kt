@@ -18,13 +18,15 @@ class TransitBootReceiver : BroadcastReceiver() {
                 val title = prefs.getString("title", "🚶 Indulj lassan az állomásra!")
                     ?: "🚶 Indulj lassan az állomásra!"
                 val body = prefs.getString("body", "") ?: ""
-                MainActivity.scheduleExactAlarmInternal(
-                    context = context.applicationContext,
-                    triggerAtMillis = triggerAtMillis,
-                    notificationId = notificationId,
-                    title = title,
-                    body = body
-                )
+                runCatching {
+                    MainActivity.scheduleExactAlarmInternal(
+                        context = context.applicationContext,
+                        triggerAtMillis = triggerAtMillis,
+                        notificationId = notificationId,
+                        title = title,
+                        body = body
+                    )
+                }
             }
         }
     }

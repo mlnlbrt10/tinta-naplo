@@ -461,10 +461,14 @@ class DashboardData {
       if (raw is! List) return <T>[];
       final out = <T>[];
       for (final item in raw) {
-        if (item is Map<String, dynamic>) {
-          out.add(parser(item));
-        } else if (item is Map) {
-          out.add(parser(Map<String, dynamic>.from(item)));
+        try {
+          if (item is Map<String, dynamic>) {
+            out.add(parser(item));
+          } else if (item is Map) {
+            out.add(parser(Map<String, dynamic>.from(item)));
+          }
+        } catch (_) {
+          // Skip malformed individual cached item instead of dropping the whole cache.
         }
       }
       return out;
@@ -472,10 +476,14 @@ class DashboardData {
 
     Student? student;
     final rawStudent = json['student'];
-    if (rawStudent is Map<String, dynamic>) {
-      student = Student.fromJson(rawStudent);
-    } else if (rawStudent is Map) {
-      student = Student.fromJson(Map<String, dynamic>.from(rawStudent));
+    try {
+      if (rawStudent is Map<String, dynamic>) {
+        student = Student.fromJson(rawStudent);
+      } else if (rawStudent is Map) {
+        student = Student.fromJson(Map<String, dynamic>.from(rawStudent));
+      }
+    } catch (_) {
+      student = null;
     }
 
     final todayStr = DateUtils.dateOnly(DateTime.now()).toIso8601String();
@@ -514,22 +522,38 @@ class DashboardData {
 /// refresh interceptor, and v3 API queries.
 class KretaClient {
   final http.Client _http;
+  final bool _ownsHttpClient;
   final TokenStorageService _storage;
   final String clientId;
 
   StoredSession? _latestSession;
   Completer<bool>? _refreshCompleter;
+  Object? _lastRefreshError;
   final List<KretaMessage> _localSentMessages = [];
+  final Map<String, List<Lesson>> _dayTimetableCache = {};
 
   KretaClient({
     http.Client? httpClient,
     TokenStorageService? storage,
     this.clientId = KretaAuthConfig.clientIdIos,
   })  : _http = httpClient ?? http.Client(),
+        _ownsHttpClient = httpClient == null,
         _storage = storage ?? const TokenStorageService();
 
   TokenStorageService get storage => _storage;
   StoredSession? get latestSession => _latestSession;
+
+  void clearLocalState() {
+    _latestSession = null;
+    _localSentMessages.clear();
+    _dayTimetableCache.clear();
+  }
+
+  void close() {
+    if (_ownsHttpClient) {
+      _http.close();
+    }
+  }
 
   bool _isDemoActive(StoredSession? session) =>
       UserProfilePrefs.activeDemoModeEnabled ||
@@ -587,8 +611,11 @@ class KretaClient {
       );
     }
 
-    final jsonMap =
-        jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is! Map) {
+      throw Exception('Unexpected non-JSON-object token exchange response.');
+    }
+    final jsonMap = Map<String, dynamic>.from(decoded);
     final grant = TokenGrantResponse.fromJson(jsonMap);
     final session = StoredSession.fromTokenGrant(
       grant,
@@ -611,7 +638,7 @@ class KretaClient {
     final existingCompleter = _refreshCompleter;
     if (existingCompleter != null) {
       final ok = await existingCompleter.future.timeout(
-        const Duration(seconds: 15),
+        const Duration(seconds: 45),
         onTimeout: () => false,
       );
       StoredSession? storedAfterWait;
@@ -628,6 +655,10 @@ class KretaClient {
       if (ok || !latest.isExpired) {
         _latestSession = latest;
         return latest;
+      }
+      final leaderErr = _lastRefreshError;
+      if (leaderErr is VerifiedInvalidGrantException) {
+        throw leaderErr;
       }
       throw Exception('Concurrent token refresh failed.');
     }
@@ -647,6 +678,7 @@ class KretaClient {
 
     final completer = Completer<bool>();
     _refreshCompleter = completer;
+    _lastRefreshError = null;
 
     try {
       final newestInput = TokenStorageService.pickNewestSession([
@@ -665,6 +697,9 @@ class KretaClient {
         completer.complete(true);
       }
       return refreshed;
+    } catch (e) {
+      _lastRefreshError = e;
+      rethrow;
     } finally {
       if (!completer.isCompleted) {
         completer.complete(false);
@@ -713,13 +748,15 @@ class KretaClient {
           session,
         ]) ??
         session;
+    VerifiedInvalidGrantException? preemptiveInvalidGrant;
     if (active.isExpired) {
       try {
         active = await ensureValidSession(active);
-      } on VerifiedInvalidGrantException {
+      } on VerifiedInvalidGrantException catch (e) {
         if (DateTime.now().isAfter(active.expiresAt)) {
           rethrow;
         }
+        preemptiveInvalidGrant = e;
         // Still within nominal pre-expiry margin: try current token cleanly first.
       } catch (_) {
         // Transient network/5xx/storage error during pre-emptive refresh: keep session
@@ -742,6 +779,8 @@ class KretaClient {
         concurrentLatest.accessToken != usedAccessToken &&
         !concurrentLatest.isExpired) {
       active = concurrentLatest;
+    } else if (preemptiveInvalidGrant != null) {
+      throw preemptiveInvalidGrant;
     } else {
       active = await refreshSession(active, force: true);
     }
@@ -771,7 +810,11 @@ class KretaClient {
     if (text.isEmpty) {
       return const [];
     }
-    return jsonDecode(text);
+    try {
+      return jsonDecode(text);
+    } catch (e) {
+      throw FormatException('Invalid JSON from $url: $e');
+    }
   }
 
   Future<dynamic> _getEugyintezesJson(
@@ -832,6 +875,62 @@ class KretaClient {
     return response.statusCode >= 200 && response.statusCode < 300;
   }
 
+  String _dayCacheKey(StoredSession session, DateTime date) {
+    final norm = DateUtils.dateOnly(date);
+    final acct = _isDemoActive(session)
+        ? 'demo'
+        : TokenStorageService.accountKeyForSession(session);
+    final m = norm.month.toString().padLeft(2, '0');
+    final d = norm.day.toString().padLeft(2, '0');
+    return '$acct|${norm.year}-$m-$d';
+  }
+
+  /// Returns cached lessons for the exact calendar [date], or `null` if not
+  /// yet cached in memory for [session].
+  List<Lesson>? getCachedTimetableForDate(
+    StoredSession session,
+    DateTime date,
+  ) {
+    return _dayTimetableCache[_dayCacheKey(session, date)];
+  }
+
+  void _cacheTimetableLessons(
+    StoredSession session,
+    List<Lesson> lessons, {
+    Iterable<DateTime> explicitEmptyDates = const <DateTime>[],
+  }) {
+    final byDay = <DateTime, List<Lesson>>{};
+    for (final lesson in lessons) {
+      final day = DateUtils.dateOnly(lesson.start.toLocal());
+      byDay.putIfAbsent(day, () => <Lesson>[]).add(lesson);
+    }
+
+    for (final entry in byDay.entries) {
+      final deduped = <String, Lesson>{};
+      for (final lesson in entry.value) {
+        final key = lesson.uid.trim().isNotEmpty
+            ? lesson.uid.trim()
+            : '${lesson.lessonNumber ?? ''}_${lesson.start.toIso8601String()}_${lesson.name}';
+        deduped[key] = lesson;
+      }
+      final sorted = deduped.values.toList()
+        ..sort((a, b) {
+          final nCmp = (a.lessonNumber ?? 999).compareTo(b.lessonNumber ?? 999);
+          if (nCmp != 0) return nCmp;
+          return a.start.toLocal().compareTo(b.start.toLocal());
+        });
+      _dayTimetableCache[_dayCacheKey(session, entry.key)] =
+          List<Lesson>.unmodifiable(sorted);
+    }
+
+    for (final date in explicitEmptyDates) {
+      final norm = DateUtils.dateOnly(date);
+      if (!byDay.containsKey(norm)) {
+        _dayTimetableCache[_dayCacheKey(session, norm)] = const <Lesson>[];
+      }
+    }
+  }
+
   /// Fetches timetable lessons between [from] and [to] (inclusive) using
   /// [KretaEndpoints.getTimeTable] and parses each item with [Lesson.fromJson].
   Future<List<Lesson>> fetchTimetableForRange(
@@ -840,7 +939,9 @@ class KretaClient {
     required DateTime to,
   }) async {
     if (_isDemoActive(session)) {
-      return DemoDataService.instance.buildTimetableForRange(from, to);
+      final demo = DemoDataService.instance.buildTimetableForRange(from, to);
+      _cacheTimetableLessons(session, demo);
+      return demo;
     }
     final startDay = DateTime(from.year, from.month, from.day);
     final endDay = DateTime(to.year, to.month, to.day);
@@ -855,13 +956,67 @@ class KretaClient {
       return const [];
     }
 
-    final lessons = raw
-        .whereType<Map<String, dynamic>>()
-        .map(Lesson.fromJson)
-        .toList()
-      ..sort((a, b) => a.start.toLocal().compareTo(b.start.toLocal()));
+    final lessons = <Lesson>[];
+    for (final item in raw) {
+      if (item is Map) {
+        try {
+          lessons.add(Lesson.fromJson(Map<String, dynamic>.from(item)));
+        } catch (_) {
+          // Skip malformed KRÉTA lesson item without crashing the whole week.
+        }
+      }
+    }
+    lessons.sort((a, b) => a.start.toLocal().compareTo(b.start.toLocal()));
+    _cacheTimetableLessons(session, lessons);
 
     return lessons;
+  }
+
+  /// Fetches the complete timetable for a single calendar [date], returning any
+  /// cached day schedule immediately or fetching the enclosing week cleanly.
+  Future<List<Lesson>> fetchTimetableForDate(
+    StoredSession session,
+    DateTime date, {
+    bool forceRefresh = false,
+  }) async {
+    final target = DateUtils.dateOnly(date);
+    if (!forceRefresh) {
+      final cached = getCachedTimetableForDate(session, target);
+      if (cached != null) {
+        return cached;
+      }
+    }
+    if (_isDemoActive(session)) {
+      final demo = DemoDataService.instance.buildTimetableForRange(
+        target,
+        target,
+      );
+      final dayOnly = demo
+          .where((l) => DateUtils.dateOnly(l.start.toLocal()) == target)
+          .toList();
+      _cacheTimetableLessons(
+        session,
+        dayOnly,
+        explicitEmptyDates: [target],
+      );
+      return _dayTimetableCache[_dayCacheKey(session, target)] ??
+          const <Lesson>[];
+    }
+
+    final monday = target.subtract(Duration(days: target.weekday - 1));
+    final sunday = monday.add(const Duration(days: 6));
+    final weekLessons = await fetchTimetableForRange(
+      session,
+      from: monday,
+      to: sunday,
+    );
+    _cacheTimetableLessons(
+      session,
+      weekLessons,
+      explicitEmptyDates: [target],
+    );
+    return _dayTimetableCache[_dayCacheKey(session, target)] ??
+        const <Lesson>[];
   }
 
   /// Fetches today's timetable lessons using [KretaEndpoints.getTimeTable].
@@ -1078,11 +1233,17 @@ class KretaClient {
       final raw = await _getAuthenticatedJson(session, url);
       if (raw is! List) return const [];
 
-      final list = raw
-          .whereType<Map<String, dynamic>>()
-          .map(Omission.fromJson)
-          .toList()
-        ..sort((a, b) => b.date.compareTo(a.date));
+      final list = <Omission>[];
+      for (final item in raw) {
+        if (item is Map) {
+          try {
+            list.add(Omission.fromJson(Map<String, dynamic>.from(item)));
+          } catch (_) {
+            // Skip malformed KRÉTA omission item without discarding the list.
+          }
+        }
+      }
+      list.sort((a, b) => b.date.compareTo(a.date));
       return list;
     } on TokenExpiredException {
       rethrow;
@@ -1439,10 +1600,15 @@ class KretaClient {
       detailsLoaded: true,
     );
 
+    final trimmedRecipient = recipient.trim();
     final payload = <String, dynamic>{
       'targy': msg.subject,
       'szoveg': msg.body,
-      'cimzettLista': const [],
+      'cimzettLista': trimmedRecipient.isEmpty
+          ? const []
+          : [
+              {'nev': trimmedRecipient},
+            ],
       'csatolmanyok': const [],
     };
     if (_isDemoActive(session)) {
@@ -1564,11 +1730,15 @@ class KretaClient {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return null;
       final readIds = await _storage.loadReadMessageIds(accountKey: acctKey);
-      return DashboardData.fromJson(
+      final data = DashboardData.fromJson(
         Map<String, dynamic>.from(decoded),
         session,
         readMessageIds: readIds,
       );
+      if (data.todaysLessons.isNotEmpty) {
+        _cacheTimetableLessons(session, data.todaysLessons);
+      }
+      return data;
     } catch (_) {
       return null;
     }

@@ -382,7 +382,7 @@ class CalendarSyncService {
       return const CalendarSyncResult(
         performed: false,
         errorMessage:
-            'Nem található írható Google Naptár ezen az eszközön.',
+            'Nem található írható naptár ezen az eszközön.',
       );
     }
 
@@ -409,7 +409,7 @@ class CalendarSyncService {
         );
         final tema = (test.theme ?? '').trim();
         final title = tema.isNotEmpty
-            ? '[Dolgozat] $subjectName – $tema'
+            ? '[Dolgozat] $subjectName - $tema'
             : '[Számonkérés] $subjectName';
         final description = _buildExamDescription(
           test: test,
@@ -767,6 +767,8 @@ class CalendarSyncService {
       );
       return savedId?.toString();
     } on MissingPluginException {
+      return null;
+    } on PlatformException {
       return null;
     }
   }

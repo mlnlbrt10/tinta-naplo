@@ -406,25 +406,44 @@ class CommuteEvaluation {
     return diff < 0 ? 0 : diff;
   }
 
-  String get departureNotificationTitle => '🚶 Indulj lassan az állomásra!';
+  String get departureNotificationTitle {
+    final line = recommendedTrip.safeRouteShortName;
+    final mins = alertBufferMinutes > 0 ? alertBufferMinutes : 5;
+    return 'Indulás $mins perc múlva • $line';
+  }
 
   String get departureNotificationBody {
     final depStr = recommendedTrip.departureTimeFormatted;
-    final walkStartStr = DateFormat('HH:mm').format(latestWalkStartTime);
-    final vehicle = recommendedTrip.mode.vehicleNounAccusative;
-    return 'A $depStr-es $vehicle legkésőbb $walkStartStr-kor indulnod kell ($effectiveWalkMinutes perc séta). Ne késs el!';
+    final from = recommendedTrip.departureStation.trim();
+    final to = recommendedTrip.arrivalStation.trim();
+    final routePart =
+        (from.isNotEmpty && to.isNotEmpty) ? ' ($from -> $to)' : '';
+    return '$depStr-es járat$routePart • ${effectiveWalkMinutes}p séta az állomásra';
   }
 
   bool get hasSignificantDelay =>
       recommendedTrip.isCancelled || recommendedTrip.delayMinutes >= 5;
 
-  String get delayNotificationTitle => recommendedTrip.isCancelled
-      ? '⚠️ Kimaradó járat (${recommendedTrip.safeRouteShortName})!'
-      : '⚠️ Késik a járatod (+${recommendedTrip.delayMinutes} perc)!';
+  String get delayNotificationTitle {
+    final line = recommendedTrip.safeRouteShortName;
+    if (recommendedTrip.isCancelled) {
+      return 'Kimaradó járat • $line';
+    }
+    return 'Késés (+${recommendedTrip.delayMinutes}p) • $line';
+  }
 
-  String get delayNotificationBody => recommendedTrip.isCancelled
-      ? 'A(z) ${recommendedTrip.departureTimeFormatted}-es ${recommendedTrip.safeRouteShortName} járat kimarad. Nézd meg a következő indulást!'
-      : '⚠️ Késik a járatod (+${recommendedTrip.delayMinutes} perc)! Menetrend szerinti ind.: ${recommendedTrip.departureTimeFormatted}, becsült ind.: ${recommendedTrip.effectiveDepartureTimeFormatted}.';
+  String get delayNotificationBody {
+    final depStr = recommendedTrip.departureTimeFormatted;
+    final estStr = recommendedTrip.effectiveDepartureTimeFormatted;
+    final from = recommendedTrip.departureStation.trim();
+    final to = recommendedTrip.arrivalStation.trim();
+    final routePart =
+        (from.isNotEmpty && to.isNotEmpty) ? ' ($from -> $to)' : '';
+    if (recommendedTrip.isCancelled) {
+      return 'A(z) $depStr-es járat$routePart kimarad. Nézd meg a következő indulást!';
+    }
+    return 'Menetrend szerint: $depStr -> Várható indulás: $estStr$routePart';
+  }
 
   /// Synchronously recalculates walking durations, buffer, and favorite status
   /// for [prefs] without performing network calls or firing notifications.
@@ -498,27 +517,20 @@ class MenetrendService {
         'Content-Type': 'application/json; charset=utf-8',
         'Origin': 'https://mavplusz.hu',
         'Referer': 'https://mavplusz.hu/',
-        'User-Agent': 'MenetrendGO/2.0.2 (Android)',
+        'User-Agent': 'MenetrendGO/3.0.0 (Android)',
       };
 
-  /// Snaps any stored walking speed to one of the three supported presets:
-  /// `4.0` Lassú, `5.0` Normál, `6.0` Gyors (km/h).
+  /// Snaps walking speed to continuous `0.5 km/h` steps within `3.0 - 8.0 km/h`.
   static double normalizeWalkingSpeed(double kmh) {
-    if (kmh <= 4.4) return 4.0;
-    if (kmh < 5.5) return 5.0;
-    return 6.0;
+    if (kmh.isNaN || kmh.isInfinite) return 5.0;
+    final clamped = kmh.clamp(3.0, 8.0);
+    return (clamped * 2.0).round() / 2.0;
   }
 
-  /// Human readable label for a walking speed preset.
+  /// Human readable label for the current walking speed (e.g. `5.0 km/h`).
   static String walkingSpeedLabel(double kmh) {
-    switch (normalizeWalkingSpeed(kmh).round()) {
-      case 4:
-        return 'Lassú (4 km/h)';
-      case 6:
-        return 'Gyors (6 km/h)';
-      default:
-        return 'Normál (5 km/h)';
-    }
+    final speed = normalizeWalkingSpeed(kmh);
+    return '${speed.toStringAsFixed(1)} km/h';
   }
 
   /// Computes the effective walking time in minutes adjusted for the user's
@@ -1016,7 +1028,7 @@ class MenetrendService {
         'addressdetails': '1',
       });
       final response = await _http.get(uri, headers: const {
-        'User-Agent': 'TintaNaplo-Android/2.0.2',
+        'User-Agent': 'TintaNaplo-Android/3.0.0',
         'Accept': 'application/json',
       }).timeout(const Duration(seconds: 6));
       if (response.statusCode == 200) {
@@ -1054,7 +1066,7 @@ class MenetrendService {
         'limit': '6',
       });
       final res = await _http
-          .get(photonUri, headers: const {'User-Agent': 'TintaNaplo-Android/2.0.2'})
+          .get(photonUri, headers: const {'User-Agent': 'TintaNaplo-Android/3.0.0'})
           .timeout(const Duration(seconds: 6));
       if (res.statusCode == 200) {
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));
@@ -1129,36 +1141,87 @@ class MenetrendService {
   Future<List<TransitStopResult>> searchStops(String query) async {
     final q = query.trim();
     if (q.length < 2) return const [];
-    final escaped = jsonEncode(q);
-    final response = await _http
-        .post(
-          Uri.parse('$mavPluszBaseUrl/index/graphql'),
-          headers: mavHeaders,
-          body: jsonEncode({
-            'query':
-                '{ stops(name: $escaped) { gtfsId name lat lon } }',
-          }),
-        )
-        .timeout(const Duration(seconds: 6));
-    if (response.statusCode != 200) return const [];
-    final decoded = _decodeJsonResponse(response);
-    final stops = decoded['data']?['stops'];
-    if (stops is! List) return const [];
-    final seen = <String>{};
-    final out = <TransitStopResult>[];
-    for (final st in stops) {
-      if (st is! Map) continue;
-      final name = (st['name'] ?? '').toString();
-      final lat = (st['lat'] as num?)?.toDouble();
-      final lon = (st['lon'] as num?)?.toDouble();
-      if (name.isEmpty || lat == null || lon == null) continue;
-      if (!seen.add(name)) continue;
-      final coord = (lat: lat, lon: lon);
-      _coordCache[name] = coord;
-      _coordCache[name.trim().toLowerCase()] = coord;
-      out.add(TransitStopResult(name: name, lat: lat, lon: lon));
+    try {
+      final escaped = jsonEncode(q);
+      final response = await _http
+          .post(
+            Uri.parse('$mavPluszBaseUrl/index/graphql'),
+            headers: mavHeaders,
+            body: jsonEncode({
+              'query':
+                  '{ stops(name: $escaped) { gtfsId name lat lon } }',
+            }),
+          )
+          .timeout(const Duration(seconds: 6));
+      if (response.statusCode != 200) return const [];
+      final decoded = _decodeJsonResponse(response);
+      if (decoded is! Map) return const [];
+      final data = decoded['data'];
+      if (data is! Map) return const [];
+      final stops = data['stops'];
+      if (stops is! List) return const [];
+      final seen = <String>{};
+      final out = <TransitStopResult>[];
+      for (final st in stops) {
+        if (st is! Map) continue;
+        final name = (st['name'] ?? '').toString();
+        final lat = (st['lat'] as num?)?.toDouble();
+        final lon = (st['lon'] as num?)?.toDouble();
+        if (name.isEmpty || lat == null || lon == null) continue;
+        if (!seen.add(name)) continue;
+        final coord = (lat: lat, lon: lon);
+        if (_coordCache.length > 256) {
+          _coordCache.clear();
+        }
+        _coordCache[name] = coord;
+        _coordCache[name.trim().toLowerCase()] = coord;
+        out.add(TransitStopResult(name: name, lat: lat, lon: lon));
+      }
+      return out;
+    } catch (_) {
+      return const [];
     }
-    return out;
+  }
+
+  /// Resolves the nearest public transit stop within [radiusMeters] of
+  /// `(lat, lon)` using the MÁVPlusz OTP2 backend, returning `null` if offline
+  /// or no stop is found nearby.
+  Future<TransitStopResult?> resolveNearestStopForCoordinates({
+    required double lat,
+    required double lon,
+    int radiusMeters = 1500,
+  }) async {
+    try {
+      final response = await _http
+          .post(
+            Uri.parse('$mavPluszBaseUrl/index/graphql'),
+            headers: mavHeaders,
+            body: jsonEncode({
+              'query':
+                  '{ stopsByRadius(lat: $lat, lon: $lon, radius: $radiusMeters, first: 3) { edges { node { distance stop { name lat lon } } } } }',
+            }),
+          )
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) return null;
+      final decoded = _decodeJsonResponse(response);
+      if (decoded is! Map) return null;
+      final edges =
+          decoded['data']?['stopsByRadius']?['edges'] as List? ?? const [];
+      for (final edge in edges) {
+        if (edge is! Map) continue;
+        final stop = edge['node']?['stop'];
+        if (stop is! Map) continue;
+        final name = (stop['name'] ?? '').toString().trim();
+        final sLat = (stop['lat'] as num?)?.toDouble();
+        final sLon = (stop['lon'] as num?)?.toDouble();
+        if (name.isNotEmpty && sLat != null && sLon != null) {
+          return TransitStopResult(name: name, lat: sLat, lon: sLon);
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<({double lat, double lon})?> _resolve(String name) async {
@@ -1301,7 +1364,7 @@ class MenetrendService {
     final rawDirLine = isMorning
         ? (dayPlan['morningLine'] ?? dayPlan['line'])
         : (dayPlan['afternoonLine'] ?? dayPlan['line']);
-    final dayLine = (rawDirLine as String?)?.trim() ?? '';
+    final dayLine = rawDirLine?.toString().trim() ?? '';
     final rawDirLocalBus = isMorning
         ? (dayPlan['morningUseLocalBus'] ?? dayPlan['useLocalBus'])
         : (dayPlan['afternoonUseLocalBus'] ?? dayPlan['useLocalBus']);
@@ -1538,13 +1601,22 @@ class MenetrendService {
       final lastLeg = legs.last;
       final mode = _modeFor(firstLeg);
       final lastMode = _modeFor(lastLeg);
-      if (mode == MenetrendTransportMode.rail && !prefs.transitAllowTrain) {
+      final rawFirstMode = (firstLeg['mode'] ?? '').toString().toUpperCase();
+      final isTramOrSubway =
+          rawFirstMode == 'TRAM' || rawFirstMode == 'SUBWAY';
+      if (isTramOrSubway && !prefs.transitAllowTramSubway) {
+        continue;
+      }
+      if (mode == MenetrendTransportMode.rail &&
+          !isTramOrSubway &&
+          !prefs.transitAllowTrain) {
         continue;
       }
       if (mode == MenetrendTransportMode.coach && !prefs.transitAllowCoach) {
         continue;
       }
-      if (mode == MenetrendTransportMode.localBus &&
+      if ((mode == MenetrendTransportMode.localBus ||
+              legs.any(_isLocalBusLeg)) &&
           !prefs.transitAllowLocalBus) {
         continue;
       }

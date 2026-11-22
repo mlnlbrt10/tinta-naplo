@@ -10,6 +10,7 @@ import '../services/bug_report_service.dart';
 import '../services/github_updater_service.dart';
 import '../services/token_storage_service.dart';
 import '../utils/uwu_helper.dart';
+import 'frosted_inspection_modal.dart';
 import 'glass_card.dart';
 import 'tinta_toast.dart';
 
@@ -25,20 +26,14 @@ Future<void> showBugReportSheet(
   Future<String> Function()? appVersionLoader,
 }) {
   HapticFeedback.lightImpact();
-  return showModalBottomSheet<void>(
+  return showFloatingGlassSheet<void>(
     context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    backgroundColor: Colors.transparent,
+    prefs: prefs,
     barrierColor: resolveSoftBlurBarrierColor(
       context,
       prefs: prefs,
       solidDarkAlpha: 0.62,
       solidLightAlpha: 0.42,
-    ),
-    sheetAnimationStyle: const AnimationStyle(
-      duration: Duration(milliseconds: 250),
-      reverseDuration: Duration(milliseconds: 230),
     ),
     builder: (sheetContext) => _BugReportModalSheet(
       student: student,
@@ -246,13 +241,13 @@ class _BugReportModalSheetState extends State<_BugReportModalSheet> {
       canPop: !_isSubmitting,
       child: Padding(
         padding: EdgeInsets.only(bottom: bottomInset),
-        child: LiquidGlassSurface(
+        child: FrostedBottomSheetSurface(
           prefs: widget.prefs,
-          highContrastExpanded: true,
-          contentOpacityAnimation: ModalRoute.of(context)?.animation,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+          topRadius: 26,
+          showDragHandle: false,
+          includeSafeAreaBottom: true,
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(22, 14, 22, 28),
+            padding: const EdgeInsets.fromLTRB(22, 14, 22, 22),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -294,7 +289,7 @@ class _BugReportModalSheetState extends State<_BugReportModalSheet> {
                             ),
                           ),
                           Text(
-                            'ticket.mlnlbrt.hu',
+                            uwu('Hibák és javaslatok beküldése'),
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: scheme.onSurface.withValues(alpha: 0.62),
                               fontWeight: FontWeight.w600,
@@ -459,10 +454,10 @@ class _BugReportModalSheetState extends State<_BugReportModalSheet> {
                         spacing: 6,
                         runSpacing: 6,
                         children: [
-                          _metaChip(scheme, 'Beküldő: $maskedReporter'),
-                          _metaChip(scheme, 'Verzió: $_appVersion'),
-                          _metaChip(scheme, osVersion),
-                          _metaChip(scheme, themeMode),
+                          _metaChip(scheme, uwuLabel('Beküldő: $maskedReporter')),
+                          _metaChip(scheme, uwuLabel('Verzió: $_appVersion')),
+                          _metaChip(scheme, uwuLabel(osVersion)),
+                          _metaChip(scheme, uwuLabel(themeMode)),
                         ],
                       ),
                       const SizedBox(height: 6),
@@ -633,7 +628,7 @@ class _BugReportModalSheetState extends State<_BugReportModalSheet> {
             ),
           ),
           IconButton(
-            tooltip: 'Csatolmány eltávolítása',
+            tooltip: uwuLabel('Csatolmány eltávolítása'),
             onPressed: _isSubmitting
                 ? null
                 : () => setState(() => _attachment = null),

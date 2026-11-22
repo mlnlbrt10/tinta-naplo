@@ -57,6 +57,10 @@ open class MainActivity : FlutterActivity() {
             "default" to ".MainActivityNormal",
             ".MainActivityNormal" to ".MainActivityNormal",
             "MainActivityNormal" to ".MainActivityNormal",
+            "classic" to ".MainActivityClassic",
+            "icon_classic" to ".MainActivityClassic",
+            ".MainActivityClassic" to ".MainActivityClassic",
+            "MainActivityClassic" to ".MainActivityClassic",
             "icon_oled" to ".MainActivityOled",
             "oled" to ".MainActivityOled",
             "minimal_oled" to ".MainActivityOled",
@@ -78,6 +82,7 @@ open class MainActivity : FlutterActivity() {
 
         private val ALL_ALIASES = listOf(
             ".MainActivityNormal",
+            ".MainActivityClassic",
             ".MainActivityOled",
             ".MainActivityChristmas",
             ".MainActivityChristmasOled",
@@ -142,7 +147,7 @@ open class MainActivity : FlutterActivity() {
             )
 
             val builder = NotificationCompat.Builder(context, TRANSIT_NOTIFICATION_CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher_normal)
+                .setSmallIcon(R.drawable.ic_stat_tinta)
                 .setContentTitle(title)
                 .setContentText(body)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -153,7 +158,17 @@ open class MainActivity : FlutterActivity() {
                 .addAction(0, "Megnyitás az appban", openAppPending)
                 .addAction(0, "MenetrendGO", menetrendPending)
 
-            manager.notify(notificationId, builder.build())
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.POST_NOTIFICATIONS
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    return
+                }
+                manager.notify(notificationId, builder.build())
+            }
         }
 
         fun scheduleExactAlarmInternal(
@@ -633,18 +648,19 @@ open class MainActivity : FlutterActivity() {
             "cancelDepartureAlarms" -> {
                 val alarmManager =
                     applicationContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-                val intent = Intent(applicationContext, TransitAlarmReceiver::class.java)
-                val pendingIntent = PendingIntent.getBroadcast(
-                    applicationContext,
-                    7090,
-                    intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                alarmManager.cancel(pendingIntent)
-                applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit()
-                    .clear()
-                    .apply()
+                val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val savedId = prefs.getInt("notificationId", 7090)
+                for (id in setOf(savedId, 7090)) {
+                    val intent = Intent(applicationContext, TransitAlarmReceiver::class.java)
+                    val pendingIntent = PendingIntent.getBroadcast(
+                        applicationContext,
+                        id,
+                        intent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
+                    runCatching { alarmManager.cancel(pendingIntent) }
+                }
+                prefs.edit().clear().apply()
                 result.success(true)
             }
             "launchMenetrendGo" -> {
@@ -790,6 +806,10 @@ open class MainActivity : FlutterActivity() {
         WearSessionBridge.registerSessionUpdatedListener(null)
         wearSyncChannel?.setMethodCallHandler(null)
         wearSyncChannel = null
+        homeWidgetChannel?.setMethodCallHandler(null)
+        homeWidgetChannel = null
+        pendingCalendarPermissionResult = null
+        pendingLiveActivityPermissionResult = null
         calendarExecutor.shutdownNow()
         super.onDestroy()
     }

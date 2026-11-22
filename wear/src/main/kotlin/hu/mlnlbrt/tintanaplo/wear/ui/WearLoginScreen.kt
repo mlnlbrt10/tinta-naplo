@@ -87,7 +87,7 @@ fun WearLoginScreen(
 
                 Chip(
                     onClick = onStartPhoneLogin,
-                    enabled = authStatus !is RemoteAuthStatus.SavingSession,
+                    enabled = !isBusy,
                     modifier = Modifier.fillMaxWidth(),
                     label = {
                         Text(

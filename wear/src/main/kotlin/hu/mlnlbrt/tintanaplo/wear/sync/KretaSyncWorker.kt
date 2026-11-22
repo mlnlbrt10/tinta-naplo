@@ -21,6 +21,7 @@ import hu.mlnlbrt.tintanaplo.wear.data.Lesson
 import hu.mlnlbrt.tintanaplo.wear.data.SecureTokenStorage
 import hu.mlnlbrt.tintanaplo.wear.data.TokenExpiredException
 import hu.mlnlbrt.tintanaplo.wear.tile.TintaTimetableTileService
+import kotlinx.coroutines.CancellationException
 import java.util.concurrent.TimeUnit
 
 class KretaSyncWorker(
@@ -40,8 +41,11 @@ class KretaSyncWorker(
         val apiClient = KretaWearApiClient(
             tokenStore = tokenStore,
             onSessionRefreshed = { refreshed ->
+                // Await phone handoff BEFORE returning from doWork() so Wear Doze
+                // cannot freeze the process before the rotated single-use refresh_token
+                // reaches the phone!
                 WearRemoteAuthManager.getInstance(applicationContext)
-                    .pushRefreshedSessionToPhone(refreshed)
+                    .pushRefreshedSessionToPhoneSuspend(refreshed)
             },
         )
         return try {
@@ -49,10 +53,14 @@ class KretaSyncWorker(
             KretaSyncScheduler.scheduleNextTransitionUpdate(applicationContext, synced.lessons)
             requestTileUpdate(applicationContext)
             Result.success()
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (_: TokenExpiredException) {
+            KretaSyncScheduler.cancelPeriodicSync(applicationContext)
             requestTileUpdate(applicationContext)
             Result.failure()
         } catch (_: InvalidGrantException) {
+            KretaSyncScheduler.cancelPeriodicSync(applicationContext)
             requestTileUpdate(applicationContext)
             Result.failure()
         } catch (_: Throwable) {
@@ -131,6 +139,22 @@ object KretaSyncScheduler {
                 ExistingWorkPolicy.REPLACE,
                 request,
             )
+        }
+    }
+
+    fun cancelPeriodicSync(context: Context) {
+        runCatching {
+            WorkManager.getInstance(context.applicationContext)
+                .cancelUniqueWork(PERIODIC_SYNC_WORK)
+        }
+    }
+
+    fun cancelAllSync(context: Context) {
+        runCatching {
+            val wm = WorkManager.getInstance(context.applicationContext)
+            wm.cancelUniqueWork(PERIODIC_SYNC_WORK)
+            wm.cancelUniqueWork(IMMEDIATE_SYNC_WORK)
+            wm.cancelUniqueWork(TRANSITION_TILE_WORK)
         }
     }
 

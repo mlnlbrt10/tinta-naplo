@@ -53,7 +53,7 @@ class PhoneWearAuthListenerService : WearableListenerService() {
                 )
                 putExtra(MainActivity.EXTRA_WEAR_AUTH_REQUEST, true)
             }
-            startActivity(intent)
+            runCatching { startActivity(intent) }
         }
     }
 

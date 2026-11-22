@@ -13,6 +13,7 @@
     <application
         android:label="Tinta Napló"
         android:name="${applicationName}"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round">
         <activity
@@ -32,10 +33,6 @@
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
             <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
@@ -45,51 +42,90 @@
             </intent-filter>
         </activity>
 
-        <!-- Secondary aliases retained disabled without MAIN/LAUNCHER so only .MainActivity appears in the launcher. -->
+        <!-- Launcher aliases controlled dynamically by PackageManager.setComponentEnabledSetting(..., DONT_KILL_APP). -->
         <activity-alias
             android:name=".MainActivityNormal"
             android:targetActivity=".MainActivity"
-            android:enabled="false"
-            android:exported="false"
+            android:enabled="true"
+            android:exported="true"
             android:icon="@mipmap/ic_launcher"
             android:roundIcon="@mipmap/ic_launcher_round"
-            android:label="Tinta Napló" />
+            android:label="Tinta Napló">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityClassic"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_classic"
+            android:roundIcon="@mipmap/ic_launcher_classic_round"
+            android:label="Tinta Napló">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <activity-alias
             android:name=".MainActivityOled"
             android:targetActivity=".MainActivity"
             android:enabled="false"
-            android:exported="false"
-            android:icon="@mipmap/ic_launcher"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_oled"
             android:roundIcon="@mipmap/ic_launcher_oled"
-            android:label="Tinta Napló" />
+            android:label="Tinta Napló">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <activity-alias
             android:name=".MainActivityChristmas"
             android:targetActivity=".MainActivity"
             android:enabled="false"
-            android:exported="false"
-            android:icon="@mipmap/ic_launcher"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_christmas"
             android:roundIcon="@mipmap/ic_launcher_christmas"
-            android:label="Tinta Napló" />
+            android:label="Tinta Napló">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <activity-alias
             android:name=".MainActivityChristmasOled"
             android:targetActivity=".MainActivity"
             android:enabled="false"
-            android:exported="false"
-            android:icon="@mipmap/ic_launcher"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_christmas_oled"
             android:roundIcon="@mipmap/ic_launcher_christmas_oled"
-            android:label="Tinta Napló" />
+            android:label="Tinta Napló">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <activity-alias
             android:name=".MainActivityFityma"
             android:targetActivity=".MainActivity"
             android:enabled="false"
-            android:exported="false"
-            android:icon="@mipmap/ic_launcher"
-            android:roundIcon="@mipmap/ic_launcher"
-            android:label="Fityma Napló" />
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_fityma"
+            android:roundIcon="@mipmap/ic_launcher_fityma_round"
+            android:label="Fityma Napló">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <provider
             android:name="androidx.core.content.FileProvider"

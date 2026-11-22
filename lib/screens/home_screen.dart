@@ -29,6 +29,7 @@ import '../widgets/tinta_toast.dart';
 import 'grades_screen.dart';
 import 'more_screen.dart';
 import 'timetable_screen.dart';
+import 'webview_login_screen.dart';
 
 /// Filter categories for the unified Főoldal activity feed.
 enum ActivityFeedFilter {
@@ -87,13 +88,18 @@ class NextLessonStatus {
       return 'Kezdés: hamarosan';
     }
     final totalSeconds = remaining.inSeconds;
-    final hours = totalSeconds ~/ 3600;
-    final minutes = (totalSeconds % 3600) ~/ 60;
-    final seconds = totalSeconds % 60;
-    if (hours >= 1) {
-      return 'Kezdés: $hoursó ${minutes}p ${seconds}mp';
+    if (totalSeconds < 60) {
+      return 'Kezdés: ${totalSeconds.clamp(1, 59)}mp múlva';
     }
-    return 'Kezdés: ${minutes}p ${seconds}mp';
+    final totalMinutes = totalSeconds ~/ 60;
+    final hours = totalMinutes ~/ 60;
+    final minutes = totalMinutes % 60;
+    if (hours >= 1) {
+      return minutes > 0
+          ? 'Kezdés: $hoursó ${minutes}p múlva'
+          : 'Kezdés: $hoursó múlva';
+    }
+    return 'Kezdés: ${minutes}p múlva';
   }
 
   /// Evaluates the 'Következő óra' card state machine comparing local
@@ -350,8 +356,7 @@ class _PreClassCountdownBanner extends StatefulWidget {
 }
 
 class _PreClassCountdownBannerState extends State<_PreClassCountdownBanner>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
-  late final AnimationController _auraCtrl;
+    with WidgetsBindingObserver {
   Timer? _timer;
   Duration _remaining = Duration.zero;
   AppLifecycleState? _lifecycleState;
@@ -362,31 +367,21 @@ class _PreClassCountdownBannerState extends State<_PreClassCountdownBanner>
     super.initState();
     _lifecycleState = WidgetsBinding.instance.lifecycleState;
     WidgetsBinding.instance.addObserver(this);
-    _auraCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2400),
-    );
     _refreshRemaining(notifyParent: false);
   }
 
   void _syncActiveControllers() {
     if (!mounted) return;
-    final tickerEnabled = TickerMode.valuesOf(context).enabled;
     final appActive = _lifecycleState == null ||
         _lifecycleState == AppLifecycleState.resumed;
-    final shouldRun =
-        tickerEnabled && appActive && _remaining > Duration.zero;
+    final shouldRun = appActive && _remaining > Duration.zero;
 
     if (shouldRun) {
-      if (!_auraCtrl.isAnimating) {
-        _auraCtrl.repeat(reverse: true);
-      }
       _timer ??= Timer.periodic(const Duration(seconds: 1), (_) {
         if (!mounted) return;
         _refreshRemaining(notifyParent: true);
       });
     } else {
-      _auraCtrl.stop();
       _timer?.cancel();
       _timer = null;
     }
@@ -404,7 +399,6 @@ class _PreClassCountdownBannerState extends State<_PreClassCountdownBanner>
     if (clamped <= Duration.zero) {
       _timer?.cancel();
       _timer = null;
-      _auraCtrl.stop();
       if (notifyParent && !_notifiedStart) {
         _notifiedStart = true;
         widget.onReachedStart?.call();
@@ -443,7 +437,6 @@ class _PreClassCountdownBannerState extends State<_PreClassCountdownBanner>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
-    _auraCtrl.dispose();
     super.dispose();
   }
 
@@ -453,7 +446,7 @@ class _PreClassCountdownBannerState extends State<_PreClassCountdownBanner>
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
     final accent = scheme.primary;
-    final formatted = widget.textTransform(
+    final remainingLabel = widget.textTransform(
       NextLessonStatus.formatFirstLessonCountdown(_remaining),
     );
     const windowSecs = 7200.0; // 2-hour morning pre-class progress horizon.
@@ -461,160 +454,32 @@ class _PreClassCountdownBannerState extends State<_PreClassCountdownBanner>
         ? 1.0
         : (1.0 - (_remaining.inSeconds / windowSecs)).clamp(0.08, 1.0);
 
-    return RepaintBoundary(
-      child: AnimatedBuilder(
-        animation: _auraCtrl,
-        builder: (context, child) {
-          final t = Curves.easeInOutSine.transform(_auraCtrl.value);
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              gradient: LinearGradient(
-                begin: Alignment(-1.0 + t * 0.6, -1.0),
-                end: Alignment(1.0, 1.0 - t * 0.4),
-                colors: [
-                  accent.withValues(alpha: (isDark ? 0.16 : 0.11) + t * 0.08),
-                  scheme.surfaceContainerHigh,
-                  accent.withValues(alpha: (isDark ? 0.10 : 0.06) + t * 0.05),
-                ],
-              ),
-              border: Border.all(
-                color: accent.withValues(alpha: 0.28 + t * 0.26),
-                width: 1.0,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: accent.withValues(alpha: 0.10 + t * 0.14),
-                  blurRadius: 12 + t * 6,
-                  spreadRadius: -2,
-                ),
-              ],
-            ),
-            child: child,
-          );
-        },
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: accent.withValues(alpha: 0.18),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.wb_twilight_rounded,
-                    size: 16,
-                    color: accent,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        formatted,
-                        maxLines: 1,
-                        softWrap: false,
-                        style: theme.textTheme.labelLarge?.copyWith(
-                          color: accent,
-                          fontWeight: FontWeight.w900,
-                          fontFeatures: const [
-                            FontFeature.tabularFigures(),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                value: progress,
-                minHeight: 5,
-                backgroundColor:
-                    scheme.onSurface.withValues(alpha: isDark ? 0.12 : 0.09),
-                valueColor: AlwaysStoppedAnimation<Color>(accent),
-              ),
-            ),
-          ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          remainingLabel,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: accent,
+            fontWeight: FontWeight.w700,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
         ),
-      ),
-    );
-  }
-}
-
-class _PulsingStatusDot extends StatefulWidget {
-  final Color color;
-  const _PulsingStatusDot({required this.color});
-
-  @override
-  State<_PulsingStatusDot> createState() => _PulsingStatusDotState();
-}
-
-class _PulsingStatusDotState extends State<_PulsingStatusDot>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    );
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (TickerMode.valuesOf(context).enabled) {
-      if (!_ctrl.isAnimating) _ctrl.repeat(reverse: true);
-    } else {
-      _ctrl.stop();
-    }
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return RepaintBoundary(
-      child: AnimatedBuilder(
-        animation: _ctrl,
-        builder: (_, __) {
-          final t = Curves.easeInOut.transform(_ctrl.value);
-          return Container(
-            width: 7,
-            height: 7,
-            decoration: BoxDecoration(
-              color: widget.color.withValues(alpha: 0.65 + t * 0.35),
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: widget.color.withValues(alpha: 0.35 + t * 0.4),
-                  blurRadius: 4 + t * 4,
-                ),
-              ],
-            ),
-          );
-        },
-      ),
+        const SizedBox(height: 7),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(999),
+          child: LinearProgressIndicator(
+            value: progress,
+            minHeight: 3.5,
+            backgroundColor:
+                scheme.onSurface.withValues(alpha: isDark ? 0.10 : 0.08),
+            valueColor: AlwaysStoppedAnimation<Color>(accent),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -633,6 +498,7 @@ class HomeScreen extends StatefulWidget {
   final UserProfilePrefs prefs;
   final ValueChanged<UserProfilePrefs> onPrefsChanged;
   final VoidCallback onLogout;
+  final Future<StoredSession?> Function()? onReauthenticate;
   final DateTime Function()? clock;
 
   const HomeScreen({
@@ -643,6 +509,7 @@ class HomeScreen extends StatefulWidget {
     required this.prefs,
     required this.onPrefsChanged,
     required this.onLogout,
+    this.onReauthenticate,
     this.clock,
   });
 
@@ -668,6 +535,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   SettingsProvider? _settingsProvider;
   bool _isLoading = true;
   bool _isRefreshing = false;
+  bool _isReauthenticating = false;
+  int _dashboardLoadEpoch = 0;
+  int _commuteSyncEpoch = 0;
   String? _error;
   Timer? _countdownTimer;
   final ValueNotifier<int> _countdownTick = ValueNotifier<int>(0);
@@ -741,6 +611,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         unawaited(_checkPendingOpenTimetableTab());
       }
     });
+    _startCountdownTimer();
+  }
+
+  void _startCountdownTimer() {
+    _countdownTimer?.cancel();
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       _maybeSyncCommuteOnTick();
@@ -838,11 +713,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _checkPendingOpenTimetableTab() async {
-    final openTimetable =
-        await HomeWidgetSyncService.instance.consumePendingOpenTimetableTab();
-    if (openTimetable && mounted) {
-      _openTimetableFromNative();
-    }
+    try {
+      final openTimetable =
+          await HomeWidgetSyncService.instance.consumePendingOpenTimetableTab();
+      if (openTimetable && mounted) {
+        _openTimetableFromNative();
+      }
+    } catch (_) {}
   }
 
   void _openTimetableFromNative() {
@@ -856,22 +733,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }) {
     if (!mounted) return;
     unawaited(
-      HomeWidgetSyncService.instance.syncFromDashboard(
-        dashboard: data,
-        kretaClient: widget.kretaClient,
-        prefs: _activePrefs,
-        themeAccent: Theme.of(context).colorScheme.primary,
-        nowOverride: widget.clock?.call(),
-        forceUpcomingRefresh: forceUpcomingRefresh,
-      ),
+      HomeWidgetSyncService.instance
+          .syncFromDashboard(
+            dashboard: data,
+            kretaClient: widget.kretaClient,
+            prefs: _activePrefs,
+            themeAccent: Theme.of(context).colorScheme.primary,
+            nowOverride: widget.clock?.call(),
+            forceUpcomingRefresh: forceUpcomingRefresh,
+          )
+          .catchError((_) {}),
     );
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && mounted) {
+      if (_countdownTimer == null || !(_countdownTimer?.isActive ?? false)) {
+        _startCountdownTimer();
+      }
       _maybeSyncCommuteOnTick(forceWindowCheck: true);
       unawaited(_checkPendingOpenTimetableTab());
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      _countdownTimer?.cancel();
+      _countdownTimer = null;
     }
   }
 
@@ -1003,6 +890,38 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _markAllPendingHomeworksCompleted(
+    List<Homework> pendingHomeworks,
+  ) async {
+    if (pendingHomeworks.isEmpty) return;
+    HapticFeedback.mediumImpact();
+    final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
+    if (scope != null) {
+      await scope.settings.markAllHomeworksCompleted(pendingHomeworks);
+    } else {
+      final next = Set<String>.from(_fallbackCompletedHomeworkIds);
+      var changed = false;
+      for (final hw in pendingHomeworks) {
+        final key = SettingsProvider.homeworkCompletionKey(hw).trim();
+        if (key.isNotEmpty && next.add(key)) {
+          changed = true;
+        }
+      }
+      if (changed) {
+        if (mounted) {
+          setState(() => _fallbackCompletedHomeworkIds = next);
+        }
+        await SettingsProvider.saveCompletedHomeworkIdsToPrefs(next);
+      }
+    }
+    if (!mounted) return;
+    TintaToast.dismissCurrent();
+    TintaToast.success(
+      context,
+      uwu('Összes házi feladat késznek jelölve (${pendingHomeworks.length})'),
+    );
+  }
+
   @override
   void didUpdateWidget(covariant HomeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -1027,6 +946,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             oldP.transitAllowTrain != newP.transitAllowTrain ||
             oldP.transitAllowCoach != newP.transitAllowCoach ||
             oldP.transitAllowLocalBus != newP.transitAllowLocalBus ||
+            oldP.transitAllowTramSubway != newP.transitAllowTramSubway ||
             oldP.homeAddress != newP.homeAddress ||
             oldP.schoolAddress != newP.schoolAddress ||
             oldP.extras != newP.extras;
@@ -1102,61 +1022,108 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final MenetrendService _menetrendService = MenetrendService();
 
   Future<void> _refreshCommute({bool allowDelayNotifications = true}) async {
-    final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
-    final lessons = _data?.todaysLessons ?? const <Lesson>[];
-    final now = _now();
-    final window = MenetrendService.commuteWindowForLessons(
-      now: now,
-      lessons: lessons,
-    );
-    _lastCommuteWindow = window;
-    _lastCommuteSyncAt = now;
-    _hasInitialCommuteSynced = true;
+    final epoch = ++_commuteSyncEpoch;
+    try {
+      final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
+      final lessons = _data?.todaysLessons ?? const <Lesson>[];
+      final now = _now();
+      final window = MenetrendService.commuteWindowForLessons(
+        now: now,
+        lessons: lessons,
+      );
+      _lastCommuteWindow = window;
+      _lastCommuteSyncAt = now;
+      _hasInitialCommuteSynced = true;
 
-    if (scope != null) {
-      await scope.commute.syncLive(
+      if (scope != null) {
+        await scope.commute.syncLive(
+          todaysLessons: lessons,
+          allowDelayNotifications: allowDelayNotifications,
+          nowOverride: widget.clock?.call(),
+        );
+        return;
+      }
+
+      final prefs = _activePrefs;
+      if (!prefs.transitCardEnabled || !prefs.transitConfigured || window == null) {
+        if (_commuteEval != null || _commuteLoading) {
+          setState(() {
+            _commuteEval = null;
+            _commuteLoading = false;
+          });
+        }
+        unawaited(MenetrendService.cancelAlarms().catchError((_) {}));
+        return;
+      }
+      if (_commuteEval != null && _commuteEval!.isMorningMode != window) {
+        setState(() => _commuteEval = null);
+      }
+      if (_commuteEval == null && !_commuteLoading) {
+        setState(() => _commuteLoading = true);
+      }
+      final eval = await _menetrendService.fetchLiveCommuteEvaluation(
         todaysLessons: lessons,
-        allowDelayNotifications: allowDelayNotifications,
+        prefs: prefs,
         nowOverride: widget.clock?.call(),
       );
-      return;
-    }
-
-    final prefs = _activePrefs;
-    if (!prefs.transitCardEnabled || !prefs.transitConfigured || window == null) {
-      if (_commuteEval != null || _commuteLoading) {
-        setState(() {
-          _commuteEval = null;
-          _commuteLoading = false;
-        });
+      if (!mounted || epoch != _commuteSyncEpoch) return;
+      setState(() {
+        _commuteEval = eval;
+        _commuteLoading = false;
+      });
+      if (eval != null) {
+        unawaited(
+          MenetrendService.syncNotificationsForEvaluation(
+            evaluation: eval,
+            prefs: prefs,
+            allowDelayNotification: allowDelayNotifications,
+          ).then<void>((_) {}, onError: (_, _) {}),
+        );
       }
-      unawaited(MenetrendService.cancelAlarms());
-      return;
+    } catch (_) {
+      if (mounted && epoch == _commuteSyncEpoch && _commuteLoading) {
+        setState(() => _commuteLoading = false);
+      }
     }
-    if (_commuteEval != null && _commuteEval!.isMorningMode != window) {
-      setState(() => _commuteEval = null);
-    }
-    if (_commuteEval == null && !_commuteLoading) {
-      setState(() => _commuteLoading = true);
-    }
-    final eval = await _menetrendService.fetchLiveCommuteEvaluation(
-      todaysLessons: lessons,
-      prefs: prefs,
-      nowOverride: widget.clock?.call(),
-    );
-    if (!mounted) return;
-    setState(() {
-      _commuteEval = eval;
-      _commuteLoading = false;
-    });
-    if (eval != null) {
-      unawaited(
-        MenetrendService.syncNotificationsForEvaluation(
-          evaluation: eval,
-          prefs: prefs,
-          allowDelayNotification: allowDelayNotifications,
-        ),
-      );
+  }
+
+  Future<void> _handleInPlaceReauthenticate() async {
+    if (_isReauthenticating || !mounted) return;
+    setState(() => _isReauthenticating = true);
+    try {
+      StoredSession? freshSession;
+      if (widget.onReauthenticate != null) {
+        freshSession = await widget.onReauthenticate!();
+      } else {
+        freshSession = await Navigator.of(context).push<StoredSession>(
+          MaterialPageRoute(
+            builder: (_) => WebViewLoginScreen(
+              kretaClient: widget.kretaClient,
+              initialInstituteCode: _session.instituteCode,
+              initialUsername: _session.userName,
+            ),
+          ),
+        );
+      }
+      if (!mounted) return;
+      if (freshSession != null) {
+        TokenStorageService.clearReauthRequired();
+        setState(() {
+          _session = freshSession!;
+          _realSessionBackup = freshSession;
+          _error = null;
+        });
+        TintaToast.success(context, 'Újrahitelesítés sikeres!');
+        unawaited(_loadDashboard(silentIfCached: true));
+      }
+    } catch (e) {
+      if (mounted) {
+        TintaToast.error(context, TintaErrorState.friendlyTitleFor(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isReauthenticating = false);
+      }
     }
   }
 
@@ -1166,7 +1133,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       setState(() => _isRefreshing = true);
     }
     try {
-      AppProvidersScope.maybeOf(context)?.settings.clearAllGradeGlows();
+      context
+          .getInheritedWidgetOfExactType<AppProvidersScope>()
+          ?.settings
+          .clearAllGradeGlows();
       await _loadDashboard().timeout(const Duration(seconds: 15));
     } catch (e) {
       if (mounted && _data != null) {
@@ -1183,17 +1153,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _loadDashboard({bool silentIfCached = false}) async {
+    final loadEpoch = ++_dashboardLoadEpoch;
     if (_activePrefs.demoModeEnabled) {
       final demoData = DemoDataService.instance.buildDashboardData(
         nowOverride: widget.clock?.call(),
       );
-      if (!mounted) return;
+      if (!mounted || loadEpoch != _dashboardLoadEpoch) return;
       setState(() {
         _session = demoData.activeSession;
         _data = demoData;
         _messagesOverride = null;
         _isLoading = false;
-        _isRefreshing = false;
         _error = null;
       });
       return;
@@ -1209,7 +1179,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         } catch (_) {
           cached = null;
         }
-        if (mounted && cached != null && _data == null) {
+        if (!mounted ||
+            loadEpoch != _dashboardLoadEpoch ||
+            _activePrefs.demoModeEnabled) {
+          return;
+        }
+        if (cached != null && _data == null) {
           final playInitialEntrance = !_homeInitialEntrancePlayed;
           setState(() {
             _data = cached;
@@ -1220,11 +1195,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               _homeEntranceActive = true;
             }
           });
-          unawaited(
-            AppProvidersScope.maybeOf(context)
-                ?.settings
-                .ingestGrades(cached.allGrades),
-          );
+          final settings = context
+              .getInheritedWidgetOfExactType<AppProvidersScope>()
+              ?.settings;
+          if (settings != null) {
+            unawaited(settings.ingestGrades(cached.allGrades).catchError((_) {}));
+          }
           if (playInitialEntrance) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               _homeEntranceActive = false;
@@ -1234,7 +1210,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         }
       }
 
-      if (mounted && _data == null) {
+      if (mounted && _data == null && loadEpoch == _dashboardLoadEpoch) {
         setState(() {
           _isLoading = true;
           _error = null;
@@ -1246,12 +1222,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final result = await widget.kretaClient
           .fetchDashboardData(_session)
           .timeout(const Duration(seconds: 15));
-      if (!mounted) return;
+      if (!mounted ||
+          loadEpoch != _dashboardLoadEpoch ||
+          _activePrefs.demoModeEnabled) {
+        return;
+      }
+      TokenStorageService.clearReauthRequired();
       final playInitialEntrance =
           !_homeInitialEntrancePlayed && !silentIfCached && !hadExistingData;
       setState(() {
         _session = result.activeSession;
+        _realSessionBackup = result.activeSession;
         _data = result;
+        _realDataBackup = result;
         _messagesOverride = null;
         _isLoading = false;
         _error = null;
@@ -1260,36 +1243,41 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _homeEntranceActive = true;
         }
       });
-      unawaited(
-        AppProvidersScope.maybeOf(context)
-            ?.settings
-            .ingestGrades(result.allGrades),
-      );
+      final settings = context
+          .getInheritedWidgetOfExactType<AppProvidersScope>()
+          ?.settings;
+      if (settings != null) {
+        unawaited(settings.ingestGrades(result.allGrades).catchError((_) {}));
+      }
       if (playInitialEntrance) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _homeEntranceActive = false;
         });
       }
-      _refreshCommute();
+      unawaited(_refreshCommute());
       unawaited(
-        WearSyncService.instance.cacheSessionSnapshot(
-          session: result.activeSession,
-          student: result.student,
-          nickname: _activePrefs.nickname,
-          recentGrades: result.allGrades,
-          upcomingExams: result.tests,
-        ),
+        WearSyncService.instance
+            .cacheSessionSnapshot(
+              session: result.activeSession,
+              student: result.student,
+              nickname: _activePrefs.nickname,
+              recentGrades: result.allGrades,
+              upcomingExams: result.tests,
+            )
+            .catchError((_) => false),
       );
       if (result.activeSession.refreshToken != previousRefreshToken) {
         unawaited(
-          WearSyncService.instance.syncSessionToWatch(
-            session: result.activeSession,
-            student: result.student,
-            nickname: _activePrefs.nickname,
-            forceSync: false,
-            recentGrades: result.allGrades,
-            upcomingExams: result.tests,
-          ),
+          WearSyncService.instance
+              .syncSessionToWatch(
+                session: result.activeSession,
+                student: result.student,
+                nickname: _activePrefs.nickname,
+                forceSync: false,
+                recentGrades: result.allGrades,
+                upcomingExams: result.tests,
+              )
+              .catchError((_) => false),
         );
       }
       final dashboardDigest =
@@ -1301,23 +1289,38 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         unawaited(_syncWearStudentMetadataIfConnected(result));
       }
       unawaited(
-        CalendarSyncService.instance.syncFromDashboardIfEnabled(
-          result,
-          prefs: _activePrefs,
-        ),
+        CalendarSyncService.instance
+            .syncFromDashboardIfEnabled(
+              result,
+              prefs: _activePrefs,
+            )
+            .then<void>((_) {}, onError: (_, _) {}),
       );
       _syncHomeWidgetsFromDashboard(result);
     } on VerifiedInvalidGrantException catch (e) {
-      await TokenStorageService.recordLogoutReason(
-        caller: 'HomeScreen._loadDashboard',
-        reason: 'Verified permanent invalid_grant after retry',
-        httpStatusCode: e.httpStatusCode,
-        errorBody: e.responseBody,
+      // ZERO AUTO-KICK POLICY:
+      // Never wipe local cached data or instantly kick the user to LoginScreen!
+      // Keep cached timetable/grades visible and surface the non-destructive
+      // "A munkamenet lejárt - Újrahitelesítés szükséges" banner with in-place
+      // KRÉTA WebAuth recovery.
+      TokenStorageService.markReauthRequired(
+        'A munkamenet lejárt (HTTP ${e.httpStatusCode}).',
       );
-      if (!mounted) return;
-      widget.onLogout();
+      unawaited(
+        TokenStorageService.recordAuthEvent(
+          caller: 'HomeScreen._loadDashboard',
+          action: 'reauth_banner_shown_zero_kick',
+          httpStatus: e.httpStatusCode,
+          errorSnippet: e.responseBody,
+        ).catchError((_) {}),
+      );
+      if (!mounted || loadEpoch != _dashboardLoadEpoch) return;
+      setState(() {
+        _isLoading = false;
+        _error = null;
+      });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || loadEpoch != _dashboardLoadEpoch) return;
       final hasCached = _data != null;
       setState(() {
         _isLoading = false;
@@ -1331,33 +1334,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         TintaToast.error(context, TintaErrorState.friendlyTitleFor(e));
       }
     } finally {
-      if (mounted && (_isLoading || _isRefreshing)) {
+      if (mounted && loadEpoch == _dashboardLoadEpoch && _isLoading) {
         setState(() {
           _isLoading = false;
-          _isRefreshing = false;
         });
       }
     }
   }
 
   Future<void> _syncWearStudentMetadataIfConnected(DashboardData data) async {
-    final status = await WearSyncService.instance.getConnectionStatus();
-    if (!status.isConnected) return;
-    await WearSyncService.instance.syncSessionToWatch(
-      session: data.activeSession,
-      student: data.student,
-      nickname: _activePrefs.nickname,
-      forceSync: false,
-      recentGrades: data.allGrades,
-      upcomingExams: data.tests,
-    );
-    await WearSyncService.instance.syncDashboardToWatch(
-      session: data.activeSession,
-      student: data.student,
-      nickname: _activePrefs.nickname,
-      recentGrades: data.allGrades,
-      upcomingExams: data.tests,
-    );
+    try {
+      final status = await WearSyncService.instance.getConnectionStatus();
+      if (!status.isConnected || !mounted) return;
+      final nickname = _activePrefs.nickname;
+      await WearSyncService.instance.syncSessionToWatch(
+        session: data.activeSession,
+        student: data.student,
+        nickname: nickname,
+        forceSync: false,
+        recentGrades: data.allGrades,
+        upcomingExams: data.tests,
+      );
+      if (!mounted) return;
+      await WearSyncService.instance.syncDashboardToWatch(
+        session: data.activeSession,
+        student: data.student,
+        nickname: nickname,
+        recentGrades: data.allGrades,
+        upcomingExams: data.tests,
+      );
+    } catch (_) {}
   }
 
   static const int _timetableTabIndex = 2;
@@ -1549,8 +1555,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
     final greetingText = GreetingUtils.buildGreeting(
       name: resolvedName,
+      now: _now(),
       uwuMode: activePrefs.uwuModeEnabled,
-      tsundereMode: activePrefs.tsundereModeEnabled,
+      funGreetingsEnabled: activePrefs.funGreetingsEnabled,
     );
 
     final hasAmbientBackdrop = ChristmasAndBackgroundOverlay.hasAmbientBackdrop(
@@ -1579,18 +1586,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   title: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        greetingText,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w900,
-                          color: scheme.onSurface,
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          greetingText,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w900,
+                            color: scheme.onSurface,
+                          ),
+                          maxLines: 1,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        student?.instituteName ?? _session.instituteCode,
+                        uwuLabel(
+                          student?.instituteName ?? _session.instituteCode,
+                          enabled: activePrefs.uwuModeEnabled,
+                        ),
                         style: theme.textTheme.labelMedium?.copyWith(
                           color: scheme.onSurface.withValues(alpha: 0.62),
                         ),
@@ -1607,7 +1620,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ],
                 ),
-          body: _buildKeepAliveTabStack(theme, scheme, student, activePrefs),
+          body: VerticalScrollEdgeFades(
+            prefs: activePrefs,
+            topHeaderHeight: 0.0,
+            topFeatherHeight: _selectedIndex == _timetableTabIndex ? 0.0 : 26.0,
+            bottomFadeHeight: hideChromeForLandscapeTimetable ? 0.0 : 88.0,
+            scrollDrivenTopFeather: true,
+            child: _buildKeepAliveTabStack(theme, scheme, student, activePrefs),
+          ),
           bottomNavigationBar: hideChromeForLandscapeTimetable
               ? null
               : _buildMinimalistFloatingDock(theme, scheme),
@@ -1686,16 +1706,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// or clean opaque Material 3 container (`secondaryContainer` pill) when OFF,
   /// paired with dual-mode 2D liquid spring / M3 cubic sliding physics.
   Widget _buildMinimalistFloatingDock(ThemeData theme, ColorScheme scheme) {
-    final isDark = theme.brightness == Brightness.dark ||
-        _activePrefs.themeStyle != AppThemeStyle.light;
+    final isDark = theme.brightness == Brightness.dark;
     final liquidGlass = _activePrefs.liquidGlassEnabled;
     final activeIconColor = liquidGlass
-        ? (isDark ? Colors.white : const Color(0xFF0F172A))
+        ? (isDark
+            ? Colors.white
+            : OledTheme.semanticForeground(scheme.primary, Brightness.light))
         : scheme.onSecondaryContainer;
     final inactiveIconColor = liquidGlass
         ? (isDark
             ? Colors.white.withValues(alpha: 0.72)
-            : const Color(0xFF0F172A).withValues(alpha: 0.65))
+            : const Color(0xFF64748B))
         : scheme.onSurfaceVariant;
 
     const tabs = <({
@@ -1736,9 +1757,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           borderRadius: BorderRadius.circular(32),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: isDark ? 0.22 : 0.08),
-              blurRadius: 18,
-              offset: const Offset(0, 5),
+              color: Colors.black.withValues(alpha: isDark ? 0.22 : 0.07),
+              blurRadius: isDark ? 18 : 20,
+              offset: Offset(0, isDark ? 5 : 6),
             ),
           ],
           child: LiquidSpringPillTrack(
@@ -1774,12 +1795,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 activeIconColor,
                 activeProgress,
               )!;
+              final navLabel = uwuLabel(
+                item.tooltip,
+                enabled: _activePrefs.uwuModeEnabled,
+              );
               return Semantics(
-                label: item.tooltip,
+                label: navLabel,
                 selected: isSelected,
                 button: true,
                 child: Tooltip(
-                  message: item.tooltip,
+                  message: navLabel,
                   triggerMode: TooltipTriggerMode.manual,
                   child: SizedBox(
                     height: 62,
@@ -1902,17 +1927,117 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildSessionExpiredBanner(ThemeData theme, ColorScheme scheme) {
+    final accent = OledTheme.semanticForeground(
+      const Color(0xFFF59E0B),
+      theme.brightness,
+    );
+    return SoftGlassCard(
+      key: const ValueKey<String>('home-session-expired-banner'),
+      prefs: _activePrefs,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: OledTheme.semanticBadgeBg(
+                    const Color(0xFFF59E0B),
+                    theme.brightness,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: OledTheme.semanticBadgeBorder(
+                      const Color(0xFFF59E0B),
+                      theme.brightness,
+                    ),
+                  ),
+                ),
+                child: Icon(
+                  Icons.lock_clock_rounded,
+                  color: accent,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      uwu('A munkamenet lejárt - Újrahitelesítés szükséges'),
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      uwu(
+                        'A gyorsítótárazott órarended és jegyeid továbbra is megtekinthetők. Jelentkezz be újra a friss adatok szinkronizálásához - minden beállításod megmarad.',
+                      ),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurface.withValues(alpha: 0.72),
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.icon(
+              key: const ValueKey<String>('home-reauth-button'),
+              onPressed: _isReauthenticating
+                  ? null
+                  : _handleInPlaceReauthenticate,
+              icon: _isReauthenticating
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.login_rounded, size: 17),
+              label: Text(
+                uwu(
+                  _isReauthenticating
+                      ? 'Újrahitelesítés...'
+                      : 'Újrahitelesítés (KRÉTA)',
+                ),
+              ),
+              style: FilledButton.styleFrom(
+                shape: const StadiumBorder(),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHomeTab(ThemeData theme, ColorScheme scheme) {
     final Widget tabChild;
     if (_isLoading && _data == null) {
       tabChild = HomeSkeletonFeed(
         key: const ValueKey<String>('home-skeleton-feed'),
-        prefs: widget.prefs,
+        prefs: _activePrefs,
       );
     } else {
       final lessons = _data?.todaysLessons ?? const <Lesson>[];
       final allFeedItems = _buildAllFeedItems();
-      final today = DateUtils.dateOnly(DateTime.now());
+      final today = DateUtils.dateOnly(_now());
       final upcomingExamItems = <HomeActivityItem>[];
       final regularFeedItems = <HomeActivityItem>[];
       for (final item in allFeedItems) {
@@ -2015,6 +2140,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final tailRows = feedRows.length > animatedPreviewLimit
           ? feedRows.sublist(animatedPreviewLimit)
           : const <_HomeFeedRow>[];
+      final gradeImpacts = SubjectGradeSummary.computeChronologicalGradeImpacts(
+        _data?.allGrades ?? const <Grade>[],
+      );
 
       tabChild = CustomScrollView(
         key: const ValueKey<String>('home-live-feed'),
@@ -2028,6 +2156,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (!_activePrefs.demoModeEnabled)
+                    ValueListenableBuilder<String?>(
+                      valueListenable: TokenStorageService.reauthRequiredNotifier,
+                      builder: (context, reauthReason, _) {
+                        if (reauthReason == null) {
+                          return const SizedBox.shrink();
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                          child: _buildSessionExpiredBanner(theme, scheme),
+                        );
+                      },
+                    ),
                   if (_error != null) ...[
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -2078,7 +2219,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     2,
                     key: const ValueKey('home-chips'),
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 12),
+                  _CollapsibleFeedItem(
+                    key: const ValueKey<String>('home-mark-all-hw-action'),
+                    visible: _feedFilter == ActivityFeedFilter.homeworks &&
+                        (_data?.homeworks.isNotEmpty ?? false),
+                    child: _buildMarkAllHomeworksButton(
+                      theme,
+                      scheme,
+                      (_data?.homeworks ?? const <Homework>[])
+                          .where((h) => !_isHomeworkCompleted(h))
+                          .toList(),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
                 ],
               ),
             ),
@@ -2107,7 +2261,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ),
                   for (final row in previewRows)
-                    _buildFeedRowWidget(theme, scheme, row, today),
+                    _buildFeedRowWidget(
+                      theme,
+                      scheme,
+                      row,
+                      today,
+                      gradeImpacts: gradeImpacts,
+                    ),
                 ],
               ),
             ),
@@ -2122,6 +2282,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     scheme,
                     tailRows[index],
                     today,
+                    gradeImpacts: gradeImpacts,
                   ),
                   childCount: tailRows.length,
                 ),
@@ -2142,11 +2303,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         switchOutCurve: Curves.easeOutCubic,
         layoutBuilder: (currentChild, previousChildren) => Stack(
           alignment: Alignment.topCenter,
-          children: <Widget>[
-            ...previousChildren,
-            if (currentChild != null) currentChild,
-          ],
-        ),
+              children: <Widget>[
+                ...previousChildren,
+                if (currentChild != null) currentChild,
+              ],
+            ),
         child: tabChild,
       ),
     );
@@ -2156,8 +2317,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ThemeData theme,
     ColorScheme scheme,
     _HomeFeedRow row,
-    DateTime today,
-  ) {
+    DateTime today, {
+    Map<String, GradeImpactDelta> gradeImpacts = const {},
+  }) {
     if (row is _HomeFeedHeaderRow) {
       final header = _buildFeedDayHeaderRow(
         theme,
@@ -2192,7 +2354,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final itemRow = row as _HomeFeedItemRow;
     final tile = Padding(
       padding: EdgeInsets.only(top: itemRow.itemIndex > 0 ? 2 : 0),
-      child: _buildActivityFeedTile(theme, scheme, itemRow.item),
+      child: _buildActivityFeedTile(
+        theme,
+        scheme,
+        itemRow.item,
+        gradeImpacts: gradeImpacts,
+      ),
     );
     final staggerIndex = itemRow.groupIndex + itemRow.itemIndex;
     return RepaintBoundary(
@@ -2219,12 +2386,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     bool isUpcomingExamsHeader = false,
   }) {
     if (isUpcomingExamsHeader) {
-      const subtleAmber = Color(0xFFF59E0B);
+      final subtleAmber = OledTheme.semanticForeground(
+        const Color(0xFFF59E0B),
+        theme.brightness,
+      );
       return Padding(
         padding: EdgeInsets.fromLTRB(4, topSpacing, 4, 8),
         child: Row(
           children: [
-            const Icon(
+            Icon(
               Icons.event_note_rounded,
               size: 16,
               color: subtleAmber,
@@ -2243,7 +2413,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
               decoration: BoxDecoration(
-                color: subtleAmber.withValues(alpha: 0.14),
+                color: OledTheme.semanticBadgeBg(
+                  const Color(0xFFF59E0B),
+                  theme.brightness,
+                ),
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
@@ -2260,6 +2433,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     final isUpcomingDay = day.isAfter(today);
+    final upcomingAmber = OledTheme.semanticForeground(
+      const Color(0xFFF59E0B),
+      theme.brightness,
+    );
     final isTomorrow = day == today.add(const Duration(days: 1));
     final title = customTitle ?? _formatDaySectionTitle(day, today);
     final weekday = _weekdayNamesHu[day.weekday.clamp(1, 7)];
@@ -2272,27 +2449,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       child: Row(
         children: [
           if (isUpcomingDay) ...[
-            const Icon(
+            Icon(
               Icons.upcoming_rounded,
               size: 16,
-              color: Color(0xFFF59E0B),
+              color: upcomingAmber,
             ),
             const SizedBox(width: 6),
           ],
           Text(
-            uwu(title),
+            uwuLabel(title, enabled: _activePrefs.uwuModeEnabled),
             style: theme.textTheme.titleSmall?.copyWith(
               fontSize: 15,
               fontWeight: FontWeight.w900,
-              color:
-                  isUpcomingDay ? const Color(0xFFF59E0B) : scheme.onSurface,
+              color: isUpcomingDay ? upcomingAmber : scheme.onSurface,
               letterSpacing: 0.2,
             ),
           ),
           if (showSecondaryWeekday) ...[
             const SizedBox(width: 8),
             Text(
-              weekday,
+              uwuLabel(weekday, enabled: _activePrefs.uwuModeEnabled),
               style: theme.textTheme.labelMedium?.copyWith(
                 color: scheme.onSurface.withValues(alpha: 0.52),
                 fontWeight: FontWeight.w600,
@@ -2304,7 +2480,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
             decoration: BoxDecoration(
               color: isUpcomingDay
-                  ? const Color(0xFFF59E0B).withValues(alpha: 0.14)
+                  ? OledTheme.semanticBadgeBg(
+                      const Color(0xFFF59E0B),
+                      theme.brightness,
+                    )
                   : scheme.surfaceContainerHigh.withValues(alpha: 0.65),
               borderRadius: BorderRadius.circular(999),
             ),
@@ -2312,7 +2491,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               '$matchingCount',
               style: theme.textTheme.labelSmall?.copyWith(
                 color: isUpcomingDay
-                    ? const Color(0xFFF59E0B)
+                    ? upcomingAmber
                     : scheme.onSurface.withValues(alpha: 0.72),
                 fontWeight: FontWeight.w800,
               ),
@@ -2323,8 +2502,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  /// Builds the dynamic 'Következő óra' / Live Activity hero card using
-  /// [NextLessonStatus.evaluate] with local DateTime comparisons.
+  /// Builds the restrained, de-AI-ified 'Következő óra' / Live Activity hero
+  /// card aligned visually with the refined Home feed cards.
   Widget _buildNextLessonHeroCard(
     ThemeData theme,
     ColorScheme scheme,
@@ -2340,46 +2519,50 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final upcoming = status.upcomingLesson;
     final isOngoing = status.phase == NextLessonPhase.ongoing;
     final isBreak = status.phase == NextLessonPhase.betweenLessons;
+    final isDark = theme.brightness == Brightness.dark;
 
-    final progressText = NextLessonStatus.formatRemainingLessonsLabel(
-      status.remainingLessonsCount,
-    );
+    final remainingCount = status.remainingLessonsCount;
+    final rightCountText = remainingCount <= 0
+        ? ''
+        : (remainingCount == 1 ? 'Utolsó óra' : 'Még $remainingCount óra');
 
     final heroTag =
         currentOrNext != null ? 'home_lesson_num_${currentOrNext.uid}' : null;
 
     Widget buildHeroPeriodBadge() {
       final lesson = currentOrNext!;
-      final baseAccent = activePrefs.timetablePeriodColor ?? scheme.primary;
-      final readableAccent = activePrefs.timetablePeriodColor != null
-          ? OledTheme.readableInlineColor(
-              activePrefs.timetablePeriodColor!,
-              theme.brightness,
-            )
-          : scheme.primary;
+      final accent = scheme.primary;
       final periodLabel =
           lesson.lessonNumber != null ? '${lesson.lessonNumber}.' : '•';
       return Hero(
         tag: heroTag!,
+        createRectTween: createLinearHeroRectTween,
+        flightShuttleBuilder: buildBoomerangBadgeHeroShuttle,
         child: Material(
           type: MaterialType.transparency,
           child: PeriodCountdownBadge(
             label: periodLabel,
-            backgroundColor: baseAccent.withValues(alpha: 0.2),
-            textStyle: theme.textTheme.titleMedium!.copyWith(
-              color: readableAccent,
-              fontWeight: FontWeight.w900,
+            backgroundColor: accent.withValues(alpha: 0.14),
+            border: Border.all(
+              color: accent.withValues(alpha: 0.24),
+              width: 1.0,
             ),
-            ringColor: readableAccent,
+            textStyle: theme.textTheme.titleMedium!.copyWith(
+              color: accent,
+              fontWeight: FontWeight.w700,
+              height: 1.0,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+            ringColor: accent,
             startTime: isOngoing ? lesson.start.toLocal() : null,
             endTime: isOngoing ? lesson.end.toLocal() : null,
             clock: widget.clock,
             remainingFraction: null,
-            outerSize: 58,
-            innerSize: 42,
-            idleSize: 46,
-            idleBorderRadius: BorderRadius.circular(14),
-            strokeWidth: 4.0,
+            outerSize: 54,
+            innerSize: 40,
+            idleSize: 44,
+            idleShape: BoxShape.circle,
+            strokeWidth: 3.5,
           ),
         ),
       );
@@ -2394,6 +2577,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             currentOrNext.subject?.uid,
           )
         : '';
+
+    final String timeAndRoomMeta;
+    final String teacherMeta;
+    final bool isSubTeacher;
+    if (currentOrNext != null) {
+      final timeRangeStr =
+          '${_timeFormat.format(currentOrNext.start.toLocal())} - ${_timeFormat.format(currentOrNext.end.toLocal())}';
+      final cleanRoom = (currentOrNext.roomName ?? '').trim();
+      timeAndRoomMeta =
+          cleanRoom.isNotEmpty ? '$timeRangeStr • $cleanRoom' : timeRangeStr;
+
+      final subName = currentOrNext.substituteTeacher?.trim() ?? '';
+      isSubTeacher = subName.isNotEmpty;
+      final rawTeacher = isSubTeacher ? subName : (currentOrNext.teacher?.trim() ?? '');
+      teacherMeta = rawTeacher.isEmpty
+          ? ''
+          : (isSubTeacher
+              ? 'Helyettes: ${activePrefs.resolveTeacherName(rawTeacher)}'
+              : activePrefs.resolveTeacherName(rawTeacher));
+    } else {
+      timeAndRoomMeta = '';
+      teacherMeta = '';
+      isSubTeacher = false;
+    }
 
     return TactileBounce(
       pressedScale: 0.97,
@@ -2413,117 +2620,64 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         enabled: activePrefs.christmasModeEnabled,
         child: SoftGlassCard(
           prefs: activePrefs,
-          padding: const EdgeInsets.all(20),
-          borderRadius: OledTheme.largeRadius,
-          border: Border.all(
-            color: isOngoing
-                ? Colors.blueAccent.withValues(alpha: 0.85)
-                : currentOrNext != null
-                    ? scheme.primary.withValues(alpha: 0.65)
-                    : theme.dividerColor,
-            width: currentOrNext != null ? 1.5 : 1.0,
-          ),
+          padding: const EdgeInsets.all(18),
+          borderRadius: BorderRadius.circular(18),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (status.phase != NextLessonPhase.completedForToday) ...[
                 Row(
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: scheme.primary.withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(22),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (isBreak) ...[
-                            _PulsingStatusDot(color: scheme.primary),
-                            const SizedBox(width: 6),
-                          ] else ...[
-                            Icon(
-                              isOngoing
-                                  ? Icons.sensors_rounded
-                                  : Icons.schedule_rounded,
-                              size: 15,
-                              color: scheme.primary,
-                            ),
-                            const SizedBox(width: 6),
-                          ],
-                          Text(
-                            uwu(
-                              isOngoing
-                                  ? 'Folyamatban lévő óra'
-                                  : isBreak
-                                      ? 'Szünet'
-                                      : 'Következő óra',
-                            ),
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: scheme.primary,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ],
+                    Text(
+                      uwu(
+                        isOngoing
+                            ? 'FOLYAMATBAN'
+                            : isBreak
+                                ? 'SZÜNET'
+                                : 'KÖVETKEZŐ ÓRA',
+                      ).toUpperCase(),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.8,
+                        color: (isOngoing || isBreak)
+                            ? scheme.primary.withValues(alpha: 0.85)
+                            : scheme.onSurface.withValues(alpha: 0.50),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: isOngoing
-                                ? scheme.primary.withValues(alpha: 0.16)
-                                : scheme.surfaceContainerHigh,
-                            borderRadius: BorderRadius.circular(22),
-                          ),
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.centerRight,
-                            child: isOngoing && currentOrNext != null
-                                ? LiveCountdownProgressScope(
-                                    startTime: currentOrNext.start.toLocal(),
-                                    endTime: currentOrNext.end.toLocal(),
-                                    clock: widget.clock,
-                                    builder: (_, snap) => Text(
-                                      uwu(snap.formattedRemaining()),
-                                      maxLines: 1,
-                                      softWrap: false,
-                                      style: theme.textTheme.labelSmall?.copyWith(
-                                        color: scheme.primary,
-                                        fontWeight: FontWeight.w800,
-                                        fontFeatures: const [
-                                          FontFeature.tabularFigures(),
-                                        ],
-                                      ),
-                                    ),
-                                  )
-                                : Text(
-                                    uwu(progressText),
-                                    maxLines: 1,
-                                    softWrap: false,
-                                    style: theme.textTheme.labelSmall?.copyWith(
-                                      color: scheme.onSurface.withValues(
-                                        alpha: 0.78,
-                                      ),
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
+                    const Spacer(),
+                    if (isOngoing && currentOrNext != null)
+                      LiveCountdownProgressScope(
+                        startTime: currentOrNext.start.toLocal(),
+                        endTime: currentOrNext.end.toLocal(),
+                        clock: widget.clock,
+                        builder: (_, snap) => Text(
+                          uwu(snap.formattedCompactRemaining(suffix: ' hátra')),
+                          maxLines: 1,
+                          softWrap: false,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontSize: 12,
+                            color: scheme.onSurface.withValues(alpha: 0.56),
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: const [FontFeature.tabularFigures()],
                           ),
                         ),
+                      )
+                    else
+                      Text(
+                        uwu(rightCountText),
+                        maxLines: 1,
+                        softWrap: false,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          fontSize: 12,
+                          color: scheme.onSurface.withValues(alpha: 0.56),
+                          fontWeight: FontWeight.w600,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
                       ),
-                    ),
                   ],
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 12),
               ],
               if (status.phase == NextLessonPhase.completedForToday ||
                   currentOrNext == null)
@@ -2532,7 +2686,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     Icon(
                       Icons.celebration_rounded,
                       color: scheme.primary,
-                      size: 28,
+                      size: 26,
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -2542,17 +2696,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           Text(
                             uwu('Ma már nincs több órád!'),
                             style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w900,
+                              fontWeight: FontWeight.w800,
                               color: scheme.onSurface,
                             ),
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            status.totalLessonsCount > 0
-                                ? 'Mind a(z) ${status.totalLessonsCount} mai tanóra lezajlott. Koppints a teljes órarendért!'
-                                : 'Mára nincs rögzített tanóra. Koppints a heti órarend megnyitásához!',
+                            uwu(
+                              status.totalLessonsCount > 0
+                                  ? 'Mind a(z) ${status.totalLessonsCount} mai tanóra lezajlott. Koppints a teljes órarendért!'
+                                  : 'Mára nincs rögzített tanóra. Koppints a heti órarend megnyitásához!',
+                              enabled: activePrefs.uwuModeEnabled,
+                            ),
                             style: theme.textTheme.bodySmall?.copyWith(
-                              color: scheme.onSurface.withValues(alpha: 0.65),
+                              color: scheme.onSurface.withValues(alpha: 0.62),
                             ),
                           ),
                         ],
@@ -2560,8 +2717,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ],
                 )
-              else if (isOngoing) ...[
-                // Live Activity Style Current & Next Lesson Card
+              else ...[
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
@@ -2572,211 +2728,56 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            currentSubjTitle,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w900,
+                            uwuLabel(
+                              currentSubjTitle,
+                              enabled: activePrefs.uwuModeEnabled,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleLarge?.copyWith(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.3,
+                              height: 1.18,
                               color: scheme.onSurface,
                             ),
                           ),
                           const SizedBox(height: 4),
-                          Wrap(
-                            spacing: 12,
-                            runSpacing: 4,
-                            children: [
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.access_time_rounded,
-                                    size: 14,
-                                    color: scheme.onSurface
-                                        .withValues(alpha: 0.65),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    '${_timeFormat.format(currentOrNext.start.toLocal())} - ${_timeFormat.format(currentOrNext.end.toLocal())}',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              if (currentOrNext.roomName != null &&
-                                  currentOrNext.roomName!.trim().isNotEmpty)
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.meeting_room_rounded,
-                                      size: 14,
-                                      color: scheme.onSurface
-                                          .withValues(alpha: 0.65),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      'Terem: ${currentOrNext.roomName}',
-                                      style:
-                                          theme.textTheme.bodySmall?.copyWith(
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                            ],
-                          ),
-                          const SizedBox(height: 3),
-                          LiveCountdownProgressScope(
-                            startTime: currentOrNext.start.toLocal(),
-                            endTime: currentOrNext.end.toLocal(),
-                            clock: widget.clock,
-                            builder: (_, snap) {
-                              final teacherPrefix = currentOrNext.substituteTeacher !=
-                                          null &&
-                                      currentOrNext.substituteTeacher!
-                                          .trim()
-                                          .isNotEmpty
-                                  ? 'Helyettes: ${activePrefs.resolveTeacherName(currentOrNext.substituteTeacher)} • '
-                                  : (currentOrNext.teacher != null
-                                      ? '${activePrefs.resolveTeacherName(currentOrNext.teacher)} • '
-                                      : '');
-                              return Text(
-                                '$teacherPrefix${snap.formattedRemaining()}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: scheme.primary,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Divider(color: theme.dividerColor, height: 1),
-                const SizedBox(height: 12),
-                _buildUpcomingNextLessonRow(theme, scheme, upcoming),
-              ] else ...[
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    buildHeroPeriodBadge(),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
                           Text(
-                            status.headline,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w900,
-                              color: scheme.onSurface,
+                            uwuLabel(
+                              timeAndRoomMeta,
+                              enabled: activePrefs.uwuModeEnabled,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurface.withValues(alpha: 0.76),
+                              fontFeatures: const [FontFeature.tabularFigures()],
                             ),
                           ),
-                          const SizedBox(height: 4),
-                          Wrap(
-                            spacing: 12,
-                            runSpacing: 4,
-                            children: [
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.access_time_rounded,
-                                    size: 14,
-                                    color: scheme.onSurface
-                                        .withValues(alpha: 0.65),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    '${_timeFormat.format(currentOrNext.start.toLocal())} - ${_timeFormat.format(currentOrNext.end.toLocal())}',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ],
+                          if (teacherMeta.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              uwuLabel(
+                                teacherMeta,
+                                enabled: activePrefs.uwuModeEnabled,
                               ),
-                              if (currentOrNext.roomName != null &&
-                                  currentOrNext.roomName!.trim().isNotEmpty)
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.meeting_room_rounded,
-                                      size: 14,
-                                      color: scheme.onSurface
-                                          .withValues(alpha: 0.65),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      'Terem: ${currentOrNext.roomName}',
-                                      style:
-                                          theme.textTheme.bodySmall?.copyWith(
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                            ],
-                          ),
-                          if ((currentOrNext.substituteTeacher != null &&
-                                  currentOrNext.substituteTeacher!
-                                      .trim()
-                                      .isNotEmpty) ||
-                              (currentOrNext.teacher != null &&
-                                  currentOrNext.teacher!
-                                      .trim()
-                                      .isNotEmpty)) ...[
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Icon(
-                                  currentOrNext.substituteTeacher != null &&
-                                          currentOrNext.substituteTeacher!
-                                              .trim()
-                                              .isNotEmpty
-                                      ? Icons.swap_horiz_rounded
-                                      : Icons.person_outline_rounded,
-                                  size: 14,
-                                  color: currentOrNext.substituteTeacher !=
-                                              null &&
-                                          currentOrNext.substituteTeacher!
-                                              .trim()
-                                              .isNotEmpty
-                                      ? const Color(0xFFFFB300)
-                                      : scheme.onSurface
-                                          .withValues(alpha: 0.65),
-                                ),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    currentOrNext.substituteTeacher != null &&
-                                            currentOrNext.substituteTeacher!
-                                                .trim()
-                                                .isNotEmpty
-                                        ? 'Helyettes: ${activePrefs.resolveTeacherName(currentOrNext.substituteTeacher)}'
-                                        : activePrefs.resolveTeacherName(
-                                            currentOrNext.teacher,
-                                          ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: currentOrNext.substituteTeacher !=
-                                                  null &&
-                                              currentOrNext.substituteTeacher!
-                                                  .trim()
-                                                  .isNotEmpty
-                                          ? const Color(0xFFFFB300)
-                                          : scheme.onSurface
-                                              .withValues(alpha: 0.72),
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                              ],
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                fontSize: 12.5,
+                                fontWeight: isSubTeacher
+                                    ? FontWeight.w600
+                                    : FontWeight.w500,
+                                color: isSubTeacher
+                                    ? OledTheme.semanticForeground(
+                                        const Color(0xFFF59E0B),
+                                        theme.brightness,
+                                      )
+                                    : scheme.onSurface.withValues(alpha: 0.56),
+                              ),
                             ),
                           ],
                         ],
@@ -2784,117 +2785,90 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                if (status.phase == NextLessonPhase.beforeFirstFarAway ||
-                    status.phase == NextLessonPhase.beforeFirstWithinTwoHours)
+                if (isOngoing) ...[
+                  const SizedBox(height: 14),
+                  Divider(
+                    color: theme.dividerColor.withValues(alpha: 0.65),
+                    height: 1,
+                  ),
+                  const SizedBox(height: 12),
+                  _buildUpcomingNextLessonRow(theme, scheme, upcoming),
+                ] else if (status.phase == NextLessonPhase.beforeFirstFarAway ||
+                    status.phase ==
+                        NextLessonPhase.beforeFirstWithinTwoHours) ...[
+                  const SizedBox(height: 12),
                   _PreClassCountdownBanner(
                     targetStartLocal: currentOrNext.start.toLocal(),
-                    textTransform: uwu,
+                    textTransform: (s) => uwuLabel(
+                      s,
+                      enabled: activePrefs.uwuModeEnabled,
+                    ),
                     clock: widget.clock,
                     onReachedStart: () {
                       if (mounted) _countdownTick.value++;
                     },
-                  )
-                else if (isBreak && status.previousLesson != null)
+                  ),
+                ] else if (isBreak && status.previousLesson != null) ...[
+                  const SizedBox(height: 12),
                   LiveCountdownProgressScope(
                     startTime: status.previousLesson!.end.toLocal(),
                     endTime: currentOrNext.start.toLocal(),
                     clock: widget.clock,
                     builder: (_, snap) {
                       final elapsed = (1.0 - snap.progress).clamp(0.02, 1.0);
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: scheme.surfaceContainerHigh,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: scheme.primary.withValues(alpha: 0.28),
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.hourglass_top_rounded,
-                                  size: 16,
-                                  color: scheme.primary,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    uwu(
-                                      'Szünet • ${snap.formattedRemaining()}',
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.labelMedium
-                                        ?.copyWith(
-                                      color: scheme.primary,
-                                      fontWeight: FontWeight.w900,
-                                      fontFeatures: const [
-                                        FontFeature.tabularFigures(),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            uwu(
+                              'Kezdés: ${snap.formattedCompactRemaining(suffix: ' múlva')}',
+                              enabled: activePrefs.uwuModeEnabled,
                             ),
-                            const SizedBox(height: 8),
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(999),
-                              child: LinearProgressIndicator(
-                                value: elapsed,
-                                minHeight: 5,
-                                backgroundColor: scheme.onSurface
-                                    .withValues(alpha: 0.12),
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  scheme.primary,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  )
-                else
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: scheme.surfaceContainerHigh,
-                      borderRadius: BorderRadius.circular(22),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.timer_outlined,
-                          size: 16,
-                          color: scheme.primary,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            status.countdownLabel,
-                            maxLines: 2,
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: theme.textTheme.labelMedium?.copyWith(
                               color: scheme.primary,
-                              fontWeight: FontWeight.w800,
+                              fontWeight: FontWeight.w700,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
                             ),
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 7),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(999),
+                            child: LinearProgressIndicator(
+                              value: elapsed,
+                              minHeight: 3.5,
+                              backgroundColor: scheme.onSurface.withValues(
+                                alpha: isDark ? 0.10 : 0.08,
+                              ),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                scheme.primary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ] else ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    uwuLabel(
+                      status.countdownLabel,
+                      enabled: activePrefs.uwuModeEnabled,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
+                ],
               ],
             ],
           ),
@@ -2909,24 +2883,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     Lesson? upcoming,
   ) {
     if (upcoming == null) {
-      return Row(
-        children: [
-          Icon(
-            Icons.done_all_rounded,
-            size: 16,
-            color: scheme.onSurface.withValues(alpha: 0.65),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              uwu('Utolsó óra ma • Utána vége a tanításnak!'),
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: scheme.onSurface.withValues(alpha: 0.72),
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
+      return Text(
+        uwu('Utolsó óra ma • Utána vége a tanításnak!'),
+        style: theme.textTheme.labelMedium?.copyWith(
+          color: scheme.onSurface.withValues(alpha: 0.65),
+          fontWeight: FontWeight.w600,
+        ),
       );
     }
 
@@ -2935,6 +2897,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       rawNext,
       upcoming.subject?.uid,
     );
+    final periodLabel =
+        upcoming.lessonNumber != null ? '${upcoming.lessonNumber}.' : '•';
 
     return Row(
       children: [
@@ -2943,26 +2907,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           height: 30,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: widget.prefs.timetablePeriodColor ??
-                scheme.surfaceContainerHigh,
-            borderRadius: BorderRadius.circular(9),
+            color: scheme.primary.withValues(alpha: 0.14),
+            shape: BoxShape.circle,
             border: Border.all(
-              color: widget.prefs.timetablePeriodColor != null
-                  ? OledTheme.contrastTextFor(
-                      widget.prefs.timetablePeriodColor!,
-                    ).withValues(alpha: 0.22)
-                  : theme.dividerColor,
+              color: scheme.primary.withValues(alpha: 0.24),
+              width: 1.0,
             ),
           ),
-          child: Text(
-            upcoming.lessonNumber != null ? '${upcoming.lessonNumber}.' : '•',
-            style: theme.textTheme.labelMedium?.copyWith(
-              fontWeight: FontWeight.w900,
-              color: widget.prefs.timetablePeriodColor != null
-                  ? OledTheme.contrastTextFor(
-                      widget.prefs.timetablePeriodColor!,
-                    )
-                  : scheme.onSurface,
+          child: Center(
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: periodLabel.endsWith('.') ? 1.5 : 0.0,
+              ),
+              child: Text(
+                periodLabel,
+                textAlign: TextAlign.center,
+                textHeightBehavior: const TextHeightBehavior(
+                  applyHeightToFirstAscent: false,
+                  applyHeightToLastDescent: false,
+                ),
+                style: theme.textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  height: 1.0,
+                  color: scheme.primary,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
             ),
           ),
         ),
@@ -2972,17 +2942,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                uwu('Következő: $nextSubj'),
+                uwuLabel(
+                  'Következő: $nextSubj',
+                  enabled: _activePrefs.uwuModeEnabled,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                   color: scheme.onSurface,
                 ),
               ),
               Text(
-                '${_timeFormat.format(upcoming.start.toLocal())} - ${_timeFormat.format(upcoming.end.toLocal())}'
-                '${upcoming.roomName != null && upcoming.roomName!.trim().isNotEmpty ? ' • Terem: ${upcoming.roomName}' : ''}',
+                uwuLabel(
+                  '${_timeFormat.format(upcoming.start.toLocal())} - ${_timeFormat.format(upcoming.end.toLocal())}'
+                  '${upcoming.roomName != null && upcoming.roomName!.trim().isNotEmpty ? ' • ${upcoming.roomName!.trim()}' : ''}',
+                  enabled: _activePrefs.uwuModeEnabled,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.labelSmall?.copyWith(
@@ -2994,6 +2970,68 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildMarkAllHomeworksButton(
+    ThemeData theme,
+    ColorScheme scheme,
+    List<Homework> pendingHomeworks,
+  ) {
+    final hwColor = OledTheme.semanticForeground(
+      const Color(0xFF00BFA5),
+      theme.brightness,
+    );
+    const hwBase = Color(0xFF00BFA5);
+    final hasPending = pendingHomeworks.isNotEmpty;
+    final foreground =
+        hasPending ? hwColor : scheme.onSurface.withValues(alpha: 0.45);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: hasPending
+                ? () => _markAllPendingHomeworksCompleted(pendingHomeworks)
+                : null,
+            borderRadius: BorderRadius.circular(12),
+            child: Ink(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: hasPending
+                    ? hwBase.withValues(alpha: 0.12)
+                    : scheme.surfaceContainerHigh.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: hasPending
+                      ? hwColor.withValues(alpha: 0.32)
+                      : scheme.outlineVariant.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.done_all_rounded,
+                    size: 16,
+                    color: foreground,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    uwu('Összes házi megjelölése készként'),
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: foreground,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -3036,10 +3074,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildActivityFeedTile(
     ThemeData theme,
     ColorScheme scheme,
-    HomeActivityItem item,
-  ) {
+    HomeActivityItem item, {
+    Map<String, GradeImpactDelta> gradeImpacts = const {},
+  }) {
     if (item.grade != null) {
-      return _buildGradeFeedCard(theme, scheme, item.grade!);
+      final g = item.grade!;
+      return _buildGradeFeedCard(
+        theme,
+        scheme,
+        g,
+        impactDelta: gradeImpacts[SubjectGradeSummary.gradeImpactKey(g)],
+      );
     }
     if (item.homework != null) {
       return _buildHomeworkFeedCard(theme, scheme, item.homework!);
@@ -3047,29 +3092,41 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return _buildTestFeedCard(theme, scheme, item.test!);
   }
 
-  /// Compact, clutter-free grade card on Főoldal (`Part B #13`) with boomerang
-  /// Hero badge transition (`Part B #1`).
+  /// Compact, uniform grade card on Főoldal with translucent tinted badge,
+  /// auto-capitalized topic-first hierarchy, and right-side average impact delta.
   Widget _buildGradeFeedCard(
     ThemeData theme,
     ColorScheme scheme,
-    Grade grade,
-  ) {
+    Grade grade, {
+    GradeImpactDelta? impactDelta,
+  }) {
     final badgeColor = OledTheme.gradeColor(grade.numericValue, widget.prefs);
     final badgeText = grade.numericValue?.toString() ??
         grade.shortStrValue ??
         (grade.strValue.isNotEmpty ? grade.strValue.substring(0, 1) : '?');
 
-    final topicOrMode =
-        (grade.topic != null && grade.topic!.trim().isNotEmpty)
-            ? grade.topic!.trim()
-            : (grade.mode?.description.isNotEmpty == true
-                ? grade.mode!.description
-                : grade.type.description);
+    final cleanTopic = OledTheme.capitalizeFirst(grade.topic ?? '');
+    final hasTopic = cleanTopic.isNotEmpty;
+    final rawModeOrType = (grade.mode?.description.trim().isNotEmpty == true)
+        ? grade.mode!.description
+        : grade.type.description;
+    final modeOrType = OledTheme.capitalizeFirst(rawModeOrType);
 
     final subjectDisplay = widget.prefs.resolveSubjectName(
       grade.subject.name,
       grade.subject.uid,
     );
+    final primaryTitle = hasTopic ? cleanTopic : subjectDisplay;
+    final secondarySub = hasTopic ? subjectDisplay : modeOrType;
+    final weightPct =
+        (grade.weightPercentage != null && grade.weightPercentage! > 0)
+            ? grade.weightPercentage!
+            : 100;
+    final resolvedImpact = impactDelta ??
+        SubjectGradeSummary.computeChronologicalGradeImpacts(
+          _data?.allGrades ?? <Grade>[grade],
+        )[SubjectGradeSummary.gradeImpactKey(grade)];
+
     final heroTag = 'home_grade_${grade.uid}';
     final settings = AppProvidersScope.maybeOf(context)?.settings;
 
@@ -3080,11 +3137,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           pressedScale: 0.97,
           onTap: () {
             settings?.dismissGradeGlow(grade);
+            final isDark = Theme.of(context).brightness == Brightness.dark;
             showGradeInspectionModal(
               context,
               grade,
               prefs: _activePrefs,
               heroTag: heroTag,
+              impactDeltaText: resolvedImpact?.formattedDelta,
+              impactDeltaColor: resolvedImpact?.resolveSemanticColor(isDark),
             );
           },
           child: ChristmasSnowCap(
@@ -3096,31 +3156,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               child: SoftGlassCard(
                 prefs: _activePrefs,
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
                 borderRadius: BorderRadius.circular(18),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Hero(
                       tag: heroTag,
+                      createRectTween: createLinearHeroRectTween,
+                      flightShuttleBuilder: buildBoomerangBadgeHeroShuttle,
                       child: Material(
                         type: MaterialType.transparency,
-                        child: Container(
-                          width: 38,
-                          height: 38,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: badgeColor,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Text(
-                            badgeText,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              color: Colors.white,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
+                        child: TranslucentGradeBadge(
+                          text: badgeText,
+                          color: badgeColor,
                         ),
                       ),
                     ),
@@ -3130,36 +3179,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  subjectDisplay,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 13.5,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                _formatFeedCardDate(grade.recordedAt),
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color:
-                                      scheme.onSurface.withValues(alpha: 0.56),
-                                ),
-                              ),
-                            ],
+                          Text(
+                            uwuLabel(
+                              primaryTitle,
+                              enabled: _activePrefs.uwuModeEnabled,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            topicOrMode,
+                            uwuLabel(
+                              secondarySub,
+                              enabled: _activePrefs.uwuModeEnabled,
+                            ),
                             style: TextStyle(
-                              fontSize: 12,
-                              color: scheme.onSurface.withValues(alpha: 0.7),
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w500,
+                              color: scheme.onSurface.withValues(alpha: 0.68),
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -3167,6 +3208,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ],
                       ),
                     ),
+                    if ((resolvedImpact != null && resolvedImpact.isNumeric) ||
+                        weightPct != 100) ...[
+                      const SizedBox(width: 10),
+                      GradeImpactDeltaLabel(
+                        impact: resolvedImpact,
+                        weightPercentage: weightPct,
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -3191,7 +3240,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ColorScheme scheme,
     Homework homework,
   ) {
-    const hwColor = Color(0xFF00BFA5);
+    final hwColor = OledTheme.semanticForeground(
+      const Color(0xFF00BFA5),
+      theme.brightness,
+    );
+    const hwBase = Color(0xFF00BFA5);
     final rawSubjectTitle = homework.subject.name.isNotEmpty
         ? homework.subject.name
         : homework.subjectName;
@@ -3199,14 +3252,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       rawSubjectTitle,
       homework.subject.uid,
     );
-    final teacherDisplay =
-        widget.prefs.resolveTeacherName(homework.teacherName);
-    final cleanText = Homework.stripHtmlTags(homework.description);
+    final cleanText = Homework.stripHtmlTags(homework.description).trim();
+    final previewText = cleanText.isEmpty ? uwu('Nincs leírás') : cleanText;
     final heroTag = 'home_hw_${homework.uid}';
     final isCompleted = _isHomeworkCompleted(homework);
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: 8),
       child: TactileBounce(
         pressedScale: 0.97,
         onTap: () => showHomeworkInspectionModal(
@@ -3220,31 +3272,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           enabled: widget.prefs.christmasModeEnabled,
           child: SoftGlassCard(
             prefs: _activePrefs,
-            padding: const EdgeInsets.all(14),
-            borderRadius: BorderRadius.circular(16),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            borderRadius: BorderRadius.circular(18),
             child: AnimatedOpacity(
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeOutCubic,
               opacity: isCompleted ? 0.58 : 1.0,
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Hero(
                     tag: heroTag,
+                    createRectTween: createLinearHeroRectTween,
+                    flightShuttleBuilder: buildBoomerangBadgeHeroShuttle,
                     child: Material(
                       type: MaterialType.transparency,
                       child: Container(
-                        width: 44,
-                        height: 44,
+                        width: 38,
+                        height: 38,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: hwColor.withValues(
-                            alpha: isCompleted ? 0.12 : 0.2,
+                          color: hwBase.withValues(
+                            alpha: isCompleted ? 0.11 : 0.14,
                           ),
-                          borderRadius: OledTheme.badgeRadius,
+                          borderRadius: BorderRadius.circular(11),
                           border: Border.all(
                             color: hwColor.withValues(
-                              alpha: isCompleted ? 0.45 : 1.0,
+                              alpha: isCompleted ? 0.28 : 0.42,
                             ),
                           ),
                         ),
@@ -3253,7 +3307,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               ? Icons.task_alt_rounded
                               : Icons.menu_book_rounded,
                           color: hwColor,
-                          size: 22,
+                          size: 19,
                         ),
                       ),
                     ),
@@ -3262,14 +3316,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Row(
                           children: [
                             Expanded(
                               child: Text(
-                                subjectTitle,
-                                style: theme.textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.w800,
+                                uwuLabel(
+                                  subjectTitle,
+                                  enabled: _activePrefs.uwuModeEnabled,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w700,
                                   color: scheme.onSurface,
                                   decoration: isCompleted
                                       ? TextDecoration.lineThrough
@@ -3281,8 +3342,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              'Határidő: ${_formatFeedCardDate(homework.dueDate)}',
-                              style: theme.textTheme.labelSmall?.copyWith(
+                              uwuLabel(
+                                'Határidő: ${_formatFeedCardDate(homework.dueDate)}',
+                                enabled: _activePrefs.uwuModeEnabled,
+                              ),
+                              style: TextStyle(
+                                fontSize: 11,
                                 color: hwColor,
                                 fontWeight: FontWeight.w700,
                                 decoration: isCompleted
@@ -3292,39 +3357,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 3),
+                        const SizedBox(height: 2),
                         Text(
-                          cleanText,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurface.withValues(alpha: 0.78),
+                          cleanText.isEmpty
+                              ? uwuLabel(
+                                  'Nincs leírás',
+                                  enabled: _activePrefs.uwuModeEnabled,
+                                )
+                              : uwu(
+                                  previewText,
+                                  enabled: _activePrefs.uwuModeEnabled,
+                                ),
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w500,
+                            color: scheme.onSurface.withValues(alpha: 0.68),
                             decoration: isCompleted
                                 ? TextDecoration.lineThrough
                                 : null,
                           ),
-                          maxLines: 2,
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          teacherDisplay,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.onSurface.withValues(alpha: 0.54),
-                          ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 4),
                   Tooltip(
                     message: isCompleted
                         ? uwu('Visszavonás (aktívvá tétel)')
                         : uwu('Megjelölés készként'),
                     child: InkResponse(
-                      radius: 22,
+                      radius: 20,
                       onTap: () =>
                           _toggleHomeworkCompletion(homework, subjectTitle),
                       child: Padding(
-                        padding: const EdgeInsets.all(6),
+                        padding: const EdgeInsets.all(4),
                         child: AnimatedSwitcher(
                           duration: const Duration(milliseconds: 180),
                           child: Icon(
@@ -3332,7 +3400,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 ? Icons.check_circle_rounded
                                 : Icons.radio_button_unchecked_rounded,
                             key: ValueKey<bool>(isCompleted),
-                            size: 24,
+                            size: 22,
                             color: isCompleted
                                 ? hwColor
                                 : scheme.onSurface.withValues(alpha: 0.45),
@@ -3350,20 +3418,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  /// Announced exam / test card redesigned to stay compact and scannable
-  /// with soft amber accents, a concise date pill ("Nov. 25., Sze"), and a
-  /// single muted subtitle line.
+  /// Announced exam / test card redesigned to match the refined grade cards:
+  /// circular translucent badge, clean 2-line auto-capitalized hierarchy, and
+  /// subtle right-side date without heavy pill clutter.
   Widget _buildTestFeedCard(
     ThemeData theme,
     ColorScheme scheme,
     Test test,
   ) {
-    const testColor = Color(0xFFF59E0B);
+    const testBase = Color(0xFFF59E0B);
+    final testColor = OledTheme.semanticForeground(
+      testBase,
+      theme.brightness,
+    );
     const shortWeekdaysHu = ['', 'H', 'K', 'Sze', 'Cs', 'P', 'Szo', 'V'];
     final testLocal = test.date.toLocal();
     final monthStr = _shortMonthsHu[(testLocal.month - 1).clamp(0, 11)];
     final weekdayShort = shortWeekdaysHu[testLocal.weekday.clamp(1, 7)];
-    final conciseDatePill = '$monthStr ${testLocal.day}., $weekdayShort';
+    final conciseDatePill = OledTheme.capitalizeFirst(
+      '$monthStr ${testLocal.day}., $weekdayShort',
+    );
     final rawSubjectTitle =
         test.subject.name.isNotEmpty ? test.subject.name : test.subjectName;
     final subjectTitle = widget.prefs.resolveSubjectName(
@@ -3371,13 +3445,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       test.subject.uid,
     );
     final heroTag = 'home_test_${test.uid}';
-    final lessonPart =
-        test.lessonNumber > 0 ? ' (${test.lessonNumber}. óra)' : '';
-    final trimmedTheme = test.theme?.trim() ?? '';
-    final themePart = trimmedTheme.isNotEmpty ? ' • $trimmedTheme' : '';
+    final cleanTheme = OledTheme.capitalizeFirst(test.theme ?? '');
+    final cleanMethod = OledTheme.capitalizeFirst(test.method.description);
+    final primaryTitle = cleanTheme.isNotEmpty
+        ? cleanTheme
+        : (cleanMethod.isNotEmpty ? cleanMethod : subjectTitle);
+    final lessonPart = test.lessonNumber > 0
+        ? ' • ${test.lessonNumber}. óra'
+        : (cleanTheme.isNotEmpty && cleanMethod.isNotEmpty
+            ? ' • $cleanMethod'
+            : '');
+    final secondarySub = '$subjectTitle$lessonPart';
+    final isDark = theme.brightness == Brightness.dark;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(bottom: 8),
       child: TactileBounce(
         pressedScale: 0.97,
         onTap: () => showTestInspectionModal(
@@ -3390,86 +3472,91 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           enabled: widget.prefs.christmasModeEnabled,
           child: SoftGlassCard(
             prefs: _activePrefs,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-            borderRadius: BorderRadius.circular(16),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            borderRadius: BorderRadius.circular(18),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Hero(
                   tag: heroTag,
+                  createRectTween: createLinearHeroRectTween,
+                  flightShuttleBuilder: buildBoomerangBadgeHeroShuttle,
                   child: Material(
                     type: MaterialType.transparency,
                     child: Container(
-                      width: 34,
-                      height: 34,
+                      width: 42,
+                      height: 42,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: testColor.withValues(alpha: 0.14),
-                        borderRadius: BorderRadius.circular(10),
+                        color: OledTheme.semanticBadgeBg(
+                          testBase,
+                          theme.brightness,
+                        ),
+                        shape: BoxShape.circle,
                         border: Border.all(
-                          color: testColor.withValues(alpha: 0.35),
+                          color: OledTheme.semanticBadgeBorder(
+                            testBase,
+                            theme.brightness,
+                          ),
+                          width: 1.2,
                         ),
                       ),
-                      child: const Icon(
-                        Icons.event_note_rounded,
+                      child: Icon(
+                        Icons.assignment_outlined,
                         color: testColor,
-                        size: 18,
+                        size: 20,
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 11),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              subjectTitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 2.5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: testColor.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Text(
-                              conciseDatePill,
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                fontSize: 10.5,
-                                color: testColor,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
+                      Text(
+                        uwuLabel(
+                          primaryTitle,
+                          enabled: _activePrefs.uwuModeEnabled,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '${test.method.description}$lessonPart$themePart',
+                        uwuLabel(
+                          secondarySub,
+                          enabled: _activePrefs.uwuModeEnabled,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: 11.5,
                           color: scheme.onSurface.withValues(alpha: 0.68),
                           fontWeight: FontWeight.w500,
                         ),
                       ),
                     ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  uwuLabel(
+                    conciseDatePill,
+                    enabled: _activePrefs.uwuModeEnabled,
+                  ),
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: isDark
+                        ? testColor.withValues(alpha: 0.9)
+                        : const Color(0xFFB45309),
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
               ],
@@ -3505,7 +3592,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              message,
+              uwu(message, enabled: _activePrefs.uwuModeEnabled),
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: scheme.onSurface.withValues(alpha: 0.72),
               ),

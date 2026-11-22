@@ -1,7 +1,7 @@
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/token_storage_service.dart';
 import '../widgets/animation_helpers.dart';
@@ -166,8 +166,9 @@ class AdaptiveContrastTokens {
       targetWidth: 32,
       targetHeight: 32,
     );
-    final frame = await codec.getNextFrame();
+    ui.FrameInfo? frame;
     try {
+      frame = await codec.getNextFrame();
       final data = await frame.image.toByteData(
         format: ui.ImageByteFormat.rawRgba,
       );
@@ -184,7 +185,7 @@ class AdaptiveContrastTokens {
       }
       return count > 0 ? (sum / count).clamp(0.0, 1.0) : 0.15;
     } finally {
-      frame.image.dispose();
+      frame?.image.dispose();
       codec.dispose();
     }
   }
@@ -234,6 +235,19 @@ class AdaptiveContrastTokens {
 /// Theme constants, multi-theme builder (OLED Pure Black, Standard Dark, Light),
 /// Material 3 seed color presets, and grade badge colors.
 class OledTheme {
+  static const String defaultFontFamily = 'Inter';
+
+  /// Capitalizes the first character of [text] (trimmed) if it is lowercase,
+  /// preserving the rest of the string and full Hungarian diacritics.
+  static String capitalizeFirst(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return '';
+    final first = trimmed.substring(0, 1);
+    final upperFirst = first.toUpperCase();
+    if (first == upperFirst) return trimmed;
+    return '$upperFirst${trimmed.substring(1)}';
+  }
+
   static const Color pureBlack = Colors.black;
   static const Color surfaceDark = Color(0xFF121212);
   static const Color surfaceElevated = Color(0xFF181818);
@@ -275,12 +289,12 @@ class OledTheme {
     Color(0xFF5C6BC0), // Indigo
   ];
 
-  /// Returns high-contrast foreground color (`Colors.white` or dark charcoal)
+  /// Returns high-contrast foreground color (`Colors.white` or deep slate)
   /// for text rendered on top of [background].
   static Color contrastTextFor(Color background) =>
       ThemeData.estimateBrightnessForColor(background) == Brightness.dark
           ? Colors.white
-          : const Color(0xFF101318);
+          : const Color(0xFF0F172A);
 
   /// Ensures inline text colored with [color] stays legible against a surface
   /// with [surfaceBrightness] (e.g. darkening bright pastel on light surfaces
@@ -290,13 +304,58 @@ class OledTheme {
     Brightness surfaceBrightness,
   ) {
     final lum = color.computeLuminance();
-    if (surfaceBrightness == Brightness.light && lum > 0.55) {
-      return Color.lerp(color, const Color(0xFF101318), 0.48)!;
+    if (surfaceBrightness == Brightness.light && lum > 0.42) {
+      return Color.lerp(color, const Color(0xFF0F172A), 0.42)!;
     }
     if (surfaceBrightness == Brightness.dark && lum < 0.14) {
       return Color.lerp(color, Colors.white, 0.55)!;
     }
     return color;
+  }
+
+  /// Returns a deeper, richer saturation variant of [base] when rendered on
+  /// Light Mode white cards so status/grade/exam badges stay crisp and legible.
+  static Color semanticForeground(Color base, Brightness brightness) {
+    if (brightness == Brightness.dark) return base;
+    final hsl = HSLColor.fromColor(base);
+    return hsl
+        .withLightness((hsl.lightness * 0.72).clamp(0.24, 0.42))
+        .withSaturation((hsl.saturation * 1.15).clamp(0.0, 1.0))
+        .toColor();
+  }
+
+  static Color semanticBadgeBg(Color base, Brightness brightness) =>
+      base.withValues(alpha: brightness == Brightness.dark ? 0.16 : 0.13);
+
+  static Color semanticBadgeBorder(Color base, Brightness brightness) =>
+      brightness == Brightness.dark
+          ? base.withValues(alpha: 0.28)
+          : semanticForeground(base, brightness).withValues(alpha: 0.26);
+
+  /// System status bar and navigation bar icon brightness matching [brightness].
+  static SystemUiOverlayStyle systemOverlayStyleForBrightness(
+    Brightness brightness,
+  ) {
+    if (brightness == Brightness.light) {
+      return const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarDividerColor: Colors.transparent,
+        systemNavigationBarIconBrightness: Brightness.dark,
+        systemNavigationBarContrastEnforced: false,
+      );
+    }
+    return const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      statusBarBrightness: Brightness.dark,
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarDividerColor: Colors.transparent,
+      systemNavigationBarIconBrightness: Brightness.light,
+      systemNavigationBarContrastEnforced: false,
+    );
   }
 
   /// Palette of selectable colors for customizing individual grade badges (1..5).
@@ -469,23 +528,42 @@ class OledTheme {
     } else {
       // Material 3 Light
       scaffoldBg =
-          prefs.uwuModeEnabled ? const Color(0xFFFFF5FA) : const Color(0xFFF6F8FC);
+          prefs.uwuModeEnabled ? const Color(0xFFFFF5FA) : const Color(0xFFF4F6F8);
       cardBg = Colors.white;
       elevatedBg =
-          prefs.uwuModeEnabled ? const Color(0xFFFCE8F3) : const Color(0xFFEEF2F8);
+          prefs.uwuModeEnabled ? const Color(0xFFFCE8F3) : const Color(0xFFEFF2F6);
       borderColor = prefs.uwuModeEnabled
-          ? uwuPastelPink.withValues(alpha: 0.55)
-          : const Color(0xFFDCE2EC);
+          ? uwuPastelPink.withValues(alpha: 0.45)
+          : Colors.black.withValues(alpha: 0.06);
+      const lightInk = Color(0xFF0F172A);
+      const lightSlate = Color(0xFF64748B);
+      final effectivePrimary =
+          prefs.uwuModeEnabled ? const Color(0xFFD81B60) : baseScheme.primary;
+      final lightSecondaryContainer = Color.alphaBlend(
+        effectivePrimary.withValues(alpha: 0.14),
+        Colors.white,
+      );
+      final lightOnSecondaryContainer = Color.lerp(
+        effectivePrimary,
+        lightInk,
+        0.35,
+      )!;
       baseScheme = baseScheme.copyWith(
         surface: scaffoldBg,
-        primary:
-            prefs.uwuModeEnabled ? const Color(0xFFD81B60) : baseScheme.primary,
+        onSurface: lightInk,
+        onSurfaceVariant: lightSlate,
+        outlineVariant: borderColor,
+        outline: Colors.black.withValues(alpha: 0.14),
+        primary: effectivePrimary,
         secondary:
             prefs.uwuModeEnabled ? uwuPastelLavender : baseScheme.secondary,
+        secondaryContainer: lightSecondaryContainer,
+        onSecondaryContainer: lightOnSecondaryContainer,
+        surfaceContainerLowest: scaffoldBg,
         surfaceContainerLow: cardBg,
         surfaceContainer: cardBg,
         surfaceContainerHigh: elevatedBg,
-        surfaceContainerHighest: elevatedBg,
+        surfaceContainerHighest: const Color(0xFFE5EAF0),
       );
     }
 
@@ -524,9 +602,10 @@ class OledTheme {
     final onSurfaceText = baseScheme.onSurface;
     final mutedText = onSurfaceText.withValues(alpha: 0.68);
 
-    final baseTheme = ThemeData(
+    final rawTheme = ThemeData(
       useMaterial3: true,
       brightness: brightness,
+      fontFamily: defaultFontFamily,
       colorScheme: baseScheme,
       scaffoldBackgroundColor: resolvedScaffoldBg,
       canvasColor: resolvedScaffoldBg,
@@ -544,8 +623,17 @@ class OledTheme {
         backgroundColor: resolvedScaffoldBg,
         foregroundColor: onSurfaceText,
         surfaceTintColor: Colors.transparent,
+        systemOverlayStyle: systemOverlayStyleForBrightness(brightness),
         elevation: 0,
         centerTitle: false,
+        titleTextStyle: TextStyle(
+          fontFamily: defaultFontFamily,
+          color: onSurfaceText,
+          fontSize: 20,
+          fontWeight: FontWeight.w700,
+          letterSpacing: -0.3,
+          fontFeatures: const [ui.FontFeature.tabularFigures()],
+        ),
       ),
       cardTheme: CardThemeData(
         color: resolvedCardBg,
@@ -570,6 +658,7 @@ class OledTheme {
         labelTextStyle: WidgetStateProperty.resolveWith((states) {
           final isSelected = states.contains(WidgetState.selected);
           return TextStyle(
+            fontFamily: defaultFontFamily,
             fontSize: 12,
             fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
             color: isSelected ? primaryAccent : mutedText,
@@ -616,6 +705,62 @@ class OledTheme {
         ),
       ),
     );
+
+    TextStyle refineTextStyle(TextStyle? style, {double? letterSpacing}) {
+      return (style ?? const TextStyle()).copyWith(
+        fontFamily: defaultFontFamily,
+        letterSpacing: letterSpacing ?? style?.letterSpacing,
+        fontFeatures: const [ui.FontFeature.tabularFigures()],
+      );
+    }
+
+    final baseTextTheme = rawTheme.textTheme;
+    final refinedTextTheme = TextTheme(
+      displayLarge: refineTextStyle(
+        baseTextTheme.displayLarge,
+        letterSpacing: -0.4,
+      ),
+      displayMedium: refineTextStyle(
+        baseTextTheme.displayMedium,
+        letterSpacing: -0.4,
+      ),
+      displaySmall: refineTextStyle(
+        baseTextTheme.displaySmall,
+        letterSpacing: -0.35,
+      ),
+      headlineLarge: refineTextStyle(
+        baseTextTheme.headlineLarge,
+        letterSpacing: -0.35,
+      ),
+      headlineMedium: refineTextStyle(
+        baseTextTheme.headlineMedium,
+        letterSpacing: -0.35,
+      ),
+      headlineSmall: refineTextStyle(
+        baseTextTheme.headlineSmall,
+        letterSpacing: -0.3,
+      ),
+      titleLarge: refineTextStyle(
+        baseTextTheme.titleLarge,
+        letterSpacing: -0.3,
+      ),
+      titleMedium: refineTextStyle(
+        baseTextTheme.titleMedium,
+        letterSpacing: -0.25,
+      ),
+      titleSmall: refineTextStyle(
+        baseTextTheme.titleSmall,
+        letterSpacing: -0.2,
+      ),
+      bodyLarge: refineTextStyle(baseTextTheme.bodyLarge),
+      bodyMedium: refineTextStyle(baseTextTheme.bodyMedium),
+      bodySmall: refineTextStyle(baseTextTheme.bodySmall),
+      labelLarge: refineTextStyle(baseTextTheme.labelLarge),
+      labelMedium: refineTextStyle(baseTextTheme.labelMedium),
+      labelSmall: refineTextStyle(baseTextTheme.labelSmall),
+    );
+
+    final baseTheme = rawTheme.copyWith(textTheme: refinedTextTheme);
 
     if (skin.enabled &&
         skin.fontScale != null &&

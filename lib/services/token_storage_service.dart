@@ -259,12 +259,17 @@ class GradeRoundingConfig {
         '2': threshold2,
       };
 
+  static double _parseThreshold(dynamic raw, double fallback) {
+    if (raw is num) return raw.toDouble();
+    return double.tryParse(raw?.toString() ?? '') ?? fallback;
+  }
+
   factory GradeRoundingConfig.fromJson(Map<String, dynamic> json) {
     return GradeRoundingConfig(
-      threshold5: (json['5'] as num?)?.toDouble() ?? 4.50,
-      threshold4: (json['4'] as num?)?.toDouble() ?? 3.50,
-      threshold3: (json['3'] as num?)?.toDouble() ?? 2.50,
-      threshold2: (json['2'] as num?)?.toDouble() ?? 1.50,
+      threshold5: _parseThreshold(json['5'], 4.50),
+      threshold4: _parseThreshold(json['4'], 3.50),
+      threshold3: _parseThreshold(json['3'], 2.50),
+      threshold2: _parseThreshold(json['2'], 1.50),
     );
   }
 }
@@ -280,6 +285,7 @@ class UserProfilePrefs {
   static bool activeMinimalistModeEnabled = false;
   static bool activeDemoModeEnabled = false;
   static bool activeFitymaModeEnabled = false;
+  static String globalAppIconAsset = 'assets/images/tinta_icon.png';
   static CustomSkinConfig activeCustomSkin = const CustomSkinConfig();
 
   static void syncActiveGlobals(UserProfilePrefs prefs) {
@@ -290,7 +296,9 @@ class UserProfilePrefs {
     activeMinimalistModeEnabled = prefs.minimalistModeEnabled;
     activeDemoModeEnabled = prefs.demoModeEnabled;
     activeFitymaModeEnabled = prefs.fitymaModeEnabled;
+    globalAppIconAsset = prefs.activeAppIconAsset;
     activeCustomSkin = prefs.customSkinConfig;
+    UwuHelper.isEnabled = prefs.uwuModeEnabled;
     UwuHelper.isFitymaEnabled = prefs.fitymaModeEnabled;
   }
 
@@ -309,7 +317,6 @@ class UserProfilePrefs {
   final GradeRoundingConfig roundingConfig;
   final bool developerModeUnlocked;
   final bool uwuModeEnabled;
-  final bool tsundereModeEnabled;
   final bool christmasModeEnabled;
   final String appIconPreset;
   final String backgroundPreset;
@@ -377,7 +384,6 @@ class UserProfilePrefs {
     this.roundingConfig = const GradeRoundingConfig(),
     this.developerModeUnlocked = false,
     this.uwuModeEnabled = false,
-    this.tsundereModeEnabled = false,
     this.christmasModeEnabled = false,
     this.appIconPreset = 'default',
     this.backgroundPreset = 'pure_oled',
@@ -387,7 +393,7 @@ class UserProfilePrefs {
     this.transitAllowCoach = true,
     this.transitAllowTrain = true,
     this.transitAllowLocalBus = true,
-    this.walkingSpeedKmh = 4.5,
+    this.walkingSpeedKmh = 5.0,
     this.walkingDurationMinutes = 10,
     this.transitAlertBufferMinutes = 5,
     this.transitNotificationsEnabled = true,
@@ -448,6 +454,12 @@ class UserProfilePrefs {
   UserProfilePrefs withFitymaMode(bool enabled) =>
       withExtra('fitymaModeEnabled', enabled);
 
+  /// Appearance: "Fun üdvözlő üzenetek" playful greeting pool toggle.
+  bool get funGreetingsEnabled => extras['funGreetingsEnabled'] == true;
+
+  UserProfilePrefs withFunGreetings(bool enabled) =>
+      withExtra('funGreetingsEnabled', enabled);
+
   /// Developer Options: CSS-style Custom Skin Engine toggle & raw CSS variables.
   bool get customSkinEnabled => extras['customSkinEnabled'] == true;
 
@@ -471,7 +483,7 @@ class UserProfilePrefs {
     return copyWith(extras: updatedExtras);
   }
 
-  /// `true` => "Ágazati alapoktatás (9–10. évf.)", `false` => "Szakirányú oktatás".
+  /// `true` => "Ágazati alapoktatás (9-10. évf.)", `false` => "Szakirányú oktatás".
   bool get scholarshipBasicEducation => extras['scholarshipBasic'] == true;
 
   /// `technikum` or `szakkepzo`.
@@ -491,28 +503,6 @@ class UserProfilePrefs {
     final raw = extras['scholarshipTargetAverage'];
     if (raw is num) return raw.toDouble();
     return null;
-  }
-
-  /// Optional custom ARGB color override for timetable period numbers/badges
-  /// (`1.`, `2.`, ...). `null` restores the theme's default period styling.
-  int? get timetablePeriodColorValue {
-    final raw = extras['timetablePeriodColorValue'];
-    return raw is num ? raw.toInt() : null;
-  }
-
-  Color? get timetablePeriodColor {
-    final v = timetablePeriodColorValue;
-    return v == null ? null : Color(v);
-  }
-
-  UserProfilePrefs withTimetablePeriodColor(int? argb) {
-    final nextExtras = Map<String, dynamic>.from(extras);
-    if (argb == null) {
-      nextExtras.remove('timetablePeriodColorValue');
-    } else {
-      nextExtras['timetablePeriodColorValue'] = argb;
-    }
-    return copyWith(extras: nextExtras);
   }
 
   String get homeAddress => (extras['homeAddress'] as String?)?.trim() ?? '';
@@ -540,6 +530,13 @@ class UserProfilePrefs {
   String get primarySchoolStop => schoolBusStop.isNotEmpty
       ? schoolBusStop
       : (schoolTrainStation.isNotEmpty ? schoolTrainStation : schoolAddress);
+
+  /// Whether tram / metro / HÉV routes are permitted in MenetrendGO itineraries.
+  bool get transitAllowTramSubway =>
+      (extras['transitAllowTramSubway'] as bool?) ?? true;
+
+  UserProfilePrefs withTransitAllowTramSubway(bool allow) =>
+      withExtra('transitAllowTramSubway', allow);
 
   /// Per-weekday commute plan (1 = Hétfő … 5 = Péntek).
   /// Supports bidirectional keys:
@@ -656,6 +653,16 @@ class UserProfilePrefs {
     return trimmed;
   }
 
+  bool get isClassicAppIcon =>
+      appIconPreset == 'classic' ||
+      appIconPreset == 'icon_classic' ||
+      appIconPreset == '.MainActivityClassic' ||
+      appIconPreset == 'MainActivityClassic';
+
+  String get activeAppIconAsset => isClassicAppIcon
+      ? 'assets/images/tinta_icon_classic.png'
+      : 'assets/images/tinta_icon.png';
+
   UserProfilePrefs copyWith({
     String? nickname,
     bool clearNickname = false,
@@ -672,7 +679,6 @@ class UserProfilePrefs {
     GradeRoundingConfig? roundingConfig,
     bool? developerModeUnlocked,
     bool? uwuModeEnabled,
-    bool? tsundereModeEnabled,
     bool? christmasModeEnabled,
     String? appIconPreset,
     String? backgroundPreset,
@@ -709,7 +715,15 @@ class UserProfilePrefs {
     Map<String, String>? subjectCustomNames,
     Map<String, String>? teacherCustomNames,
     Map<String, dynamic>? extras,
+    bool? funGreetingsEnabled,
   }) {
+    final Map<String, dynamic> resolvedExtras;
+    if (funGreetingsEnabled != null) {
+      resolvedExtras = Map<String, dynamic>.from(extras ?? this.extras)
+        ..['funGreetingsEnabled'] = funGreetingsEnabled;
+    } else {
+      resolvedExtras = extras ?? this.extras;
+    }
     return UserProfilePrefs(
       nickname: clearNickname ? null : (nickname ?? this.nickname),
       avatarIconIndex: avatarIconIndex ?? this.avatarIconIndex,
@@ -726,7 +740,6 @@ class UserProfilePrefs {
       developerModeUnlocked:
           developerModeUnlocked ?? this.developerModeUnlocked,
       uwuModeEnabled: uwuModeEnabled ?? this.uwuModeEnabled,
-      tsundereModeEnabled: tsundereModeEnabled ?? this.tsundereModeEnabled,
       christmasModeEnabled: christmasModeEnabled ?? this.christmasModeEnabled,
       appIconPreset: appIconPreset ?? this.appIconPreset,
       backgroundPreset: backgroundPreset ?? this.backgroundPreset,
@@ -773,7 +786,7 @@ class UserProfilePrefs {
       subjectCustomColors: subjectCustomColors ?? this.subjectCustomColors,
       subjectCustomNames: subjectCustomNames ?? this.subjectCustomNames,
       teacherCustomNames: teacherCustomNames ?? this.teacherCustomNames,
-      extras: extras ?? this.extras,
+      extras: resolvedExtras,
     );
   }
 
@@ -794,7 +807,6 @@ class UserProfilePrefs {
       'roundingConfig': roundingConfig.toJson(),
       'developerModeUnlocked': developerModeUnlocked,
       'uwuModeEnabled': uwuModeEnabled,
-      'tsundereModeEnabled': tsundereModeEnabled,
       'christmasModeEnabled': christmasModeEnabled,
       'appIconPreset': appIconPreset,
       'backgroundPreset': backgroundPreset,
@@ -928,7 +940,6 @@ class UserProfilePrefs {
       roundingConfig: rounding,
       developerModeUnlocked: json['developerModeUnlocked'] == true,
       uwuModeEnabled: json['uwuModeEnabled'] == true,
-      tsundereModeEnabled: json['tsundereModeEnabled'] == true,
       christmasModeEnabled: json['christmasModeEnabled'] == true,
       appIconPreset: (json['appIconPreset'] as String?) ?? 'default',
       backgroundPreset: (json['backgroundPreset'] as String?) ?? 'pure_oled',
@@ -944,7 +955,7 @@ class UserProfilePrefs {
       transitAllowCoach: json['transitAllowCoach'] != false,
       transitAllowTrain: json['transitAllowTrain'] != false,
       transitAllowLocalBus: json['transitAllowLocalBus'] != false,
-      walkingSpeedKmh: (json['walkingSpeedKmh'] as num?)?.toDouble() ?? 4.5,
+      walkingSpeedKmh: (json['walkingSpeedKmh'] as num?)?.toDouble() ?? 5.0,
       walkingDurationMinutes:
           (json['walkingDurationMinutes'] as num?)?.toInt() ?? 10,
       transitAlertBufferMinutes:
@@ -975,7 +986,7 @@ class UserProfilePrefs {
       animatedBackdropPreset: AnimatedBackdropPreset.fromName(
         json['animatedBackdropPreset'] as String?,
       ),
-      cardOpacity: ((json['cardOpacity'] as num?)?.toDouble() ?? 0.9).clamp(0.6, 1.0),
+      cardOpacity: ((json['cardOpacity'] as num?)?.toDouble() ?? 0.9).clamp(0.0, 1.0),
       cardBlurSigma: ((json['cardBlurSigma'] as num?)?.toDouble() ?? 4.0).clamp(2.0, 8.0),
       favoriteRoute1stPeriod:
           (json['favoriteRoute1stPeriod'] as String?) ?? '',
@@ -1158,6 +1169,55 @@ class LogoutDiagnosticEntry {
   }
 }
 
+/// Single auth lifecycle event persisted in the rolling 25-entry timeline in
+/// [SharedPreferences] for debugging in Developer Options.
+class AuthEventEntry {
+  final DateTime timestamp;
+  final String caller;
+  final String action;
+  final int? httpStatus;
+  final String? errorSnippet;
+
+  const AuthEventEntry({
+    required this.timestamp,
+    required this.caller,
+    required this.action,
+    this.httpStatus,
+    this.errorSnippet,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'timestamp': timestamp.toIso8601String(),
+        'caller': caller,
+        'action': action,
+        if (httpStatus != null) 'httpStatus': httpStatus,
+        if (errorSnippet != null && errorSnippet!.isNotEmpty)
+          'errorSnippet': errorSnippet,
+      };
+
+  factory AuthEventEntry.fromJson(Map<String, dynamic> json) {
+    return AuthEventEntry(
+      timestamp: DateTime.tryParse(json['timestamp']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      caller: json['caller']?.toString() ?? 'unknown',
+      action: json['action']?.toString() ?? 'event',
+      httpStatus: json['httpStatus'] is num
+          ? (json['httpStatus'] as num).toInt()
+          : int.tryParse(json['httpStatus']?.toString() ?? ''),
+      errorSnippet: json['errorSnippet']?.toString(),
+    );
+  }
+
+  String toCompactLine() {
+    final ts = timestamp.toLocal().toIso8601String();
+    final statusPart = httpStatus != null ? ' [HTTP $httpStatus]' : '';
+    final errPart = (errorSnippet != null && errorSnippet!.trim().isNotEmpty)
+        ? ' - ${errorSnippet!.trim()}'
+        : '';
+    return '[$ts] $caller :: $action$statusPart$errPart';
+  }
+}
+
 /// Manages encrypted persistence of OAuth2 tokens and user profile preferences
 /// via [FlutterSecureStorage].
 class TokenStorageService {
@@ -1181,7 +1241,6 @@ class TokenStorageService {
   static const _keyRoundingConfig = 'kreta_rounding_config';
   static const _keyDeveloperModeUnlocked = 'kreta_dev_mode_unlocked';
   static const _keyUwuModeEnabled = 'kreta_uwu_mode_enabled';
-  static const _keyTsundereModeEnabled = 'kreta_tsundere_mode_enabled';
   static const _keyChristmasModeEnabled = 'kreta_christmas_mode_enabled';
   static const _keyAppIconPreset = 'kreta_app_icon_preset';
   static const _keyBackgroundPreset = 'kreta_background_preset';
@@ -1222,13 +1281,34 @@ class TokenStorageService {
   static const String sharedPrefsProfileKey = 'tinta_profile_prefs_v1';
   static const String _keySharedPrefsSessionBackup = 'kreta_session_backup_v2';
   static const String lastLogoutReasonKey = 'last_logout_reason';
+  static const String authEventTimelineKey = 'tinta_auth_event_timeline_v1';
+  static const int maxAuthEventTimelineEntries = 25;
   static const String _keyHasEverLoggedIn = 'tinta_has_ever_logged_in_v1';
 
   static Completer<bool>? _refreshCompleter;
+  static Object? _lastRefreshError;
+  static int _sessionGeneration = 0;
   static StoredSession? _lastRefreshedSession;
   static StoredSession? get latestSession => _lastRefreshedSession;
   static final ValueNotifier<StoredSession?> sessionNotifier =
       ValueNotifier<StoredSession?>(null);
+
+  /// Non-null whenever the KRÉTA auth server has permanently rejected our
+  /// refresh token (`invalid_grant`) after retries. Under our Zero Auto-Kick
+  /// Policy, the user stays inside the app viewing cached data and sees a
+  /// non-destructive re-authentication banner instead of being kicked out.
+  static final ValueNotifier<String?> reauthRequiredNotifier =
+      ValueNotifier<String?>(null);
+
+  static void markReauthRequired(String reason) {
+    reauthRequiredNotifier.value = reason;
+  }
+
+  static void clearReauthRequired() {
+    if (reauthRequiredNotifier.value != null) {
+      reauthRequiredNotifier.value = null;
+    }
+  }
 
   /// Optional external fallback loader (registered on Android by
   /// `WearSyncService`) to recover rotated tokens cached natively in
@@ -1238,6 +1318,22 @@ class TokenStorageService {
   /// Delay before retrying a suspected `invalid_grant` once to rule out
   /// concurrent rotation or transient IdP races.
   static Duration invalidGrantRetryDelay = const Duration(milliseconds: 400);
+
+  /// Exponential backoff delays for up to 3 transient refresh retries
+  /// (network failures, timeouts, 429, 5xx, or non-`invalid_grant` glitches).
+  /// Configurable in unit tests for deterministic fast execution.
+  static List<Duration> transientRefreshRetryDelays = const [
+    Duration(seconds: 1),
+    Duration(seconds: 3),
+    Duration(seconds: 5),
+  ];
+
+  /// Backoff delays used when Android KeyStore / EncryptedSharedPreferences
+  /// throws or returns transient `null` during Doze/background wakeup.
+  static List<Duration> keyStoreRetryDelays = const [
+    Duration(milliseconds: 150),
+    Duration(milliseconds: 400),
+  ];
 
   /// Last transient storage exception encountered during [loadSession], if any.
   static String? lastStorageReadError;
@@ -1265,6 +1361,83 @@ class TokenStorageService {
         : scrubbed;
   }
 
+  /// Appends an entry to the rolling 25-entry Auth Event Timeline persisted in
+  /// [SharedPreferences] so Developer Options can inspect and copy the exact
+  /// sequence of auth actions without ever leaking raw tokens.
+  static Future<void> recordAuthEvent({
+    required String caller,
+    required String action,
+    int? httpStatus,
+    String? errorSnippet,
+  }) async {
+    final entry = AuthEventEntry(
+      timestamp: DateTime.now(),
+      caller: caller,
+      action: action,
+      httpStatus: httpStatus,
+      errorSnippet: _sanitizeDiagnosticBody(errorSnippet),
+    );
+    try {
+      final sp = await _safeSharedPrefs();
+      if (sp == null) return;
+      final existing = <Map<String, dynamic>>[];
+      final raw = sp.getString(authEventTimelineKey);
+      if (raw != null && raw.trim().isNotEmpty) {
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is List) {
+            for (final item in decoded) {
+              if (item is Map) {
+                existing.add(Map<String, dynamic>.from(item));
+              }
+            }
+          }
+        } catch (_) {}
+      }
+      existing.add(entry.toJson());
+      final trimmed = existing.length > maxAuthEventTimelineEntries
+          ? existing.sublist(existing.length - maxAuthEventTimelineEntries)
+          : existing;
+      await sp.setString(authEventTimelineKey, jsonEncode(trimmed));
+    } catch (_) {
+      // Ignore in unmocked headless unit tests.
+    }
+  }
+
+  /// Loads the persisted rolling Auth Event Timeline (newest last, capped at 25).
+  static Future<List<AuthEventEntry>> loadAuthEventTimeline() async {
+    try {
+      final sp = await _safeSharedPrefs();
+      if (sp == null) return const [];
+      final raw = sp.getString(authEventTimelineKey);
+      if (raw == null || raw.trim().isEmpty) return const [];
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      final out = <AuthEventEntry>[];
+      for (final item in decoded) {
+        if (item is Map) {
+          out.add(AuthEventEntry.fromJson(Map<String, dynamic>.from(item)));
+        }
+      }
+      return out;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static Future<void> clearAuthEventTimeline() async {
+    try {
+      final sp = await _safeSharedPrefs();
+      if (sp == null) return;
+      await sp.remove(authEventTimelineKey);
+    } catch (_) {}
+  }
+
+  static String formatAuthEventTimeline(List<AuthEventEntry> entries) {
+    if (entries.isEmpty) return 'Nincs rögzített hitelesítési esemény.';
+    return entries.reversed.map((e) => e.toCompactLine()).join('\n');
+  }
+
   /// Persists a timestamped `last_logout_reason` entry in [SharedPreferences]
   /// so Developer Options can display the exact root cause of any logout.
   static Future<void> recordLogoutReason({
@@ -1287,6 +1460,12 @@ class TokenStorageService {
     } catch (_) {
       // Ignore in unmocked unit tests.
     }
+    await recordAuthEvent(
+      caller: caller,
+      action: 'logout_reason: $reason',
+      httpStatus: httpStatusCode,
+      errorSnippet: errorBody,
+    );
   }
 
   static Future<LogoutDiagnosticEntry?> loadLastLogoutReason() async {
@@ -1385,6 +1564,12 @@ class TokenStorageService {
   Future<StoredSession?> _loadSessionBackupFromSharedPrefs() async {
     try {
       final sp = await SharedPreferences.getInstance();
+      // CRITICAL: Reload from disk so native Kotlin writes from
+      // `WearSessionBridge.ingestRotatedSessionFromWatch` into
+      // `FlutterSharedPreferences` are immediately visible to Dart!
+      try {
+        await sp.reload();
+      } catch (_) {}
       final raw = sp.getString(_keySharedPrefsSessionBackup);
       if (raw == null || raw.isEmpty) return null;
       final decoded = jsonDecode(raw);
@@ -1413,11 +1598,7 @@ class TokenStorageService {
     }
   }
 
-  Future<void> saveSession(StoredSession session) async {
-    _lastRefreshedSession = session;
-    sessionNotifier.value = session;
-    await _saveSessionBackupToSharedPrefs(session);
-    await setPreviousLoginMarker(true);
+  Future<void> _writeSessionToSecureStorage(StoredSession session) async {
     // Write sequentially to avoid Android EncryptedSharedPreferences concurrency races.
     final entries = <MapEntry<String, String>>[
       MapEntry(_keyAccessToken, session.accessToken),
@@ -1430,8 +1611,23 @@ class TokenStorageService {
     for (final entry in entries) {
       try {
         await _storage.write(key: entry.key, value: entry.value);
-      } catch (_) {}
+      } catch (e) {
+        lastStorageReadError = e.toString();
+      }
     }
+  }
+
+  Future<void> saveSession(StoredSession session) async {
+    _lastRefreshedSession = session;
+    sessionNotifier.value = session;
+    clearReauthRequired();
+    await _saveSessionBackupToSharedPrefs(session);
+    await setPreviousLoginMarker(true);
+    await _writeSessionToSecureStorage(session);
+    await recordAuthEvent(
+      caller: 'TokenStorageService.saveSession',
+      action: 'session_saved (${session.instituteCode})',
+    );
   }
 
   StoredSession? _parseSessionFromMap(Map<String, String?> values) {
@@ -1463,38 +1659,65 @@ class TokenStorageService {
     );
   }
 
+  Future<StoredSession?> _readAuthKeysIndividually() async {
+    final map = <String, String?>{};
+    for (final key in const [
+      _keyAccessToken,
+      _keyRefreshToken,
+      _keyIdToken,
+      _keyInstituteCode,
+      _keyUserName,
+      _keyExpiresAt,
+    ]) {
+      try {
+        map[key] = await _storage.read(key: key);
+      } catch (keyErr) {
+        lastStorageReadError = keyErr.toString();
+      }
+    }
+    return _parseSessionFromMap(map);
+  }
+
   Future<StoredSession?> _readSessionFromSecureStorageResilient() async {
     lastStorageReadError = null;
     try {
       final values = await _storage.readAll();
-      return _parseSessionFromMap(values);
+      final parsed = _parseSessionFromMap(values);
+      if (parsed != null) return parsed;
+      // On Android Doze/KeyStore hiccups, readAll() can transiently return an
+      // empty map without throwing. If the user was previously logged in,
+      // retry reading individual auth keys before giving up on KeyStore.
+      if (await hadPreviousLogin()) {
+        for (final delay in keyStoreRetryDelays) {
+          if (delay > Duration.zero) {
+            await Future<void>.delayed(delay);
+          }
+          final retried = await _readAuthKeysIndividually();
+          if (retried != null) return retried;
+        }
+      }
+      return null;
     } catch (e) {
       lastStorageReadError = e.toString();
+      await recordAuthEvent(
+        caller: 'TokenStorageService.loadSession',
+        action: 'keystore_read_error_retry',
+        errorSnippet: e.toString(),
+      );
       // Never wipe credentials on transient Android KeyStore / EncryptedSharedPreferences
-      // exceptions. Wait briefly and read only the 6 auth keys individually so an
-      // unrelated corrupted preference entry cannot mask valid tokens.
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      try {
-        final map = <String, String?>{};
-        for (final key in const [
-          _keyAccessToken,
-          _keyRefreshToken,
-          _keyIdToken,
-          _keyInstituteCode,
-          _keyUserName,
-          _keyExpiresAt,
-        ]) {
-          try {
-            map[key] = await _storage.read(key: key);
-          } catch (keyErr) {
-            lastStorageReadError = keyErr.toString();
-          }
+      // exceptions. Retry reading only the 6 auth keys individually with backoff.
+      for (final delay in keyStoreRetryDelays) {
+        if (delay > Duration.zero) {
+          await Future<void>.delayed(delay);
         }
-        return _parseSessionFromMap(map);
-      } catch (retryErr) {
-        lastStorageReadError = retryErr.toString();
-        return null;
+        try {
+          final retried = await _readAuthKeysIndividually();
+          if (retried != null) return retried;
+        } catch (retryErr) {
+          lastStorageReadError = retryErr.toString();
+        }
       }
+      return null;
     }
   }
 
@@ -1523,12 +1746,27 @@ class TokenStorageService {
     ]);
     if (chosen != null) {
       _lastRefreshedSession = chosen;
+      if (sessionNotifier.value?.accessToken != chosen.accessToken ||
+          sessionNotifier.value?.refreshToken != chosen.refreshToken ||
+          sessionNotifier.value?.expiresAt != chosen.expiresAt) {
+        sessionNotifier.value = chosen;
+      }
       final needsBackupBackfill = fromBackup == null ||
           chosen.refreshToken != fromBackup.refreshToken ||
           chosen.accessToken != fromBackup.accessToken ||
           chosen.expiresAt.isAfter(fromBackup.expiresAt);
       if (needsBackupBackfill) {
         await _saveSessionBackupToSharedPrefs(chosen);
+      }
+      // If we recovered a fresher token from SharedPreferences backup or native
+      // WearSessionBridge (e.g. after Watch token rotation or KeyStore hiccup),
+      // backfill FlutterSecureStorage so all stores converge immediately.
+      final needsSecureBackfill = fromSecure == null ||
+          chosen.refreshToken != fromSecure.refreshToken ||
+          chosen.accessToken != fromSecure.accessToken ||
+          chosen.expiresAt.isAfter(fromSecure.expiresAt);
+      if (needsSecureBackfill) {
+        await _writeSessionToSecureStorage(chosen);
       }
       await setPreviousLoginMarker(true);
     }
@@ -1550,12 +1788,28 @@ class TokenStorageService {
     return errorCode == 'invalid_grant' || bodyLower.contains('invalid_grant');
   }
 
+  static bool _isRetryableTransientStatus(int statusCode) {
+    return statusCode == 408 ||
+        statusCode == 425 ||
+        statusCode == 429 ||
+        statusCode == 500 ||
+        statusCode == 502 ||
+        statusCode == 503 ||
+        statusCode == 504;
+  }
+
   /// Transparently refreshes the OAuth2 access & refresh tokens using a strict
   /// single-flight lock (`_refreshCompleter`) so concurrent callers never race
-  /// KRÉTA's single-use refresh token rotation. Transient network / 429 / 5xx /
-  /// KeyStore failures raise regular exceptions rather than [InvalidGrantException].
-  /// Only a retry-verified permanent `invalid_grant` from the auth server throws
-  /// [VerifiedInvalidGrantException].
+  /// KRÉTA's single-use refresh token rotation.
+  ///
+  /// - Retries up to 3 times with exponential backoff (`1s`, `3s`, `5s`) on
+  ///   transient network, timeout, 429, or 5xx KRÉTA server glitches.
+  /// - Cross-checks local & external token stores (including reloaded
+  ///   SharedPreferences and native WearSessionBridge) before confirming
+  ///   `invalid_grant`.
+  /// - On confirmed permanent `invalid_grant`, marks [reauthRequiredNotifier]
+  ///   WITHOUT wiping tokens or local cached data, then throws
+  ///   [VerifiedInvalidGrantException].
   Future<StoredSession> refreshToken({
     StoredSession? session,
     http.Client? httpClient,
@@ -1564,7 +1818,7 @@ class TokenStorageService {
     final existingCompleter = _refreshCompleter;
     if (existingCompleter != null) {
       final succeeded = await existingCompleter.future.timeout(
-        const Duration(seconds: 15),
+        const Duration(seconds: 45),
         onTimeout: () => false,
       );
       StoredSession? storedAfterWait;
@@ -1576,17 +1830,30 @@ class TokenStorageService {
         _lastRefreshedSession,
         session,
       ]);
-      if (succeeded && latest != null) {
+      if (succeeded &&
+          latest != null &&
+          (!latest.isExpired ||
+              session == null ||
+              latest.accessToken != session.accessToken ||
+              latest.refreshToken != session.refreshToken)) {
         return latest;
       }
       if (latest != null && !latest.isExpired) {
         return latest;
+      }
+      final leaderErr = _lastRefreshError;
+      if (leaderErr is VerifiedInvalidGrantException) {
+        throw leaderErr;
       }
       throw Exception('Concurrent token refresh did not succeed.');
     }
 
     final completer = Completer<bool>();
     _refreshCompleter = completer;
+    _lastRefreshError = null;
+    final startGeneration = _sessionGeneration;
+    final ownedClient = httpClient == null;
+    final client = httpClient ?? http.Client();
 
     try {
       StoredSession? stored;
@@ -1611,6 +1878,7 @@ class TokenStorageService {
           !active.isExpired) {
         _lastRefreshedSession = active;
         sessionNotifier.value = active;
+        clearReauthRequired();
         if (!completer.isCompleted) {
           completer.complete(true);
         }
@@ -1619,14 +1887,17 @@ class TokenStorageService {
 
       // Never treat a transient local storage read miss as a server invalid_grant.
       if (active == null || active.refreshToken.trim().isEmpty) {
+        await recordAuthEvent(
+          caller: 'TokenStorageService.refreshToken',
+          action: 'refresh_skipped_no_local_token',
+          errorSnippet: lastStorageReadError ?? 'none',
+        );
         throw Exception(
           'Refresh token unavailable locally (storageError: ${lastStorageReadError ?? 'none'}).',
         );
       }
 
-      final client = httpClient ?? http.Client();
-
-      Future<http.Response> postRefresh(
+      Future<http.Response> postRefreshOnce(
         String instituteCode,
         String refreshTokenStr,
       ) {
@@ -1649,8 +1920,65 @@ class TokenStorageService {
             .timeout(const Duration(seconds: 12));
       }
 
+      /// Posts a refresh request with up to 3 exponential-backoff retries
+      /// (`1s`, `3s`, `5s`) for transient network / timeout / 429 / 5xx errors.
+      Future<http.Response> postRefreshWithBackoff(
+        String instituteCode,
+        String refreshTokenStr,
+      ) async {
+        final maxRetries = transientRefreshRetryDelays.length;
+        Object? lastError;
+        http.Response? lastResponse;
+        for (var attempt = 0; attempt <= maxRetries; attempt++) {
+          if (attempt > 0) {
+            final delay = transientRefreshRetryDelays[attempt - 1];
+            await recordAuthEvent(
+              caller: 'TokenStorageService.refreshToken',
+              action: 'transient_retry_$attempt/$maxRetries',
+              httpStatus: lastResponse?.statusCode,
+              errorSnippet: lastError?.toString() ?? lastResponse?.body,
+            );
+            if (delay > Duration.zero) {
+              await Future<void>.delayed(delay);
+            }
+            // Before retrying, check if another component rotated the token.
+            final fresher = await loadSession();
+            if (fresher != null &&
+                fresher.refreshToken != refreshTokenStr &&
+                !fresher.isExpired) {
+              return http.Response(
+                jsonEncode({
+                  'access_token': fresher.accessToken,
+                  'refresh_token': fresher.refreshToken,
+                  'id_token': fresher.idToken,
+                  'expires_in': fresher.expiresAt
+                      .difference(DateTime.now())
+                      .inSeconds
+                      .clamp(60, 86400),
+                  'token_type': 'Bearer',
+                }),
+                200,
+              );
+            }
+          }
+          try {
+            final resp = await postRefreshOnce(instituteCode, refreshTokenStr);
+            lastResponse = resp;
+            lastError = null;
+            if (!_isRetryableTransientStatus(resp.statusCode)) {
+              return resp;
+            }
+          } catch (e) {
+            lastError = e;
+            lastResponse = null;
+          }
+        }
+        if (lastResponse != null) return lastResponse;
+        throw lastError ?? Exception('Transient token refresh failed.');
+      }
+
       var effectiveActive = active;
-      var response = await postRefresh(
+      var response = await postRefreshWithBackoff(
         effectiveActive.instituteCode,
         effectiveActive.refreshToken,
       );
@@ -1661,16 +1989,22 @@ class TokenStorageService {
         final latestCheck = await loadSession();
         if (latestCheck != null &&
             latestCheck.refreshToken != effectiveActive.refreshToken) {
+          await recordAuthEvent(
+            caller: 'TokenStorageService.refreshToken',
+            action: 'recovered_rotated_token_from_storage',
+            httpStatus: response.statusCode,
+          );
           if (!latestCheck.isExpired) {
             _lastRefreshedSession = latestCheck;
             sessionNotifier.value = latestCheck;
+            clearReauthRequired();
             if (!completer.isCompleted) {
               completer.complete(true);
             }
             return latestCheck;
           }
           effectiveActive = latestCheck;
-          response = await postRefresh(
+          response = await postRefreshWithBackoff(
             effectiveActive.instituteCode,
             effectiveActive.refreshToken,
           );
@@ -1679,16 +2013,28 @@ class TokenStorageService {
 
       if (_isExplicitInvalidGrantResponse(response)) {
         // 2. Wait briefly to let any in-flight Watch/background sync settle, re-check
-        // storage, and retry once before confirming permanent invalid_grant.
+        // storage (including reloaded SharedPreferences + native WearSessionBridge),
+        // and retry once before confirming permanent invalid_grant.
+        await recordAuthEvent(
+          caller: 'TokenStorageService.refreshToken',
+          action: 'suspected_invalid_grant_settling_retry',
+          httpStatus: response.statusCode,
+          errorSnippet: response.body,
+        );
         if (invalidGrantRetryDelay > Duration.zero) {
           await Future<void>.delayed(invalidGrantRetryDelay);
         }
         final settledCheck = await loadSession();
         if (settledCheck != null &&
             settledCheck.refreshToken != effectiveActive.refreshToken) {
+          await recordAuthEvent(
+            caller: 'TokenStorageService.refreshToken',
+            action: 'recovered_rotated_token_after_settle',
+          );
           if (!settledCheck.isExpired) {
             _lastRefreshedSession = settledCheck;
             sessionNotifier.value = settledCheck;
+            clearReauthRequired();
             if (!completer.isCompleted) {
               completer.complete(true);
             }
@@ -1696,7 +2042,7 @@ class TokenStorageService {
           }
           effectiveActive = settledCheck;
         }
-        response = await postRefresh(
+        response = await postRefreshWithBackoff(
           effectiveActive.instituteCode,
           effectiveActive.refreshToken,
         );
@@ -1704,24 +2050,51 @@ class TokenStorageService {
 
       if (response.statusCode == 400 || response.statusCode == 401) {
         if (_isExplicitInvalidGrantResponse(response)) {
-          throw VerifiedInvalidGrantException(
+          final verifiedErr = VerifiedInvalidGrantException(
             httpStatusCode: response.statusCode,
             responseBody: response.body,
             caller: 'TokenStorageService.refreshToken',
           );
+          _lastRefreshError = verifiedErr;
+          // ZERO AUTO-KICK: mark re-auth required WITHOUT wiping tokens or cache.
+          markReauthRequired(
+            'A KRÉTA munkamenet lejárt (HTTP ${response.statusCode}, invalid_grant).',
+          );
+          await recordAuthEvent(
+            caller: 'TokenStorageService.refreshToken',
+            action: 'verified_invalid_grant_reauth_required',
+            httpStatus: response.statusCode,
+            errorSnippet: response.body,
+          );
+          throw verifiedErr;
         }
+        await recordAuthEvent(
+          caller: 'TokenStorageService.refreshToken',
+          action: 'refresh_transient_rejected',
+          httpStatus: response.statusCode,
+          errorSnippet: response.body,
+        );
         throw Exception(
           'Token refresh rejected transiently (HTTP ${response.statusCode}): ${response.body}',
         );
       }
       if (response.statusCode != 200) {
+        await recordAuthEvent(
+          caller: 'TokenStorageService.refreshToken',
+          action: 'refresh_transient_http_error',
+          httpStatus: response.statusCode,
+          errorSnippet: response.body,
+        );
         throw Exception(
           'Transient token refresh failed (HTTP ${response.statusCode}): ${response.body}',
         );
       }
 
-      final jsonMap =
-          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      final decodedBody = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decodedBody is! Map) {
+        throw Exception('Unexpected non-JSON-object token refresh response.');
+      }
+      final jsonMap = Map<String, dynamic>.from(decodedBody);
       final rawGrant = TokenGrantResponse.fromJson(jsonMap);
       final effectiveGrant = rawGrant.refreshToken.trim().isEmpty
           ? TokenGrantResponse(
@@ -1739,12 +2112,34 @@ class TokenStorageService {
         fallbackIdToken: effectiveActive.idToken,
         fallbackUserName: effectiveActive.userName,
       );
+
+      // Guard against session resurrection if user explicitly logged out while
+      // this refresh was in flight!
+      if (_sessionGeneration != startGeneration) {
+        await recordAuthEvent(
+          caller: 'TokenStorageService.refreshToken',
+          action: 'refresh_discarded_after_explicit_logout',
+        );
+        throw Exception('Session was explicitly cleared during token refresh.');
+      }
+
       await saveSession(refreshed);
+      await recordAuthEvent(
+        caller: 'TokenStorageService.refreshToken',
+        action: 'refresh_succeeded',
+        httpStatus: 200,
+      );
       if (!completer.isCompleted) {
         completer.complete(true);
       }
       return refreshed;
+    } catch (e) {
+      _lastRefreshError = e;
+      rethrow;
     } finally {
+      if (ownedClient) {
+        client.close();
+      }
       if (!completer.isCompleted) {
         completer.complete(false);
       }
@@ -1757,6 +2152,9 @@ class TokenStorageService {
   /// Clears only the authentication tokens while preserving all user
   /// preferences, colors, nicknames, subject renames, rounding configs, and
   /// the diagnostic `last_logout_reason` record.
+  ///
+  /// Under our Zero Auto-Kick Policy, this should ONLY be invoked by the
+  /// user's explicit "Kijelentkezés" action.
   Future<void> clearSession({
     String caller = 'TokenStorageService.clearSession',
     String reason = 'Munkamenet törölve',
@@ -1764,6 +2162,8 @@ class TokenStorageService {
     String? errorBody,
     bool isUserInitiated = false,
   }) async {
+    _sessionGeneration++;
+    clearReauthRequired();
     final recentlyRecorded = _lastLogoutRecordedAt != null &&
         DateTime.now().difference(_lastLogoutRecordedAt!).inSeconds < 2;
     if (!recentlyRecorded) {
@@ -1772,6 +2172,13 @@ class TokenStorageService {
         reason: reason,
         httpStatusCode: httpStatusCode,
         errorBody: errorBody,
+      );
+    } else {
+      await recordAuthEvent(
+        caller: caller,
+        action: isUserInitiated ? 'explicit_user_logout' : 'session_cleared',
+        httpStatus: httpStatusCode,
+        errorSnippet: reason,
       );
     }
     if (isUserInitiated) {
@@ -1882,7 +2289,6 @@ class TokenStorageService {
         showCancelledRaw == null ? true : (showCancelledRaw == 'true');
     final devUnlocked = values[_keyDeveloperModeUnlocked] == 'true';
     final uwuEnabled = values[_keyUwuModeEnabled] == 'true';
-    final tsundereEnabled = values[_keyTsundereModeEnabled] == 'true';
     final christmasEnabled = values[_keyChristmasModeEnabled] == 'true';
     final appIconPreset = values[_keyAppIconPreset] ?? 'default';
     final backgroundPreset = values[_keyBackgroundPreset] ?? 'pure_oled';
@@ -1906,7 +2312,7 @@ class TokenStorageService {
     final transitAllowLocalBus =
         values[_keyTransitAllowLocalBus] == null || values[_keyTransitAllowLocalBus] == 'true';
     final walkingSpeedKmh =
-        double.tryParse(values[_keyWalkingSpeedKmh] ?? '') ?? 4.5;
+        double.tryParse(values[_keyWalkingSpeedKmh] ?? '') ?? 5.0;
     final walkingDurationMinutes =
         int.tryParse(values[_keyWalkingDurationMinutes] ?? '') ?? 10;
     final transitAlertBufferMinutes =
@@ -1920,7 +2326,6 @@ class TokenStorageService {
         values[_keyFavoriteRoute2ndPeriod] ?? '';
 
     UwuHelper.isEnabled = uwuEnabled;
-    UwuHelper.isTsundereEnabled = tsundereEnabled;
     UserProfilePrefs.activeModalCloseMode = modalCloseMode;
 
     final Map<int, int> gradeColors = Map<int, int>.from(
@@ -2020,7 +2425,6 @@ class TokenStorageService {
       roundingConfig: rounding,
       developerModeUnlocked: devUnlocked,
       uwuModeEnabled: uwuEnabled,
-      tsundereModeEnabled: tsundereEnabled,
       christmasModeEnabled: christmasEnabled,
       appIconPreset: appIconPreset,
       backgroundPreset: backgroundPreset,
@@ -2059,7 +2463,7 @@ class TokenStorageService {
         values[_keyAnimatedBackdropPreset],
       ),
       cardOpacity:
-          (double.tryParse(values[_keyCardOpacity] ?? '') ?? 0.9).clamp(0.6, 1.0),
+          (double.tryParse(values[_keyCardOpacity] ?? '') ?? 0.9).clamp(0.0, 1.0),
       cardBlurSigma:
           (double.tryParse(values[_keyCardBlurSigma] ?? '') ?? 4.0).clamp(2.0, 8.0),
       favoriteRoute1stPeriod: favoriteRoute1stPeriod,
@@ -2088,7 +2492,6 @@ class TokenStorageService {
 
   Future<void> saveProfilePrefs(UserProfilePrefs prefs) async {
     UwuHelper.isEnabled = prefs.uwuModeEnabled;
-    UwuHelper.isTsundereEnabled = prefs.tsundereModeEnabled;
     UserProfilePrefs.syncActiveGlobals(prefs);
     await saveProfilePrefsToSharedPrefs(prefs);
 
@@ -2127,7 +2530,6 @@ class TokenStorageService {
           prefs.developerModeUnlocked.toString(),
         ),
         MapEntry(_keyUwuModeEnabled, prefs.uwuModeEnabled.toString()),
-        MapEntry(_keyTsundereModeEnabled, prefs.tsundereModeEnabled.toString()),
         MapEntry(_keyChristmasModeEnabled, prefs.christmasModeEnabled.toString()),
         MapEntry(_keyAppIconPreset, prefs.appIconPreset),
         MapEntry(_keyBackgroundPreset, prefs.backgroundPreset),

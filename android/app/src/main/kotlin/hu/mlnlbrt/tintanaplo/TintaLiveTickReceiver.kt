@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import hu.mlnlbrt.tintanaplo.TintaLiveLessonResolver.LiveLessonState
 
 /**
@@ -17,50 +18,64 @@ import hu.mlnlbrt.tintanaplo.TintaLiveLessonResolver.LiveLessonState
  */
 class TintaLiveTickReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        refreshAndSchedule(context)
+        runCatching { refreshAndSchedule(context) }
     }
 
     companion object {
         private const val TICK_REQUEST_CODE = 7202
 
         fun triggerBroadcastUpdate(context: Context) {
-            val intent = Intent(context, TintaLiveTickReceiver::class.java).apply {
-                action = TintaLiveLessonResolver.ACTION_TINTA_LIVE_UPDATE
+            runCatching {
+                val intent = Intent(context, TintaLiveTickReceiver::class.java).apply {
+                    action = TintaLiveLessonResolver.ACTION_TINTA_LIVE_UPDATE
+                }
+                context.sendBroadcast(intent)
             }
-            context.sendBroadcast(intent)
         }
 
         fun refreshAndSchedule(context: Context) {
-            val state = TintaLiveLessonResolver.resolve(context)
-            TintaWidgetRenderer.updateAllWidgets(context, state)
-            TintaLiveActivityManager.syncNotification(context, state)
-            scheduleNextTickIfNeeded(context, state)
+            runCatching {
+                val state = TintaLiveLessonResolver.resolve(context)
+                TintaWidgetRenderer.updateAllWidgets(context, state)
+                TintaLiveActivityManager.syncNotification(context, state)
+                scheduleNextTickIfNeeded(context, state)
+            }
         }
 
         fun scheduleNextTickIfNeeded(context: Context, state: LiveLessonState) {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val pendingIntent = buildTickPendingIntent(context)
-            alarmManager.cancel(pendingIntent)
+            runCatching {
+                val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                val pendingIntent = buildTickPendingIntent(context)
+                alarmManager.cancel(pendingIntent)
 
-            val hasConsumers = state.liveActivityEnabled || TintaWidgetRenderer.hasAnyActiveWidgets(context)
-            if (!hasConsumers || !state.hasSyncedData) {
-                return
-            }
-
-            val nextTriggerMs: Long? = when {
-                state.shouldTickPerMinute -> {
-                    // Align cleanly to the start of the next wall-clock minute (+250ms slack).
-                    ((state.nowMs / 60_000L) + 1L) * 60_000L + 250L
+                val hasConsumers = state.liveActivityEnabled || TintaWidgetRenderer.hasAnyActiveWidgets(context)
+                if (!hasConsumers || !state.hasSyncedData) {
+                    return
                 }
-                else -> state.nextWakeTriggerAtMs
-            }
 
-            if (nextTriggerMs != null && nextTriggerMs > state.nowMs) {
-                alarmManager.setAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    nextTriggerMs,
-                    pendingIntent,
-                )
+                val nextTriggerMs: Long? = when {
+                    state.shouldTickPerMinute -> {
+                        // Align cleanly to the start of the next wall-clock minute (+250ms slack).
+                        ((state.nowMs / 60_000L) + 1L) * 60_000L + 250L
+                    }
+                    else -> state.nextWakeTriggerAtMs
+                }
+
+                if (nextTriggerMs != null && nextTriggerMs > state.nowMs) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        alarmManager.setAndAllowWhileIdle(
+                            AlarmManager.RTC_WAKEUP,
+                            nextTriggerMs,
+                            pendingIntent,
+                        )
+                    } else {
+                        alarmManager.set(
+                            AlarmManager.RTC_WAKEUP,
+                            nextTriggerMs,
+                            pendingIntent,
+                        )
+                    }
+                }
             }
         }
 

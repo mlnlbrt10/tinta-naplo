@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import '../services/token_storage_service.dart';
+import '../utils/uwu_helper.dart';
 
 enum TintaToastType {
   info,
@@ -168,6 +169,7 @@ class _TintaToastOverlay extends StatefulWidget {
 class _TintaToastOverlayState extends State<_TintaToastOverlay>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
+  late final CurvedAnimation _curved;
   late final Animation<double> _fade;
   late final Animation<Offset> _slide;
   Timer? _dismissTimer;
@@ -182,16 +184,16 @@ class _TintaToastOverlayState extends State<_TintaToastOverlay>
       duration: const Duration(milliseconds: 220),
       reverseDuration: const Duration(milliseconds: 180),
     );
-    final curved = CurvedAnimation(
+    _curved = CurvedAnimation(
       parent: _controller,
       curve: Curves.easeOutCubic,
       reverseCurve: Curves.easeInCubic,
     );
-    _fade = curved;
+    _fade = _curved;
     _slide = Tween<Offset>(
       begin: const Offset(0, -24),
       end: Offset.zero,
-    ).animate(curved);
+    ).animate(_curved);
 
     _controller.forward();
     _dismissTimer = Timer(widget.duration, _dismissWithAnimation);
@@ -213,6 +215,7 @@ class _TintaToastOverlayState extends State<_TintaToastOverlay>
   void dispose() {
     _dismissTimer?.cancel();
     _dismissTimer = null;
+    _curved.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -279,7 +282,7 @@ class _TintaToastOverlayState extends State<_TintaToastOverlay>
           const SizedBox(width: 10),
           Flexible(
             child: Text(
-              widget.message,
+              uwu(widget.message),
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -314,7 +317,7 @@ class _TintaToastOverlayState extends State<_TintaToastOverlay>
                   ),
                 ),
                 child: Text(
-                  widget.actionLabel!,
+                  uwuLabel(widget.actionLabel!),
                   style: TextStyle(
                     color: accent,
                     fontSize: 12,

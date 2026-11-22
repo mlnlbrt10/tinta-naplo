@@ -32,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
@@ -92,6 +93,12 @@ class WearRemoteAuthManager private constructor(context: Context) :
 
     private val _dashboardSyncEpoch = MutableStateFlow(0L)
     val dashboardSyncEpoch: StateFlow<Long> = _dashboardSyncEpoch.asStateFlow()
+
+    private val _logoutEpoch = MutableStateFlow(0L)
+    val logoutEpoch: StateFlow<Long> = _logoutEpoch.asStateFlow()
+
+    @Volatile
+    private var lastConsumedDashboardSyncMs: Long = 0L
 
     fun startForegroundListening() {
         try {
@@ -218,14 +225,16 @@ class WearRemoteAuthManager private constructor(context: Context) :
 
     /**
      * Pushes a rotated KRÉTA session refreshed on the watch back to the paired
-     * phone immediately via Wearable DataClient & MessageClient so the phone
-     * never attempts to reuse an already-rotated single-use refresh_token.
+     * phone immediately via Wearable DataClient & MessageClient, suspending until
+     * both handoff calls complete (bounded to 6s) so WorkManager / Wear Doze
+     * never freezes the process before the rotated single-use refresh_token
+     * reaches the phone.
      */
-    fun pushRefreshedSessionToPhone(session: StoredSession) {
+    suspend fun pushRefreshedSessionToPhoneSuspend(session: StoredSession) {
         if (session.refreshToken.isBlank() || session.instituteCode.isBlank()) return
-        scope.launch {
-            val nowMs = System.currentTimeMillis()
-            runCatching {
+        val nowMs = System.currentTimeMillis()
+        withTimeoutOrNull(6_000L) {
+            try {
                 val request = PutDataMapRequest.create(WEAR_PATH_WATCH_TOKEN_SYNC).apply {
                     dataMap.putString("access_token", session.accessToken)
                     dataMap.putString("refresh_token", session.refreshToken)
@@ -236,8 +245,11 @@ class WearRemoteAuthManager private constructor(context: Context) :
                     dataMap.putLong("synced_at_ms", nowMs)
                 }.asPutDataRequest().setUrgent()
                 Wearable.getDataClient(appContext).putDataItem(request).await()
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
             }
-            runCatching {
+            try {
                 val payload = JSONObject().apply {
                     put("accessToken", session.accessToken)
                     put("refreshToken", session.refreshToken)
@@ -250,19 +262,54 @@ class WearRemoteAuthManager private constructor(context: Context) :
                 val nodes = Wearable.getNodeClient(appContext).connectedNodes.await()
                 val msgClient = Wearable.getMessageClient(appContext)
                 for (node in nodes) {
-                    runCatching {
+                    try {
                         msgClient.sendMessage(node.id, WEAR_PATH_WATCH_TOKEN_SYNC, payload).await()
+                    } catch (ce: CancellationException) {
+                        throw ce
+                    } catch (_: Throwable) {
                     }
                 }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
             }
         }
+    }
+
+    fun pushRefreshedSessionToPhone(session: StoredSession) {
+        if (session.refreshToken.isBlank() || session.instituteCode.isBlank()) return
+        scope.launch {
+            pushRefreshedSessionToPhoneSuspend(session)
+        }
+    }
+
+    suspend fun handlePhoneLogout() = callbackMutex.withLock {
+        hu.mlnlbrt.tintanaplo.wear.data.KretaWearApiClient.clearGlobalSessionCache()
+        runCatching { tokenStore.clearSession() }
+        runCatching { KretaSyncScheduler.cancelAllSync(appContext) }
+        KretaSyncWorker.requestTileUpdate(appContext)
+        _status.value = RemoteAuthStatus.Idle
+        _logoutEpoch.value = _logoutEpoch.value + 1L
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         try {
             for (event in dataEvents) {
-                if (event.type != DataEvent.TYPE_CHANGED) continue
                 val path = event.dataItem.uri.path ?: continue
+                if (event.type == DataEvent.TYPE_DELETED) {
+                    if (path == KretaSharedConfig.WEAR_DATA_AUTH_SESSION) {
+                        scope.launch {
+                            try {
+                                handlePhoneLogout()
+                            } catch (ce: CancellationException) {
+                                throw ce
+                            } catch (_: Throwable) {
+                            }
+                        }
+                    }
+                    continue
+                }
+                if (event.type != DataEvent.TYPE_CHANGED) continue
                 if (path == KretaSharedConfig.WEAR_DATA_AUTH_SESSION) {
                     val dataMap = runCatching { DataMapItem.fromDataItem(event.dataItem).dataMap }.getOrNull()
                         ?: continue
@@ -303,11 +350,29 @@ class WearRemoteAuthManager private constructor(context: Context) :
         try {
             for (item in items) {
                 val dataMap = runCatching { DataMapItem.fromDataItem(item).dataMap }.getOrNull() ?: continue
-                runCatching { handler(dataMap) }
+                try {
+                    handler(dataMap)
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (_: Throwable) {
+                }
             }
         } finally {
             runCatching { items.release() }
         }
+    }
+
+    suspend fun handleIncomingAuthSessionDataMapBlocking(
+        dataMap: DataMap,
+        fromLiveChange: Boolean = true,
+    ) {
+        val values = runCatching { dataMapToMap(dataMap) }.getOrNull() ?: return
+        handleIncomingAuthSessionMap(values, fromLiveChange = fromLiveChange)
+    }
+
+    suspend fun handleIncomingDashboardDataMapBlocking(dataMap: DataMap) {
+        val values = runCatching { dashboardDataMapToMap(dataMap) }.getOrNull() ?: return
+        handleIncomingDashboardMap(values)
     }
 
     fun handleIncomingAuthSessionDataMapAsync(
@@ -355,18 +420,20 @@ class WearRemoteAuthManager private constructor(context: Context) :
             _status.value = RemoteAuthStatus.SavingSession
         }
 
-        val parsedGrades = payload.recentGradesJson?.let { Grade.fromJsonArrayString(it) }
-        val parsedExams = payload.upcomingExamsJson?.let { Exam.fromJsonArrayString(it) }
-
         val savedSession = synchronizer.processIncomingSession(
             payload = payload,
             fromLiveChange = fromLiveChange,
         )
 
-        val effectiveSession = savedSession ?: existingSession
-        if (effectiveSession != null && (parsedGrades != null || parsedExams != null)) {
+        if (savedSession == null) {
+            return@withLock
+        }
+
+        val parsedGrades = payload.recentGradesJson?.let { Grade.fromJsonArrayString(it) }
+        val parsedExams = payload.upcomingExamsJson?.let { Exam.fromJsonArrayString(it) }
+        if (parsedGrades != null || parsedExams != null) {
             val mergedCache = tokenStore.mergePhoneSyncedSnapshot(
-                session = effectiveSession,
+                session = savedSession,
                 grades = parsedGrades,
                 exams = parsedExams,
                 syncedAtEpochMs = payload.syncedAtEpochMs.takeIf { it > 0L } ?: System.currentTimeMillis(),
@@ -374,10 +441,6 @@ class WearRemoteAuthManager private constructor(context: Context) :
             if (mergedCache) {
                 _dashboardSyncEpoch.value = _dashboardSyncEpoch.value + 1L
             }
-        }
-
-        if (savedSession == null) {
-            return@withLock
         }
 
         if (!fromLiveChange && existingSession == savedSession) {
@@ -396,25 +459,40 @@ class WearRemoteAuthManager private constructor(context: Context) :
         if (rawInst.isNotEmpty() && !rawInst.equals(session.instituteCode, ignoreCase = true)) {
             return@withLock
         }
+        val rawUser = values["user_name"]?.toString()?.trim().orEmpty()
+        val sessionUser = session.userName?.trim().orEmpty()
+        if (rawUser.isNotEmpty() && sessionUser.isNotEmpty() &&
+            !rawUser.equals(sessionUser, ignoreCase = true)
+        ) {
+            return@withLock
+        }
+        val syncedAt = (values["synced_at_ms"] as? Number)?.toLong()?.takeIf { it > 0L }
+            ?: 0L
+        if (syncedAt > 0L && syncedAt <= lastConsumedDashboardSyncMs) {
+            return@withLock
+        }
         val gradesRaw = values["recent_grades_json"]?.toString()
         val examsRaw = values["upcoming_exams_json"]?.toString()
         val parsedGrades = gradesRaw?.takeIf { it.isNotBlank() }?.let { Grade.fromJsonArrayString(it) }
         val parsedExams = examsRaw?.takeIf { it.isNotBlank() }?.let { Exam.fromJsonArrayString(it) }
-        val syncedAt = (values["synced_at_ms"] as? Number)?.toLong()?.takeIf { it > 0L }
-            ?: System.currentTimeMillis()
+        val effectiveSyncedAt = if (syncedAt > 0L) syncedAt else System.currentTimeMillis()
         if (tokenStore.mergePhoneSyncedSnapshot(
                 session = session,
                 grades = parsedGrades,
                 exams = parsedExams,
-                syncedAtEpochMs = syncedAt,
+                syncedAtEpochMs = effectiveSyncedAt,
             )
         ) {
+            if (syncedAt > 0L) {
+                lastConsumedDashboardSyncMs = syncedAt
+            }
             _dashboardSyncEpoch.value = _dashboardSyncEpoch.value + 1L
         }
     }
 
     companion object {
         const val WEAR_PATH_WATCH_TOKEN_SYNC = "/tinta/watch_token_sync"
+        const val WEAR_MSG_LOGOUT = "/tinta/logout"
 
         @Volatile
         private var instance: WearRemoteAuthManager? = null

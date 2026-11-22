@@ -10,9 +10,12 @@ class TintaExpandedWidgetProvider : AppWidgetProvider() {
         appWidgetManager: AppWidgetManager,
         appWidgetIds: IntArray,
     ) {
-        val state = TintaLiveLessonResolver.resolve(context)
-        TintaWidgetRenderer.updateExpandedWidgets(context, appWidgetManager, appWidgetIds, state)
-        TintaLiveTickReceiver.refreshAndSchedule(context)
+        runCatching {
+            val state = TintaLiveLessonResolver.resolve(context)
+            TintaWidgetRenderer.updateExpandedWidgets(context, appWidgetManager, appWidgetIds, state)
+            TintaLiveActivityManager.syncNotification(context, state)
+            TintaLiveTickReceiver.scheduleNextTickIfNeeded(context, state)
+        }
     }
 
     override fun onEnabled(context: Context) {

@@ -4,7 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:tinta_naplo/providers/app_providers.dart';
-import 'package:tinta_naplo/screens/about_app_screen.dart';
+import 'package:tinta_naplo/screens/developer_options_screen.dart';
+import 'package:tinta_naplo/screens/more_screen.dart';
+import 'package:tinta_naplo/services/kreta_client.dart';
 import 'package:tinta_naplo/services/token_storage_service.dart';
 import 'package:tinta_naplo/theme/oled_theme.dart';
 import 'package:tinta_naplo/widgets/animation_helpers.dart';
@@ -164,7 +166,7 @@ void main() {
     );
 
     testWidgets(
-      'Gyro Liquid Horizon captures pointer ripples through ChristmasAndBackgroundOverlay and Developer Options switches animated presets synchronously',
+      'Gyro Liquid Horizon captures pointer ripples through ChristmasAndBackgroundOverlay and Appearance settings (not Developer Options) switches animated presets synchronously',
       (tester) async {
         tester.view.physicalSize = const Size(1080, 3200);
         tester.view.devicePixelRatio = 1.0;
@@ -174,7 +176,10 @@ void main() {
         });
 
         final settings = SettingsProvider(
-          initialPrefs: const UserProfilePrefs(developerModeUnlocked: true),
+          initialPrefs: const UserProfilePrefs(
+            liquidGlassEnabled: true,
+            developerModeUnlocked: true,
+          ),
         );
         addTearDown(settings.dispose);
         final theme = ThemeProvider(settings);
@@ -182,6 +187,7 @@ void main() {
         final commute = CommuteProvider(settings);
         addTearDown(commute.dispose);
 
+        // Verify Developer Options no longer exposes animated backdrops
         await tester.pumpWidget(
           AppProvidersScope(
             settings: settings,
@@ -190,12 +196,9 @@ void main() {
             child: ListenableBuilder(
               listenable: Listenable.merge([settings, theme]),
               builder: (context, _) => MaterialApp(
+                key: const ValueKey<String>('dev-options-app'),
                 theme: OledTheme.buildTheme(prefs: settings.prefs),
-                builder: (context, child) => ChristmasAndBackgroundOverlay(
-                  prefs: settings.prefs,
-                  child: child ?? const SizedBox.shrink(),
-                ),
-                home: AboutAppScreen(
+                home: DeveloperOptionsHubScreen(
                   prefs: settings.prefs,
                   onPrefsChanged: (_) {},
                 ),
@@ -204,17 +207,60 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
+        await tester.tap(find.text('Megjelenés és UI'));
+        await tester.pumpAndSettle();
+        expect(find.text('Élő hátterek (Animált hátterek)'), findsNothing);
+        expect(find.text('Animált hátterek (kísérleti)'), findsNothing);
 
-        final appearanceTile = find.text('Megjelenés és UI');
+        // Now verify Appearance settings exposes Élő hátterek under Liquid Glass & Felületek
+        await tester.pumpWidget(
+          AppProvidersScope(
+            settings: settings,
+            theme: theme,
+            commute: commute,
+            child: ListenableBuilder(
+              listenable: Listenable.merge([settings, theme]),
+              builder: (context, _) => MaterialApp(
+                key: const ValueKey<String>('appearance-settings-app'),
+                theme: OledTheme.buildTheme(prefs: settings.prefs),
+                builder: (context, child) => ChristmasAndBackgroundOverlay(
+                  prefs: settings.prefs,
+                  child: child ?? const SizedBox.shrink(),
+                ),
+                home: AppSettingsScreen(
+                  session: StoredSession(
+                    accessToken: 'acc',
+                    refreshToken: 'ref',
+                    idToken: 'id',
+                    instituteCode: 'klik001',
+                    expiresAt: DateTime.now().add(const Duration(hours: 2)),
+                  ),
+                  student: null,
+                  kretaClient: KretaClient(),
+                  prefs: settings.prefs,
+                  onPrefsChanged: (_) {},
+                  onLogout: () {},
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final appearanceTile = find.text('Megjelenés és témák');
         await tester.ensureVisible(appearanceTile);
         await tester.tap(appearanceTile);
         await tester.pumpAndSettle();
 
-        final animatedHeader = find.text('Animált hátterek (kísérleti)');
+        final animatedHeader = find.text('Élő hátterek');
         await tester.scrollUntilVisible(
           animatedHeader,
           200.0,
-          scrollable: find.byType(Scrollable).last,
+          scrollable: find
+              .byWidgetPredicate(
+                (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
+              )
+              .last,
         );
         expect(animatedHeader, findsOneWidget);
 
@@ -228,18 +274,19 @@ void main() {
           AnimatedBackdropPreset.off,
         ]) {
           final chip = find.widgetWithText(ChoiceChip, preset.label);
+          await tester.ensureVisible(chip);
           await tester.tap(chip);
           await tester.pump(const Duration(milliseconds: 30));
           expect(settings.prefs.animatedBackdropPreset, preset);
         }
 
         // Turn Gyro Liquid Horizon back on and send pointer down across screen
-        await tester.tap(
-          find.widgetWithText(
-            ChoiceChip,
-            AnimatedBackdropPreset.gyroLiquidHorizon.label,
-          ),
+        final gyroChip = find.widgetWithText(
+          ChoiceChip,
+          AnimatedBackdropPreset.gyroLiquidHorizon.label,
         );
+        await tester.ensureVisible(gyroChip);
+        await tester.tap(gyroChip);
         await tester.pump(const Duration(milliseconds: 30));
 
         await tester.tapAt(const Offset(540, 1200));

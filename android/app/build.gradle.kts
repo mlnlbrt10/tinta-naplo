@@ -34,6 +34,7 @@ android {
         multiDexEnabled = true
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        resourceConfigurations += listOf("hu", "en")
     }
 
     signingConfigs {
@@ -55,6 +56,9 @@ android {
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
+            ndk {
+                debugSymbolLevel = "NONE"
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -63,50 +67,42 @@ android {
     }
 
     packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources {
             excludes += listOf(
                 "/META-INF/{AL2.0,LGPL2.1}",
                 "META-INF/*.kotlin_module",
+                "META-INF/*.version",
+                "META-INF/proguard/*",
                 "META-INF/DEPENDENCIES",
                 "META-INF/LICENSE*",
                 "META-INF/NOTICE*",
                 "DebugProbesKt.bin",
+                "kotlin/**",
+                "**/*.kotlin_builtins",
             )
         }
     }
 
     applicationVariants.all {
         val variant = this
-        val versionLabel = variant.versionName ?: "2.0.2"
+        val versionLabel = variant.versionName ?: "3.0.0"
         val customApkName = "tinta-naplo-v${versionLabel}.apk"
         val arm64CustomApkName = "tinta-naplo-v${versionLabel}-arm64-v8a.apk"
         variant.assembleProvider.configure {
             doLast {
-                try {
-                    Runtime.getRuntime()
-                        .exec(
-                            arrayOf(
-                                "adb",
-                                "shell",
-                                "pm",
-                                "enable",
-                                "hu.mlnlbrt.tintanaplo/hu.mlnlbrt.tintanaplo.MainActivityNormal"
-                            )
-                        )
-                        .waitFor()
-                } catch (_: Exception) {
-                }
-
                 if (variant.buildType.name == "release") {
                     val flutterApkDir = rootProject.projectDir.resolve("../build/app/outputs/flutter-apk")
                     flutterApkDir.mkdirs()
                     val releaseApkDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
                     val sourceApk = listOf(
-                        flutterApkDir.resolve("app-arm64-v8a-release.apk"),
                         releaseApkDir.resolve("app-arm64-v8a-release.apk"),
-                        flutterApkDir.resolve("app-release.apk"),
                         releaseApkDir.resolve("app-release.apk"),
-                    ).firstOrNull { it.exists() }
+                        flutterApkDir.resolve("app-arm64-v8a-release.apk"),
+                        flutterApkDir.resolve("app-release.apk"),
+                    ).filter { it.exists() }.maxByOrNull { it.lastModified() }
                     if (sourceApk != null) {
                         sourceApk.copyTo(flutterApkDir.resolve(arm64CustomApkName), overwrite = true)
                         sourceApk.copyTo(flutterApkDir.resolve(customApkName), overwrite = true)

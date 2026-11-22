@@ -2,6 +2,7 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 
+import '../providers/app_providers.dart';
 import '../services/token_storage_service.dart';
 import 'christmas_snowfall_overlay.dart';
 
@@ -34,9 +35,10 @@ class _TintaSplashOverlayState extends State<TintaSplashOverlay>
   static const Duration _exitDuration = Duration(milliseconds: 450);
 
   late final AnimationController _breathController;
-  late final Animation<double> _breathCurve;
+  late final CurvedAnimation _breathCurve;
   late final AnimationController _progressController;
   late final AnimationController _exitController;
+  late final CurvedAnimation _curvedExit;
   late final Animation<double> _exitFade;
   late final Animation<double> _exitScale;
 
@@ -68,12 +70,12 @@ class _TintaSplashOverlayState extends State<TintaSplashOverlay>
       vsync: this,
       duration: _exitDuration,
     );
-    final curvedExit = CurvedAnimation(
+    _curvedExit = CurvedAnimation(
       parent: _exitController,
       curve: Curves.easeOutCubic,
     );
-    _exitFade = Tween<double>(begin: 1.0, end: 0.0).animate(curvedExit);
-    _exitScale = Tween<double>(begin: 1.0, end: 1.04).animate(curvedExit);
+    _exitFade = Tween<double>(begin: 1.0, end: 0.0).animate(_curvedExit);
+    _exitScale = Tween<double>(begin: 1.0, end: 1.04).animate(_curvedExit);
 
     _exitController.addStatusListener((status) {
       if (status == AnimationStatus.completed && !_dismissNotified) {
@@ -120,7 +122,10 @@ class _TintaSplashOverlayState extends State<TintaSplashOverlay>
     super.didChangeDependencies();
     if (!_logoPrecached) {
       _logoPrecached = true;
-      precacheImage(const AssetImage('assets/images/tinta_icon.png'), context);
+      final iconAsset =
+          AppProvidersScope.maybeOf(context)?.settings.activeAppIconAsset ??
+              UserProfilePrefs.globalAppIconAsset;
+      precacheImage(AssetImage(iconAsset), context).catchError((_) {});
     }
     _syncAmbientTickers();
   }
@@ -149,6 +154,8 @@ class _TintaSplashOverlayState extends State<TintaSplashOverlay>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _breathCurve.dispose();
+    _curvedExit.dispose();
     _breathController.dispose();
     _progressController.dispose();
     _exitController.dispose();
@@ -159,6 +166,9 @@ class _TintaSplashOverlayState extends State<TintaSplashOverlay>
   Widget build(BuildContext context) {
     final accent = widget.accentColor ?? Theme.of(context).colorScheme.primary;
     final barColor = Color.lerp(Colors.white, accent, 0.32)!;
+    final iconAsset =
+        AppProvidersScope.maybeOf(context)?.settings.activeAppIconAsset ??
+            UserProfilePrefs.globalAppIconAsset;
 
     return IgnorePointer(
       ignoring: !widget.isLoading || _isExiting,
@@ -240,7 +250,7 @@ class _TintaSplashOverlayState extends State<TintaSplashOverlay>
                                   stops: [0.0, 0.89, 0.99],
                                 ).createShader(rect),
                                 child: Image.asset(
-                                  'assets/images/tinta_icon.png',
+                                  iconAsset,
                                   width: 192,
                                   height: 192,
                                   fit: BoxFit.contain,

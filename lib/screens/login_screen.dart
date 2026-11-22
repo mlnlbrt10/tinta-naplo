@@ -7,9 +7,11 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/token_storage_service.dart';
+import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
+import '../widgets/privacy_legal_modal.dart';
 
 /// Showcase-driven WebAuth-only login screen seamlessly integrated on pure
 /// `#000000` OLED black with horizontal/vertical alpha fades and a single CTA.
@@ -23,6 +25,41 @@ class LoginScreen extends StatefulWidget {
     required this.onLaunchWebAuth,
   });
 
+  static const String fixedStatusBarTime = '08:02';
+
+  /// Extracts `HH:MM` from real screenshot EXIF `DateTimeOriginal`, Android
+  /// screenshot filenames (`Screenshot_YYYYMMDD_HHMMSS`), or file timestamps.
+  static String formatStatusBarTimeFromMetadata({
+    String? exifDateTime,
+    String? filename,
+    DateTime? modifiedAt,
+    String fallback = fixedStatusBarTime,
+  }) {
+    if (exifDateTime != null) {
+      final match = RegExp(
+        r'\d{4}[:\-]\d{2}[:\-]\d{2}[ T](\d{2}):(\d{2})',
+      ).firstMatch(exifDateTime.trim());
+      if (match != null) {
+        return '${match.group(1)}:${match.group(2)}';
+      }
+    }
+    if (filename != null) {
+      final match = RegExp(
+        r'\d{8}[_\-](\d{2})(\d{2})\d{2}',
+      ).firstMatch(filename.trim());
+      if (match != null) {
+        return '${match.group(1)}:${match.group(2)}';
+      }
+    }
+    if (modifiedAt != null) {
+      final local = modifiedAt.toLocal();
+      final hh = local.hour.toString().padLeft(2, '0');
+      final mm = local.minute.toString().padLeft(2, '0');
+      return '$hh:$mm';
+    }
+    return fallback;
+  }
+
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
@@ -30,11 +67,13 @@ class LoginScreen extends StatefulWidget {
 class _ShowcaseSlideSpec {
   final String assetPath;
   final double aspectRatio;
+  final String statusBarTime;
   final String caption;
 
   const _ShowcaseSlideSpec({
     required this.assetPath,
     required this.aspectRatio,
+    required this.statusBarTime,
     required this.caption,
   });
 }
@@ -43,39 +82,64 @@ class _LoginScreenState extends State<LoginScreen>
     with TickerProviderStateMixin {
   static const Color _oledBlack = Color(0xFF000000);
   static const Color _crispOffWhite = Color(0xFFF8FAFC);
+  static const double _showcaseAspectRatio = 1440 / 2992;
 
   static const List<_ShowcaseSlideSpec> _screenshotSlides = [
     _ShowcaseSlideSpec(
-      assetPath: 'assets/images/showcase/showcase_1_lesson.webp',
-      aspectRatio: 1440 / 860,
+      assetPath: 'assets/images/showcase/showcase_home.jpg',
+      aspectRatio: _showcaseAspectRatio,
+      statusBarTime: LoginScreen.fixedStatusBarTime,
       caption:
-          'Kövesd az órád, lásd a következőt. Mindig képben lehetsz a napod menetével.',
+          'Minden fontos infó egy helyen - aktuális óra, házik és jegyek átlaghatással.',
     ),
     _ShowcaseSlideSpec(
-      assetPath: 'assets/images/showcase/showcase_2_scholarship.webp',
-      aspectRatio: 1438 / 2527,
+      assetPath: 'assets/images/showcase/showcase_timetable.jpg',
+      aspectRatio: _showcaseAspectRatio,
+      statusBarTime: LoginScreen.fixedStatusBarTime,
       caption:
-          'Tűzd ki, érd el. Az ösztöndíj-kalkulátorral semmi se lehetetlen.',
+          'Átlátható heti órarend helyettesítésekkel, elmaradt órákkal és házikkal.',
     ),
     _ShowcaseSlideSpec(
-      assetPath: 'assets/images/showcase/showcase_3_timetable.webp',
-      aspectRatio: 1440 / 2373,
+      assetPath: 'assets/images/showcase/showcase_grades.jpg',
+      aspectRatio: _showcaseAspectRatio,
+      statusBarTime: LoginScreen.fixedStatusBarTime,
       caption:
-          'Egyből csak a lényeg. Lásd könnyen, milyen órád marad el, és melyik lesz helyettesítve.',
+          'Tantárgyankénti átlagok és jegyek, rendezhetően és azonnal átláthatóan.',
     ),
     _ShowcaseSlideSpec(
-      assetPath: 'assets/images/showcase/showcase_4_themes.webp',
-      aspectRatio: 1440 / 3002,
+      assetPath: 'assets/images/showcase/showcase_scholarship.jpg',
+      aspectRatio: _showcaseAspectRatio,
+      statusBarTime: LoginScreen.fixedStatusBarTime,
       caption:
-          'A végtelen személyre szabásnak köszönhetően igazán olyan lehet az app, amilyennek Te elképzelted.',
+          'Tűzd ki, érd el - kövesd az ösztöndíjadat és a következő sávhoz szükséges lépéseket.',
+    ),
+    _ShowcaseSlideSpec(
+      assetPath: 'assets/images/showcase/showcase_absences.jpg',
+      aspectRatio: _showcaseAspectRatio,
+      statusBarTime: LoginScreen.fixedStatusBarTime,
+      caption:
+          'Hiányzások tantárgyanként és napi órarend-nézetben, pirossal kiemelve.',
+    ),
+    _ShowcaseSlideSpec(
+      assetPath: 'assets/images/showcase/showcase_themes.jpg',
+      aspectRatio: _showcaseAspectRatio,
+      statusBarTime: LoginScreen.fixedStatusBarTime,
+      caption:
+          'OLED fekete, Material You és Liquid Glass - szabd teljesen magadra az appot.',
     ),
   ];
+  static const String _menetrendSlideStatusBarTime =
+      LoginScreen.fixedStatusBarTime;
 
   static final Uri _menetrendGoUri = Uri.parse('https://menetrendgo.hu');
 
   static int get _slideCount => _screenshotSlides.length + 1;
+  static const int _kInfiniteBasePage = 7000;
 
-  final PageController _pageController = PageController(viewportFraction: 0.85);
+  final PageController _pageController = PageController(
+    initialPage: _kInfiniteBasePage,
+    viewportFraction: 0.85,
+  );
   late final AnimationController _entranceController;
   late final Animation<double> _heroFade;
   late final Animation<Offset> _heroSlide;
@@ -83,7 +147,7 @@ class _LoginScreenState extends State<LoginScreen>
 
   Timer? _autoAdvanceTimer;
   Timer? _resumeTimer;
-  int _currentPage = 0;
+  int _currentPage = _kInfiniteBasePage;
   bool _userTouching = false;
   bool _screenshotsPrecached = false;
 
@@ -117,10 +181,12 @@ class _LoginScreenState extends State<LoginScreen>
 
   Future<void> _openMenetrendGoWebsite() async {
     HapticFeedback.lightImpact();
-    await launchUrl(
-      _menetrendGoUri,
-      mode: LaunchMode.inAppBrowserView,
-    );
+    try {
+      await launchUrl(
+        _menetrendGoUri,
+        mode: LaunchMode.inAppBrowserView,
+      );
+    } catch (_) {}
   }
 
   @override
@@ -129,7 +195,9 @@ class _LoginScreenState extends State<LoginScreen>
     if (!_screenshotsPrecached) {
       _screenshotsPrecached = true;
       for (final slide in _screenshotSlides) {
-        precacheImage(AssetImage(slide.assetPath), context);
+        unawaited(
+          precacheImage(AssetImage(slide.assetPath), context).catchError((_) {}),
+        );
       }
     }
   }
@@ -140,10 +208,9 @@ class _LoginScreenState extends State<LoginScreen>
       if (!mounted || _userTouching || !_pageController.hasClients) {
         return;
       }
-      final next = (_currentPage + 1) % _slideCount;
       _pageController.animateToPage(
-        next,
-        duration: const Duration(milliseconds: 420),
+        _currentPage + 1,
+        duration: const Duration(milliseconds: 460),
         curve: Curves.easeOutCubic,
       );
     });
@@ -179,8 +246,10 @@ class _LoginScreenState extends State<LoginScreen>
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
-    return Scaffold(
-      backgroundColor: _oledBlack,
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: OledTheme.systemOverlayStyleForBrightness(Brightness.dark),
+      child: Scaffold(
+        backgroundColor: _oledBlack,
       body: ColoredBox(
         color: _oledBlack,
         child: SafeArea(
@@ -188,7 +257,7 @@ class _LoginScreenState extends State<LoginScreen>
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 460),
               child: Padding(
-                padding: const EdgeInsets.only(top: 14, bottom: 22),
+                padding: const EdgeInsets.only(top: 12, bottom: 14),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -202,46 +271,40 @@ class _LoginScreenState extends State<LoginScreen>
                         onPointerDown: (_) => _onUserTouchStart(),
                         onPointerUp: (_) => _onUserTouchEnd(),
                         onPointerCancel: (_) => _onUserTouchEnd(),
-                        child: ShaderMask(
-                          blendMode: BlendMode.dstIn,
-                          shaderCallback: (bounds) => const LinearGradient(
-                            begin: Alignment.centerLeft,
-                            end: Alignment.centerRight,
-                            colors: [
-                              Colors.transparent,
-                              Colors.black,
-                              Colors.black,
-                              Colors.transparent,
-                            ],
-                            stops: [0.0, 0.09, 0.91, 1.0],
-                          ).createShader(bounds),
-                          child: PageView.builder(
-                            clipBehavior: Clip.none,
-                            controller: _pageController,
-                            physics: const BouncingScrollPhysics(),
-                            itemCount: _slideCount,
-                            onPageChanged: (idx) {
-                              if (mounted) {
-                                setState(() => _currentPage = idx);
-                              }
-                            },
-                            itemBuilder: (context, index) =>
-                                _buildShowcaseSlide(
-                              context,
-                              theme,
-                              scheme,
-                              index,
+                        child: RepaintBoundary(
+                          child: ShaderMask(
+                            blendMode: BlendMode.dstIn,
+                            shaderCallback: (bounds) => const LinearGradient(
+                              begin: Alignment.centerLeft,
+                              end: Alignment.centerRight,
+                              colors: [
+                                Colors.transparent,
+                                Colors.black,
+                                Colors.black,
+                                Colors.transparent,
+                              ],
+                              stops: [0.0, 0.09, 0.91, 1.0],
+                            ).createShader(bounds),
+                            child: PageView.builder(
+                              clipBehavior: Clip.none,
+                              controller: _pageController,
+                              physics: const BouncingScrollPhysics(),
+                              onPageChanged: (idx) {
+                                _currentPage = idx;
+                              },
+                              itemBuilder: (context, index) =>
+                                  _buildShowcaseSlide(
+                                context,
+                                theme,
+                                scheme,
+                                index % _slideCount,
+                              ),
                             ),
                           ),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: _buildPageIndicators(scheme),
-                    ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: _buildHeroCtaSection(theme, scheme),
@@ -253,6 +316,7 @@ class _LoginScreenState extends State<LoginScreen>
           ),
         ),
       ),
+    ),
     );
   }
 
@@ -278,43 +342,6 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Widget _buildPageIndicators(ColorScheme scheme) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: List.generate(_slideCount, (index) {
-        final selected = index == _currentPage;
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () {
-            HapticFeedback.selectionClick();
-            _onUserTouchStart();
-            _pageController.animateToPage(
-              index,
-              duration: const Duration(milliseconds: 320),
-              curve: Curves.easeOutCubic,
-            );
-            _onUserTouchEnd();
-          },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 240),
-              curve: Curves.easeOutCubic,
-              width: selected ? 26 : 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: selected
-                    ? scheme.primary
-                    : _crispOffWhite.withValues(alpha: 0.24),
-                borderRadius: BorderRadius.circular(999),
-              ),
-            ),
-          ),
-        );
-      }),
-    );
-  }
-
   Widget _buildHeroCtaSection(ThemeData theme, ColorScheme scheme) {
     return FadeTransition(
       opacity: _heroFade,
@@ -325,27 +352,37 @@ class _LoginScreenState extends State<LoginScreen>
           mainAxisSize: MainAxisSize.min,
           children: [
             Center(
-              child: ShaderMask(
-                blendMode: BlendMode.srcIn,
-                shaderCallback: (bounds) => const LinearGradient(
-                  colors: [Color(0xFF3B82F6), Color(0xFF38BDF8)],
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                ).createShader(bounds),
-                child: Text(
-                  uwu('Készen állsz?'),
-                  textAlign: TextAlign.center,
+              child: RichText(
+                key: const ValueKey<String>('login-hero-headline'),
+                textAlign: TextAlign.center,
+                text: TextSpan(
                   style: theme.textTheme.headlineSmall?.copyWith(
-                    color: Colors.white,
+                    fontFamily: OledTheme.defaultFontFamily,
+                    color: _crispOffWhite,
                     fontSize: 28,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.6,
-                    height: 1.15,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.5,
+                    height: 1.18,
                   ),
+                  children: [
+                    TextSpan(
+                      text: '${uwu('Készen állsz valami')}\n',
+                    ),
+                    TextSpan(
+                      text: uwu('igazán jóra?'),
+                      style: const TextStyle(
+                        fontFamily: OledTheme.defaultFontFamily,
+                        color: Color(0xFF3B82F6),
+                        fontSize: 32,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.8,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 14),
             TactileBounce(
               pressedScale: 0.97,
               onTap: () {
@@ -390,6 +427,30 @@ class _LoginScreenState extends State<LoginScreen>
                 ),
               ),
             ),
+            const SizedBox(height: 10),
+            Center(
+              child: GestureDetector(
+                key: const ValueKey<String>('login-privacy-legal-link'),
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  showPrivacyAndLegalModal(context, prefs: widget.prefs);
+                },
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Text(
+                    uwu('Nem hivatalos e-KRÉTA kliens • Adatvédelem'),
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w500,
+                      color: _crispOffWhite.withValues(alpha: 0.48),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -416,9 +477,15 @@ class _LoginScreenState extends State<LoginScreen>
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Expanded(
-            child: isScreenshotSlide
-                ? _buildSeamlessScreenshot(_screenshotSlides[index])
-                : _buildExpandedMenetrendFrame(theme, scheme),
+            child: _buildPhoneMockupFrame(
+              slideIndex: index,
+              statusBarTime: isScreenshotSlide
+                  ? _screenshotSlides[index].statusBarTime
+                  : _menetrendSlideStatusBarTime,
+              child: isScreenshotSlide
+                  ? _buildSeamlessScreenshot(_screenshotSlides[index])
+                  : _buildExpandedMenetrendFrame(theme, scheme),
+            ),
           ),
           const SizedBox(height: 14),
           ConstrainedBox(
@@ -460,30 +527,135 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
+  Widget _buildPhoneMockupFrame({
+    required int slideIndex,
+    required String statusBarTime,
+    required Widget child,
+  }) {
+    return RepaintBoundary(
+      child: Center(
+        child: FittedBox(
+          fit: BoxFit.contain,
+          alignment: Alignment.center,
+          child: SizedBox(
+            width: 260,
+            height: 508,
+            child: Container(
+              key: ValueKey<String>('login-phone-mockup-$slideIndex'),
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0B0E14),
+                borderRadius: BorderRadius.circular(30),
+                border: Border.all(
+                  color: const Color(0xFF2B3240),
+                  width: 2.2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.white.withValues(alpha: 0.05),
+                    blurRadius: 1,
+                    spreadRadius: 0.5,
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.70),
+                    blurRadius: 24,
+                    offset: const Offset(0, 12),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: ColoredBox(
+                  color: const Color(0xFF04060A),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 8, 14, 6),
+                        child: Row(
+                          children: [
+                            Text(
+                              statusBarTime,
+                              key: ValueKey<String>('login-phone-time-$slideIndex'),
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xD8F8FAFC),
+                                fontFeatures: [FontFeature.tabularFigures()],
+                              ),
+                            ),
+                            const Spacer(),
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF020305),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: const Color(0xFF262D3A),
+                                  width: 1.0,
+                                ),
+                              ),
+                            ),
+                            const Spacer(),
+                            const Icon(
+                              Icons.signal_cellular_4_bar_rounded,
+                              size: 11,
+                              color: Color(0xCCF8FAFC),
+                            ),
+                            const SizedBox(width: 3),
+                            const Icon(
+                              Icons.wifi_rounded,
+                              size: 11,
+                              color: Color(0xCCF8FAFC),
+                            ),
+                            const SizedBox(width: 3),
+                            const Icon(
+                              Icons.battery_full_rounded,
+                              size: 11,
+                              color: Color(0xCCF8FAFC),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: child,
+                        ),
+                      ),
+                      Center(
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(vertical: 7),
+                          width: 56,
+                          height: 3.5,
+                          decoration: BoxDecoration(
+                            color: _crispOffWhite.withValues(alpha: 0.28),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSeamlessScreenshot(_ShowcaseSlideSpec spec) {
     return Center(
       child: AspectRatio(
         aspectRatio: spec.aspectRatio,
-        child: ShaderMask(
-          blendMode: BlendMode.dstIn,
-          shaderCallback: (bounds) => const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Colors.transparent,
-              Colors.black,
-              Colors.black,
-              Colors.transparent,
-            ],
-            stops: [0.0, 0.12, 0.85, 1.0],
-          ).createShader(bounds),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
-            child: Image.asset(
-              spec.assetPath,
-              fit: BoxFit.contain,
-              filterQuality: FilterQuality.medium,
-            ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Image.asset(
+            spec.assetPath,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.medium,
           ),
         ),
       ),
@@ -497,7 +669,7 @@ class _LoginScreenState extends State<LoginScreen>
     return Center(
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final cardWidth = math.min(constraints.maxWidth, 360.0);
+          final cardWidth = math.min(math.max(constraints.maxWidth, 336.0), 360.0);
           return FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.center,

@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -22,6 +24,17 @@ class _InMemoryTokenStorage extends TokenStorageService {
 
   @override
   Future<StoredSession?> loadSession() async => savedSession;
+}
+
+class _ZeroRandom implements Random {
+  @override
+  bool nextBool() => false;
+
+  @override
+  double nextDouble() => 0.0;
+
+  @override
+  int nextInt(int max) => 0;
 }
 
 Lesson _makeLesson({
@@ -181,7 +194,7 @@ void main() {
     );
   });
 
-  test('UwuHelper and GreetingUtils transform text in UwU mode and Tsundere mode', () {
+  test('UwuHelper and GreetingUtils transform text in UwU mode without \$1 artifacts', () {
     expect(
       GreetingUtils.buildGreeting(
         name: 'Milán',
@@ -190,32 +203,197 @@ void main() {
       ),
       'Szép nyapot, Miwán! uwu',
     );
+    final transformed = UwuHelper.transform('Frissítések keresése', enabled: true);
+    expect(transformed.startsWith('Fwissítések kewesése'), isTrue);
+
+    final noDollar = UwuHelper.transform('Napló és óranapló 08:00 100% KRÉTA', enabled: true);
+    expect(noDollar.contains(r'$1'), isFalse);
+    expect(noDollar.contains('Nyapwó'), isTrue);
+    expect(noDollar.contains('08:00'), isTrue);
+    expect(noDollar.contains('100%'), isTrue);
+    expect(noDollar.contains('KRÉTA'), isTrue);
+
+    // Short labels should never receive spammed suffixes
+    final shortLabel = UwuHelper.transform('Órarend', enabled: true);
+    expect(shortLabel.contains('uwu'), isFalse);
+    expect(shortLabel.contains(':3'), isFalse);
+  });
+
+  test('MenetrendService supports 3.0-8.0 km/h 0.5 steps and reworked notifications', () {
+    expect(MenetrendService.normalizeWalkingSpeed(2.1), 3.0);
+    expect(MenetrendService.normalizeWalkingSpeed(3.5), 3.5);
+    expect(MenetrendService.normalizeWalkingSpeed(4.5), 4.5);
+    expect(MenetrendService.normalizeWalkingSpeed(5.26), 5.5);
+    expect(MenetrendService.normalizeWalkingSpeed(7.8), 8.0);
+    expect(MenetrendService.walkingSpeedLabel(5.5), '5.5 km/h');
+
+    final trip = MenetrendTripOption(
+      routeShortName: 'S150',
+      routeLongName: 'Személyvonat',
+      mode: MenetrendTransportMode.rail,
+      departureStation: 'Bodajk',
+      arrivalStation: 'Székesfehérvár',
+      scheduledDeparture: DateTime(2026, 11, 13, 7, 9),
+      scheduledArrival: DateTime(2026, 11, 13, 7, 42),
+      delayMinutes: 7,
+      walkToStationMinutes: 13,
+    );
+    final eval = CommuteEvaluation(
+      isMorningMode: true,
+      targetLesson: null,
+      targetPeriodNumber: 1,
+      recommendedTrip: trip,
+      alternatives: [trip],
+      effectiveWalkMinutes: 13,
+      alertBufferMinutes: 5,
+      now: DateTime(2026, 11, 13, 6, 40),
+    );
+    expect(eval.departureNotificationTitle, 'Indulás 5 perc múlva • S150');
+    expect(
+      eval.departureNotificationBody,
+      '07:09-es járat (Bodajk -> Székesfehérvár) • 13p séta az állomásra',
+    );
+    expect(eval.delayNotificationTitle, 'Késés (+7p) • S150');
+    expect(
+      eval.delayNotificationBody,
+      'Menetrend szerint: 07:09 -> Várható indulás: 07:16 (Bodajk -> Székesfehérvár)',
+    );
+  });
+
+  test('UserProfilePrefs.funGreetingsEnabled defaults false and round-trips JSON', () {
+    const defaults = UserProfilePrefs();
+    expect(defaults.funGreetingsEnabled, isFalse);
+
+    final toggled = defaults.withFunGreetings(true);
+    expect(toggled.funGreetingsEnabled, isTrue);
+    final restored = UserProfilePrefs.fromJson(toggled.toJson());
+    expect(restored.funGreetingsEnabled, isTrue);
+
+    final viaCopy = defaults.copyWith(funGreetingsEnabled: true);
+    expect(viaCopy.funGreetingsEnabled, isTrue);
+    expect(viaCopy.copyWith(funGreetingsEnabled: false).funGreetingsEnabled, isFalse);
+  });
+
+  test('GreetingUtils fun greetings enforce tight time windows and weekday guard', () {
+    // Audit all 117 templates and verify zero en-dashes or em-dashes.
+    final all = GreetingUtils.allFunTemplates;
+    expect(all.length, 117);
+    for (final template in all) {
+      expect(template.contains('\u2013'), isFalse, reason: 'En-dash in $template');
+      expect(template.contains('\u2014'), isFalse, reason: 'Em-dash in $template');
+      expect(template.contains('{name}'), isTrue, reason: 'Missing {name} in $template');
+    }
+
+    // Tuesday 2026-11-10
+    final tuesdayEarly = GreetingUtils.eligibleFunTemplatesFor(DateTime(2026, 11, 10, 7, 30));
+    expect(tuesdayEarly, contains('Kávé volt már, {name}?'));
+    expect(tuesdayEarly, isNot(contains('Becsengettek, {name}')));
+    expect(tuesdayEarly, isNot(contains('Még ébren, {name}?')));
+
+    final tuesdayMorning = GreetingUtils.eligibleFunTemplatesFor(DateTime(2026, 11, 10, 9, 0));
+    expect(tuesdayMorning, contains('Becsengettek, {name}'));
+    expect(tuesdayMorning, isNot(contains('Kávé volt már, {name}?')));
+    expect(tuesdayMorning, isNot(contains('Mikor lesz már szünet, {name}?')));
+
+    final tuesdaySchool = GreetingUtils.eligibleFunTemplatesFor(DateTime(2026, 11, 10, 11, 30));
+    expect(tuesdaySchool, contains('Mikor lesz már szünet, {name}?'));
+    expect(tuesdaySchool, isNot(contains('Hazaértél már, {name}?')));
+
+    final tuesdayAfternoon = GreetingUtils.eligibleFunTemplatesFor(DateTime(2026, 11, 10, 16, 0));
+    expect(tuesdayAfternoon, contains('Hazaértél már, {name}?'));
+    expect(tuesdayAfternoon, isNot(contains('Esti chill, {name}?')));
+
+    final tuesdayEvening = GreetingUtils.eligibleFunTemplatesFor(DateTime(2026, 11, 10, 19, 0));
+    expect(tuesdayEvening, contains('Esti chill, {name}?'));
+    expect(tuesdayEvening, contains('Holnap suli, {name}...'));
+    expect(tuesdayEvening, isNot(contains('Még ébren, {name}?')));
+
+    final tuesdayLateNight = GreetingUtils.eligibleFunTemplatesFor(DateTime(2026, 11, 10, 23, 0));
+    expect(tuesdayLateNight, contains('Még ébren, {name}?'));
+    expect(tuesdayLateNight, isNot(contains('Esti chill, {name}?')));
+    expect(tuesdayLateNight, isNot(contains('Kávé volt már, {name}?')));
+
+    // Monday vs Friday pools & "Holnap suli..." exclusion on Friday/Saturday
+    final mondayMorning = GreetingUtils.eligibleFunTemplatesFor(DateTime(2026, 11, 9, 8, 15));
+    expect(mondayMorning, contains('Boldog hétfőt (nem), {name}'));
+    expect(mondayMorning, isNot(contains('Végre péntek, {name}!')));
+
+    final fridayEvening = GreetingUtils.eligibleFunTemplatesFor(DateTime(2026, 11, 13, 19, 30));
+    expect(fridayEvening, contains('Végre péntek, {name}!'));
+    expect(fridayEvening, contains('Esti chill, {name}?'));
+    expect(fridayEvening, isNot(contains('Holnap suli, {name}...')));
+
+    // Weekday-only school guard: Saturday 07:30 & Sunday 11:00 must NEVER include school pools
+    final saturdayEarly = GreetingUtils.eligibleFunTemplatesFor(DateTime(2026, 11, 14, 7, 30));
+    expect(saturdayEarly, contains('Hétvégén Kréta, {name}?'));
+    expect(saturdayEarly, isNot(contains('Kávé volt már, {name}?')));
+    expect(saturdayEarly, isNot(contains('Indul a műszak, {name}')));
+    expect(saturdayEarly, isNot(contains('Kitartást mára, {name}!')));
+    expect(saturdayEarly, isNot(contains('Szép délutánt, {name}!')));
+
+    final sundayDay = GreetingUtils.eligibleFunTemplatesFor(DateTime(2026, 11, 15, 11, 0));
+    expect(sundayDay, contains('Ma nincs suli, {name}!'));
+    expect(sundayDay, isNot(contains('Mikor lesz már szünet, {name}?')));
+
+    final sundayEvening = GreetingUtils.eligibleFunTemplatesFor(DateTime(2026, 11, 15, 19, 30));
+    expect(sundayEvening, contains('Vasárnap esti pánik, {name}?'));
+    expect(sundayEvening, contains('Holnap suli, {name}...'));
+    expect(sundayEvening, contains('Esti chill, {name}?'));
+    expect(sundayEvening, isNot(contains('Ma nincs suli, {name}!')));
+  });
+
+  test('GreetingUtils stabilizes fun greeting per session window and avoids back-to-back repeats', () {
+    GreetingUtils.resetForTesting(random: Random(42));
+
+    // Stock behavior unaffected when funGreetingsEnabled is false
     expect(
       GreetingUtils.buildGreeting(
         name: 'Milán',
-        now: DateTime(2026, 11, 10, 12, 0),
-        tsundereMode: true,
+        now: DateTime(2026, 11, 10, 9, 0),
+        funGreetingsEnabled: false,
       ),
-      contains('b-baka'),
+      'Szép napot, Milán!',
+    );
+
+    final first = GreetingUtils.buildGreeting(
+      name: 'Milán',
+      now: DateTime(2026, 11, 10, 9, 0),
+      funGreetingsEnabled: true,
+    );
+    expect(first, contains('Milán'));
+    expect(first.contains('{name}'), isFalse);
+
+    // Repeated rebuilds across different times in the same app session keep the exact cold-start greeting.
+    final secondSameSession = GreetingUtils.buildGreeting(
+      name: 'Milán',
+      now: DateTime(2026, 11, 10, 23, 15),
+      funGreetingsEnabled: true,
+    );
+    expect(secondSameSession, equals(first));
+
+    // Explicit settings toggle refresh (or app restart) picks a fresh non-repeating greeting.
+    GreetingUtils.resetForTesting(random: _ZeroRandom());
+    final r1 = GreetingUtils.buildGreeting(
+      name: 'Bence',
+      now: DateTime(2026, 11, 10, 9, 0),
+      funGreetingsEnabled: true,
     );
     expect(
-      UwuHelper.tsundereCommentForGrade(3),
-      contains('M-megint egy hármas? Nem mintha figyeltem volna rád'),
-    );
-    expect(
-      UwuHelper.tsundereCommentForGrade(null),
-      contains('N-nem mintha érdekelne a házi feladatod, b-baka~!'),
-    );
-    expect(
-      UwuHelper.transform(
-        'Házi feladatok',
-        enabled: false,
-        tsundere: true,
+      GreetingUtils.buildGreeting(
+        name: 'Bence',
+        now: DateTime(2026, 11, 10, 14, 0),
+        funGreetingsEnabled: true,
       ),
-      contains('b-baka~!'),
+      equals(r1),
     );
-    final transformed = UwuHelper.transform('Frissítések keresése', enabled: true);
-    expect(transformed.startsWith('Fwissítések kewesése'), isTrue);
+    GreetingUtils.refreshSessionGreeting();
+    final r2 = GreetingUtils.buildGreeting(
+      name: 'Bence',
+      now: DateTime(2026, 11, 10, 9, 0),
+      funGreetingsEnabled: true,
+    );
+    expect(r2, isNot(equals(r1)));
+    expect(r2, contains('Bence'));
   });
 
   test('GitHubUpdaterService compares semantic versions and build tags accurately', () {
@@ -227,34 +405,34 @@ void main() {
       GitHubUpdaterService.latestReleaseApiUrl,
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest',
     );
-    expect(GitHubUpdaterService.fallbackAppVersion, '2.0.2');
-    expect(GitHubUpdaterService.fallbackBuildNumber, '18');
+    expect(GitHubUpdaterService.fallbackAppVersion, '3.0.0');
+    expect(GitHubUpdaterService.fallbackBuildNumber, '19');
     expect(
       GitHubUpdaterService.defaultApkFileName,
-      'tinta-naplo-v2.0.2-arm64-v8a.apk',
+      'tinta-naplo-v3.0.0-arm64-v8a.apk',
     );
     expect(
-      GitHubUpdaterService.apkFileNameForTag('v2.0.2'),
-      'tinta-naplo-v2.0.2-arm64-v8a.apk',
+      GitHubUpdaterService.apkFileNameForTag('v3.0.0'),
+      'tinta-naplo-v3.0.0-arm64-v8a.apk',
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('2.0.2', 'v2.0.3'),
+      GitHubUpdaterService.isRemoteVersionNewer('3.0.0', 'v3.0.1'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('2.0.2', 'v2.0.2'),
+      GitHubUpdaterService.isRemoteVersionNewer('3.0.0', 'v3.0.0'),
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('2.0.2-alpha', 'v2.0.2'),
+      GitHubUpdaterService.isRemoteVersionNewer('3.0.0-alpha', 'v3.0.0'),
       isTrue,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('2.0.2-alpha', 'v2.0.2-alpha'),
+      GitHubUpdaterService.isRemoteVersionNewer('3.0.0-alpha', 'v3.0.0-alpha'),
       isFalse,
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('2.0.2', 'v1.2.0'),
+      GitHubUpdaterService.isRemoteVersionNewer('3.0.0', 'v1.2.0'),
       isFalse,
     );
     // Legacy pre-rebrand v1.2.x / v1.1.x tags must not prompt updates on v1.0.0.
@@ -267,25 +445,25 @@ void main() {
       isFalse,
     );
     const unbrandedRelease = GitHubReleaseInfo(
-      tagName: 'v2.9.9',
-      title: 'Legacy Client v2.9.9',
+      tagName: 'v3.9.9',
+      title: 'Legacy Client v3.9.9',
       releaseNotes: 'Unbranded release',
       htmlUrl: GitHubUpdaterService.repoUrl,
-      apkDownloadUrl: 'https://example.com/legacy-v2.9.9.apk',
+      apkDownloadUrl: 'https://example.com/legacy-v3.9.9.apk',
     );
     expect(
       GitHubUpdaterService.isRemoteVersionNewer(
-        '2.0.2',
-        'v2.9.9',
+        '3.0.0',
+        'v3.9.9',
         release: unbrandedRelease,
       ),
       isFalse,
     );
     final brandedFutureRelease = GitHubReleaseInfo.fromJson({
-      'tag_name': 'v2.0.2',
-      'name': 'Tinta Napló v2.0.2',
+      'tag_name': 'v3.0.0',
+      'name': 'Tinta Napló v3.0.0',
       'body': 'Újdonságok',
-      'html_url': 'https://github.com/mlnlbrt10/tinta-naplo/releases/tag/v2.0.2',
+      'html_url': 'https://github.com/mlnlbrt10/tinta-naplo/releases/tag/v3.0.0',
       'assets': [
         {
           'name': 'app-release.apk',
@@ -296,18 +474,18 @@ void main() {
           'browser_download_url': 'https://example.com/app-armeabi-v7a-release.apk',
         },
         {
-          'name': 'tinta-naplo-v2.0.2-arm64-v8a.apk',
-          'browser_download_url': 'https://example.com/tinta-naplo-v2.0.2-arm64-v8a.apk',
+          'name': 'tinta-naplo-v3.0.0-arm64-v8a.apk',
+          'browser_download_url': 'https://example.com/tinta-naplo-v3.0.0-arm64-v8a.apk',
         },
       ],
     });
     expect(
       brandedFutureRelease.apkDownloadUrl,
-      'https://example.com/tinta-naplo-v2.0.2-arm64-v8a.apk',
+      'https://example.com/tinta-naplo-v3.0.0-arm64-v8a.apk',
     );
     final splitArm64FallbackRelease = GitHubReleaseInfo.fromJson({
-      'tag_name': 'v2.0.3',
-      'name': 'Tinta Napló v2.0.3',
+      'tag_name': 'v3.0.1',
+      'name': 'Tinta Napló v3.0.1',
       'assets': [
         {
           'name': 'app-armeabi-v7a-release.apk',
@@ -326,7 +504,7 @@ void main() {
     expect(
       GitHubUpdaterService.isRemoteVersionNewer(
         '1.0.0',
-        'v2.0.2',
+        'v3.0.0',
         release: brandedFutureRelease,
       ),
       isTrue,

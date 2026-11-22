@@ -100,7 +100,6 @@ interface WearTokenStore {
 
 class SecureTokenStorage(context: Context) : WearTokenStore {
     private val appContext = context.applicationContext
-    private val cacheFileLock = Any()
 
     private val fastPrefs: SharedPreferences? by lazy {
         runCatching {
@@ -109,22 +108,8 @@ class SecureTokenStorage(context: Context) : WearTokenStore {
     }
 
     @Suppress("DEPRECATION")
-    private val encryptedPrefs: SharedPreferences? by lazy {
-        runCatching {
-            val masterKey = MasterKey.Builder(appContext)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-            EncryptedSharedPreferences.create(
-                appContext,
-                PREFS_FILE_NAME,
-                masterKey,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-            )
-        }.getOrElse {
-            fastPrefs
-        }
-    }
+    private val encryptedPrefs: SharedPreferences?
+        get() = getSharedEncryptedPrefs(appContext) ?: fastPrefs
 
     private fun cacheFile(): File? = runCatching {
         File(appContext.filesDir, CACHE_FILE_NAME)
@@ -497,6 +482,42 @@ class SecureTokenStorage(context: Context) : WearTokenStore {
         private const val KEY_LAST_PHONE_SYNC_MS = "last_phone_sync_ms_v1"
         private const val KEY_CACHE_PREFIX = "wear_cache_v1_"
         private const val KEY_LATEST_CACHE = "wear_latest_cache_v2"
+        private val cacheFileLock = Any()
+        private val encryptedPrefsLock = Any()
+
+        @Volatile
+        private var cachedEncryptedPrefs: SharedPreferences? = null
+
+        @Suppress("DEPRECATION")
+        private fun createEncryptedPrefs(appCtx: Context): SharedPreferences {
+            val masterKey = MasterKey.Builder(appCtx)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            return EncryptedSharedPreferences.create(
+                appCtx,
+                PREFS_FILE_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+        }
+
+        private fun getSharedEncryptedPrefs(appCtx: Context): SharedPreferences? {
+            cachedEncryptedPrefs?.let { return it }
+            return synchronized(encryptedPrefsLock) {
+                cachedEncryptedPrefs?.let { return it }
+                val created = runCatching {
+                    createEncryptedPrefs(appCtx)
+                }.recoverCatching {
+                    runCatching { appCtx.deleteSharedPreferences(PREFS_FILE_NAME) }
+                    createEncryptedPrefs(appCtx)
+                }.getOrNull()
+                if (created != null) {
+                    cachedEncryptedPrefs = created
+                }
+                created
+            }
+        }
 
         fun accountKeyFor(session: StoredSession?): String {
             if (session == null) return "default"

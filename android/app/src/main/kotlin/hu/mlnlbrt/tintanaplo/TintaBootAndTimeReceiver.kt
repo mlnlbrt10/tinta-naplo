@@ -17,7 +17,7 @@ class TintaBootAndTimeReceiver : BroadcastReceiver() {
             action == Intent.ACTION_TIMEZONE_CHANGED ||
             action == Intent.ACTION_DATE_CHANGED
         ) {
-            TintaLiveTickReceiver.refreshAndSchedule(context)
+            runCatching { TintaLiveTickReceiver.refreshAndSchedule(context) }
         }
     }
 }

@@ -85,8 +85,8 @@ void main() {
 
         expect(find.text('Fejlesztői beállítások'), findsNothing);
 
-        // Tap version badge ('v2.0.2') 5 times to unlock Developer Options
-        final versionFinder = find.text('v2.0.2');
+        // Tap version badge ('v3.0.0') 5 times to unlock Developer Options
+        final versionFinder = find.text('v3.0.0');
         for (int i = 0; i < 5; i++) {
           await tester.tap(versionFinder);
           await tester.pump();
@@ -131,20 +131,38 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text('Fejlesztői beállítások'), findsNothing);
 
-        // Open "Rendszer / Névjegy" -> Developer Options lives exclusively here
+        // Verify Liquid Glass modes were moved out of Developer Appearance sub-page
+        // into main Settings -> "Megjelenés és témák"
         await tester.tap(find.text('Rendszer / Névjegy'));
         await tester.pumpAndSettle();
         expect(find.text('Fejlesztői beállítások'), findsOneWidget);
 
         await tester.tap(find.text('Fejlesztői beállítások'));
         await tester.pumpAndSettle();
+        final devAppearanceTile = find.text('Megjelenés és UI');
+        await tester.ensureVisible(devAppearanceTile);
+        await tester.tap(devAppearanceTile);
+        await tester.pumpAndSettle();
+        expect(find.text('Liquid Glass Mód (Fizikai optika)'), findsNothing);
 
-        final appearanceTile = find.text('Megjelenés és UI');
-        await tester.ensureVisible(appearanceTile);
-        await tester.tap(appearanceTile);
+        // Return to AppSettingsScreen and open "Megjelenés és témák"
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+
+        final mainAppearanceTile = find.text('Megjelenés és témák');
+        await tester.ensureVisible(mainAppearanceTile);
+        await tester.tap(mainAppearanceTile);
         await tester.pumpAndSettle();
 
         expect(find.text('Liquid Glass Mód (Fizikai optika)'), findsOneWidget);
+        expect(find.text('Alaptéma & Színek'), findsOneWidget);
+        expect(find.text('Liquid Glass & Felületek'), findsOneWidget);
+        expect(find.text('Kártyák & Elrendezés'), findsOneWidget);
+        expect(find.text('Ikon & Betűtípus'), findsOneWidget);
 
         // Select each of the 5 modes and verify immediate synchronous updates
         for (final mode in LiquidGlassMode.values) {
@@ -273,7 +291,7 @@ void main() {
           const Color(0xFF101318),
         );
 
-        // Zero extra BackdropFilter layers added by background/card system
+        // Zero BackdropFilter layers added by background/card system (120fps invariant)
         expect(find.byType(BackdropFilter), findsNothing);
 
         // 2. Switch to Topographic Contour (dark backdrop < 0.45 with vector painter)
@@ -398,7 +416,13 @@ void main() {
         expect(imageWidget.image, isA<ResizeImage>());
         final resized = imageWidget.image as ResizeImage;
         expect(resized.width, 1440);
-        expect(find.byType(BackdropFilter), findsNothing);
+        expect(
+          find.ancestor(
+            of: find.byWidget(imageWidget),
+            matching: find.byType(BackdropFilter),
+          ),
+          findsNothing,
+        );
 
         // Increase dim slider to 75% -> effective luminance drops below 0.45 -> switches to dark contrast
         final slider = tester.widget<Slider>(find.byType(Slider));

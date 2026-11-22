@@ -11,10 +11,11 @@ import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
+import '../widgets/privacy_legal_modal.dart';
 import '../widgets/tinta_toast.dart';
 
 /// Dedicated "Az alkalmazásról" (About App / Rendszer & Névjegy) screen with:
-/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v2.0.2'),
+/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v3.0.0'),
 ///   and developer credits.
 /// - Direct link to `https://github.com/mlnlbrt10/tinta-naplo`.
 /// - Manual "Frissítések keresése" button (GitHub Releases OTA updater).
@@ -91,11 +92,13 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
   }
 
   Future<void> _loadPackageVersion() async {
-    final (ver, _) = await GitHubUpdaterService.getAppVersionInfo();
-    if (!mounted) return;
-    setState(() {
-      _version = ver;
-    });
+    try {
+      final (ver, _) = await GitHubUpdaterService.getAppVersionInfo();
+      if (!mounted) return;
+      setState(() {
+        _version = ver;
+      });
+    } catch (_) {}
   }
 
   void _updatePrefs(UserProfilePrefs nextPrefs) {
@@ -156,16 +159,57 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
 
   Future<void> _openGitHubRepo() async {
     HapticFeedback.lightImpact();
-    final uri = Uri.parse(GitHubUpdaterService.repoUrl);
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+    try {
+      final uri = Uri.parse(GitHubUpdaterService.repoUrl);
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+
+  Future<void> _openFirkaWebsite() async {
+    HapticFeedback.lightImpact();
+    try {
+      await launchUrl(
+        Uri.parse('https://firka.app/'),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {}
+  }
+
+  void _openPrivacyAndLegalModal() {
+    HapticFeedback.selectionClick();
+    unawaited(showPrivacyAndLegalModal(context, prefs: _currentPrefs));
+  }
+
+  void _openOpenSourceLicenses() {
+    HapticFeedback.selectionClick();
+    showLicensePage(
+      context: context,
+      applicationName: 'Tinta Napló',
+      applicationVersion: 'v$_version',
+      applicationIcon: Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 4),
+        child: AppBrandIconBadge(
+          prefs: _currentPrefs,
+          size: 56,
+        ),
+      ),
+      applicationLegalese: '© Tinta Napló • GNU GPLv3 nyílt forráskódú projekt',
+    );
   }
 
   Future<void> _triggerManualUpdateCheck() async {
     if (_isCheckingUpdates) return;
     setState(() => _isCheckingUpdates = true);
-    await GitHubUpdaterService.checkForUpdates(context, manual: true);
-    if (mounted) {
-      setState(() => _isCheckingUpdates = false);
+    try {
+      await GitHubUpdaterService.checkForUpdates(context, manual: true);
+    } catch (_) {
+      if (mounted) {
+        TintaToast.error(context, 'Frissítések ellenőrzése sikertelen');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCheckingUpdates = false);
+      }
     }
   }
 
@@ -194,6 +238,8 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
           _buildHeroIdentityCard(theme, scheme).staggeredEntrance(0),
           const SizedBox(height: 16),
           _buildUpdateAndLinksCard(theme, scheme).staggeredEntrance(1),
+          const SizedBox(height: 16),
+          _buildLegalAndLicensesCard(theme, scheme).staggeredEntrance(2),
         ],
       ),
     );
@@ -230,7 +276,7 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
             child: _currentPrefs.fitymaModeEnabled
                 ? const FitymaBrandIcon(size: 88)
                 : Image.asset(
-                    'assets/images/tinta_icon.png',
+                    _currentPrefs.activeAppIconAsset,
                     width: 88,
                     height: 88,
                     fit: BoxFit.cover,
@@ -404,6 +450,106 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
                 ],
               ),
             ),
+          ),
+          const SizedBox(height: 10),
+          TactileBounce(
+            onTap: _openFirkaWebsite,
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 16),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: theme.dividerColor),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.brush_rounded, size: 19, color: scheme.primary),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          uwu('Ikonok inspirációja: Firka (QwIT)'),
+                          style: theme.textTheme.labelLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                        Text(
+                          'https://firka.app/',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    Icons.open_in_new_rounded,
+                    size: 18,
+                    color: scheme.onSurface.withValues(alpha: 0.6),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLegalAndLicensesCard(ThemeData theme, ColorScheme scheme) {
+    return Material(
+      color: theme.cardTheme.color,
+      shape: RoundedRectangleBorder(
+        borderRadius: OledTheme.largeRadius,
+        side: BorderSide(color: theme.dividerColor),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: Icon(Icons.privacy_tip_outlined, color: scheme.primary),
+            title: Text(
+              uwu('Adatvédelmi tájékoztató'),
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            subtitle: Text(
+              uwu('Adatvédelem és jogi nyilatkozat'),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurface.withValues(alpha: 0.62),
+              ),
+            ),
+            trailing: Icon(
+              Icons.chevron_right_rounded,
+              color: scheme.onSurface.withValues(alpha: 0.56),
+            ),
+            onTap: _openPrivacyAndLegalModal,
+          ),
+          Divider(height: 1, indent: 56, color: theme.dividerColor),
+          ListTile(
+            leading: Icon(Icons.description_outlined, color: scheme.primary),
+            title: Text(
+              uwu('Nyílt forráskódú licencek'),
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            subtitle: Text(
+              uwu('Függőségek és betűtípusok licencei'),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurface.withValues(alpha: 0.62),
+              ),
+            ),
+            trailing: Icon(
+              Icons.chevron_right_rounded,
+              color: scheme.onSurface.withValues(alpha: 0.56),
+            ),
+            onTap: _openOpenSourceLicenses,
           ),
         ],
       ),

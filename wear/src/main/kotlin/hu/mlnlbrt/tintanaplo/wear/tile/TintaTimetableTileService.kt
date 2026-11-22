@@ -36,7 +36,7 @@ import kotlinx.coroutines.guava.future
 /**
  * Minimalist OLED Wear OS Tile displaying ONLY two clean pill cards:
  * 1. Current lesson (period, subject, room, remaining time / end time)
- * 2. Next lesson (next period, subject, room, start time — or "Nincs több óra")
+ * 2. Next lesson (next period, subject, room, start time - or "Nincs több óra")
  *
  * Tapping anywhere on the tile launches the Watch app directly.
  */
@@ -51,35 +51,29 @@ class TintaTimetableTileService : TileService() {
         var session: StoredSession? = null
         var lessons: List<Lesson> = emptyList()
 
-        runCatching {
+        try {
             val tokenStore = SecureTokenStorage(applicationContext)
             session = tokenStore.loadSession()
             val todayKey = KretaDateParser.dateKeyFor(nowMs)
             val accountKey = SecureTokenStorage.accountKeyFor(session)
 
-            var cached = tokenStore.loadWearDataCache(accountKey, todayKey)
+            val cached = tokenStore.loadWearDataCache(accountKey, todayKey)
             val activeSession = session
-            if (activeSession != null && (cached == null || cached.lessons.isEmpty())) {
-                val apiClient = KretaWearApiClient(
-                    tokenStore = tokenStore,
-                    onSessionRefreshed = { refreshed ->
-                        WearRemoteAuthManager.getInstance(applicationContext)
-                            .pushRefreshedSessionToPhone(refreshed)
-                    },
-                )
-                val synced = runCatching { apiClient.syncAll(activeSession) }.getOrNull()
-                if (synced != null) {
-                    cached = synced
-                }
-            }
-
             if (activeSession != null) {
+                // Never run blocking 4-endpoint HTTP sync or OAuth token refreshes
+                // inside onTileRequest() (Wear OS Tile Host enforces a strict timeout).
+                // Return cached data immediately and enqueue WorkManager in background.
                 KretaSyncScheduler.ensurePeriodicSync(applicationContext)
-                cached?.lessons?.let { cachedLessons ->
-                    KretaSyncScheduler.scheduleNextTransitionUpdate(applicationContext, cachedLessons, nowMs)
+                if (cached == null || cached.lessons.isEmpty()) {
+                    KretaSyncScheduler.triggerImmediateSync(applicationContext)
+                } else {
+                    KretaSyncScheduler.scheduleNextTransitionUpdate(applicationContext, cached.lessons, nowMs)
                 }
             }
             lessons = cached?.lessons ?: emptyList()
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
         }
 
         val timeline = buildTimeline(

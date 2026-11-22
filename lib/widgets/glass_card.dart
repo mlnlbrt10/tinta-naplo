@@ -31,10 +31,14 @@ Color resolveSoftBlurBarrierColor(
   UserProfilePrefs? prefs,
   double solidDarkAlpha = 0.56,
   double solidLightAlpha = 0.34,
+  double glassDarkAlpha = 0.30,
+  double glassLightAlpha = 0.20,
 }) {
   final isDark = Theme.of(context).brightness == Brightness.dark;
   if (resolveLiquidGlassEnabled(prefs)) {
-    return Colors.black.withValues(alpha: isDark ? 0.30 : 0.20);
+    return Colors.black.withValues(
+      alpha: isDark ? glassDarkAlpha : glassLightAlpha,
+    );
   }
   return Colors.black.withValues(
     alpha: isDark ? solidDarkAlpha : solidLightAlpha,
@@ -104,7 +108,11 @@ class LiquidGlassSurface extends StatelessWidget {
             (isDark
                 ? const Color(0xF5141820)
                 : Colors.white.withValues(alpha: 0.97)))
-        : (effectiveSolidColor ?? scheme.surfaceContainerHigh).withValues(alpha: 1.0);
+        : (effectiveSolidColor ??
+                (!isDark && isDockStyle
+                    ? Colors.white
+                    : scheme.surfaceContainerHigh))
+            .withValues(alpha: 1.0);
     final rawContent = Material(
       type: MaterialType.transparency,
       child: child,
@@ -159,18 +167,24 @@ class LiquidGlassSurface extends StatelessWidget {
       final op = skin.cardOpacity ?? 0.85;
       topTint = skin.surface!.withValues(alpha: (0.45 * op).clamp(0.05, 0.9));
       bottomTint = skin.surface!.withValues(alpha: (0.28 * op).clamp(0.03, 0.85));
-    } else {
-      // Crystal-clear optical glass: near-zero dark tint with zero white haze
-      // so the wallpaper or underlying UI shines cleanly through the blur.
-      topTint = Colors.black.withValues(alpha: isDark ? 0.06 : 0.02);
+    } else if (isDark) {
+      // Crystal-clear optical glass on dark: near-zero dark tint so the
+      // wallpaper or underlying UI shines cleanly through the blur.
+      topTint = Colors.black.withValues(alpha: 0.06);
       bottomTint = Colors.transparent;
+    } else {
+      topTint = Colors.white.withValues(alpha: isDockStyle ? 0.88 : 0.84);
+      bottomTint =
+          const Color(0xFFF8FAFC).withValues(alpha: isDockStyle ? 0.80 : 0.78);
     }
 
     final specularBorder = border ??
         Border.all(
           color: (skin.enabled && skin.borderColor != null)
               ? skin.borderColor!
-              : Colors.white.withValues(alpha: isDark ? 0.14 : 0.24),
+              : (isDark
+                  ? Colors.white.withValues(alpha: 0.14)
+                  : Colors.black.withValues(alpha: 0.07)),
           width: effectiveBorderWidth,
         );
 
@@ -376,8 +390,8 @@ Future<T?> showSoftBlurDialog<T>({
             solidDarkAlpha: 0.52,
             solidLightAlpha: 0.34,
           ),
-      transitionDuration: const Duration(milliseconds: 250),
-      reverseTransitionDuration: const Duration(milliseconds: 230),
+      transitionDuration: const Duration(milliseconds: 295),
+      reverseTransitionDuration: const Duration(milliseconds: 240),
       transitionBuilder: (dialogContext, animation, secondaryAnimation, child) =>
           child,
       pageBuilder: (dialogContext, animation, secondaryAnimation) {
@@ -388,11 +402,11 @@ Future<T?> showSoftBlurDialog<T>({
         );
         final scaleCurved = CurvedAnimation(
           parent: animation,
-          curve: Curves.easeOutCubic,
-          reverseCurve: Curves.easeInCubic,
+          curve: Curves.easeOutBack,
+          reverseCurve: Curves.easeInBack,
         );
         return ScaleTransition(
-          scale: Tween<double>(begin: 0.96, end: 1.0).animate(scaleCurved),
+          scale: Tween<double>(begin: 0.90, end: 1.0).animate(scaleCurved),
           child: Dialog(
             backgroundColor: Colors.transparent,
             elevation: 0,
@@ -464,6 +478,7 @@ class SoftGlassCard extends StatelessWidget {
     final effectiveBorderWidth = skin.enabled ? (skin.borderWidth ?? 1.0) : 1.0;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final activePreset = BackgroundPresetInfo.resolve(activePrefs);
     final hasStudioOrCustomBackdrop = activePrefs.hasAnimatedBackdrop ||
         activePrefs.hasCustomBackdrop ||
@@ -504,13 +519,21 @@ class SoftGlassCard extends StatelessWidget {
             color: baseSolid,
             borderRadius: effectiveRadius,
             border: borderSide,
+            boxShadow: !isDark
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.04),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
           ),
           child: contentChild,
         ),
       );
     }
 
-    final isDark = theme.brightness == Brightness.dark;
     final glassBorder = border ??
         Border.all(
           color: borderColor ??
@@ -518,7 +541,9 @@ class SoftGlassCard extends StatelessWidget {
                   ? skin.borderColor!
                   : (hasStudioOrCustomBackdrop
                       ? contrast.cardBorder
-                      : Colors.white.withValues(alpha: isDark ? 0.14 : 0.34))),
+                      : (isDark
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : Colors.black.withValues(alpha: 0.06)))),
           width: effectiveBorderWidth,
         );
 
@@ -542,90 +567,142 @@ class SoftGlassCard extends StatelessWidget {
     }
 
     final opacityScale = (skin.enabled && skin.cardOpacity != null)
-        ? skin.cardOpacity!.clamp(0.15, 1.0)
-        : activePrefs.cardOpacity.clamp(0.55, 0.95);
+        ? skin.cardOpacity!.clamp(0.0, 1.0)
+        : activePrefs.cardOpacity.clamp(0.0, 1.0);
     final surfaceBase = color ??
         (skin.enabled && skin.surface != null
             ? skin.surface!
             : (isDark ? const Color(0xFF141820) : Colors.white));
+    final subtleTintAlpha = isDark
+        ? (0.14 + opacityScale * 0.70).clamp(0.14, 0.86)
+        : (0.18 + opacityScale * 0.72).clamp(0.18, 0.92);
+
+    final Widget readabilityProtectedContent = opacityScale < 0.35
+        ? DefaultTextStyle.merge(
+            style: TextStyle(
+              shadows: [
+                Shadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.48 : 0.14),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+            ),
+            child: contentChild,
+          )
+        : contentChild;
+
     final Color topHighlightStop;
     final Color midBodyStop;
     final Color bottomDepthStop;
     if (color != null) {
       topHighlightStop = Color.alphaBlend(
-        Colors.white.withValues(alpha: isDark ? 0.08 : 0.22),
-        color!.withValues(alpha: (color!.a * opacityScale).clamp(0.28, 0.86)),
+        Colors.white.withValues(alpha: isDark ? 0.03 : 0.12),
+        color!.withValues(alpha: (color!.a * subtleTintAlpha).clamp(0.16, 0.88)),
       );
       midBodyStop = color!.withValues(
-        alpha: (color!.a * opacityScale * 0.88).clamp(0.22, 0.78),
+        alpha: (color!.a * subtleTintAlpha * 0.90).clamp(0.14, 0.82),
       );
       bottomDepthStop = color!.withValues(
-        alpha: (color!.a * opacityScale * 0.94).clamp(0.26, 0.84),
+        alpha: (color!.a * subtleTintAlpha * 0.96).clamp(0.16, 0.86),
       );
     } else if (hasStudioOrCustomBackdrop) {
       if (contrast.isLightBackdrop) {
-        topHighlightStop = Colors.white.withValues(alpha: 0.72 * opacityScale);
-        midBodyStop = Colors.white.withValues(alpha: 0.54 * opacityScale);
+        topHighlightStop = Colors.white.withValues(
+          alpha: (0.16 + 0.56 * opacityScale).clamp(0.16, 0.76),
+        );
+        midBodyStop = Colors.white.withValues(
+          alpha: (0.14 + 0.44 * opacityScale).clamp(0.14, 0.64),
+        );
         bottomDepthStop = const Color(0xFFF1F5F9).withValues(
-          alpha: 0.62 * opacityScale,
+          alpha: (0.16 + 0.50 * opacityScale).clamp(0.16, 0.70),
         );
       } else {
-        topHighlightStop = Colors.white.withValues(alpha: 0.13 * opacityScale);
-        midBodyStop = const Color(0xFF141820).withValues(
-          alpha: 0.56 * opacityScale,
+        topHighlightStop = const Color(0xFF141923).withValues(
+          alpha: (0.18 + 0.56 * opacityScale).clamp(0.18, 0.76),
         );
-        bottomDepthStop = const Color(0xFF0C0F16).withValues(
-          alpha: 0.68 * opacityScale,
+        midBodyStop = const Color(0xFF10141C).withValues(
+          alpha: (0.20 + 0.58 * opacityScale).clamp(0.20, 0.80),
+        );
+        bottomDepthStop = const Color(0xFF0A0D13).withValues(
+          alpha: (0.24 + 0.62 * opacityScale).clamp(0.24, 0.88),
         );
       }
     } else if (isDark) {
-      topHighlightStop = Colors.white.withValues(alpha: 0.095 * opacityScale);
-      midBodyStop = surfaceBase.withValues(alpha: 0.44 * opacityScale);
-      bottomDepthStop = const Color(0xFF0A0D13).withValues(
-        alpha: 0.56 * opacityScale,
+      topHighlightStop = Color.alphaBlend(
+        Colors.white.withValues(alpha: 0.025),
+        surfaceBase.withValues(
+          alpha: (0.16 + opacityScale * 0.54).clamp(0.16, 0.72),
+        ),
+      );
+      midBodyStop = surfaceBase.withValues(
+        alpha: (0.18 + opacityScale * 0.56).clamp(0.18, 0.76),
+      );
+      bottomDepthStop = const Color(0xFF090C11).withValues(
+        alpha: (0.22 + opacityScale * 0.62).clamp(0.22, 0.86),
       );
     } else {
-      topHighlightStop = Colors.white.withValues(alpha: 0.82 * opacityScale);
-      midBodyStop = scheme.surfaceContainerHigh.withValues(
-        alpha: 0.56 * opacityScale,
+      topHighlightStop = Colors.white.withValues(
+        alpha: (0.80 + 0.10 * opacityScale).clamp(0.80, 0.90),
       );
-      bottomDepthStop = scheme.surfaceContainer.withValues(
-        alpha: 0.66 * opacityScale,
+      midBodyStop = Colors.white.withValues(
+        alpha: (0.76 + 0.12 * opacityScale).clamp(0.76, 0.88),
+      );
+      bottomDepthStop = const Color(0xFFF8FAFC).withValues(
+        alpha: (0.78 + 0.10 * opacityScale).clamp(0.78, 0.88),
       );
     }
 
-    return RepaintBoundary(
-      child: ClipRRect(
-        borderRadius: effectiveRadius,
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              stops: const [0.0, 0.35, 1.0],
-              colors: [topHighlightStop, midBodyStop, bottomDepthStop],
-            ),
-            borderRadius: effectiveRadius,
-            border: glassBorder,
+    final glassCard = ClipRRect(
+      borderRadius: effectiveRadius,
+      child: Container(
+        padding: padding,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            stops: const [0.0, 0.35, 1.0],
+            colors: [topHighlightStop, midBodyStop, bottomDepthStop],
           ),
-          foregroundDecoration: BoxDecoration(
-            borderRadius: effectiveRadius,
-            border: Border(
-              top: BorderSide(
-                color: Colors.white.withValues(alpha: isDark ? 0.22 : 0.62),
-                width: 0.85,
-              ),
-            ),
-          ),
-          child: contentChild,
+          borderRadius: effectiveRadius,
+          border: glassBorder,
         ),
+        foregroundDecoration: BoxDecoration(
+          borderRadius: effectiveRadius,
+          border: Border(
+            top: BorderSide(
+              color: Colors.white.withValues(alpha: isDark ? 0.08 : 0.65),
+              width: 0.85,
+            ),
+          ),
+        ),
+        child: readabilityProtectedContent,
       ),
     );
+
+    if (!isDark) {
+      return RepaintBoundary(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: effectiveRadius,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: glassCard,
+        ),
+      );
+    }
+
+    return RepaintBoundary(child: glassCard);
   }
 }
 
-/// Animated luminous ambient aura glow rendered around newly arrived ("first-seen")
+/// Subtle highlighted edge indicator rendered on newly arrived ("first-seen")
 /// grade cards and subject tiles before auto-dismissing once inspected.
 class GradeFirstSeenGlow extends StatelessWidget {
   final bool isGlowing;
@@ -644,52 +721,47 @@ class GradeFirstSeenGlow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 280),
-      curve: Curves.easeOutCubic,
-      decoration: BoxDecoration(
-        borderRadius: borderRadius,
-        border: Border.all(
-          color: isGlowing
-              ? accentColor.withValues(alpha: isDark ? 0.45 : 0.38)
-              : Colors.transparent,
-          width: isGlowing ? 1.0 : 0.0,
-        ),
-        boxShadow: isGlowing
-            ? [
-                BoxShadow(
-                  color: accentColor.withValues(alpha: isDark ? 0.44 : 0.35),
-                  blurRadius: 18,
-                  spreadRadius: 1.0,
-                ),
-                BoxShadow(
-                  color: accentColor.withValues(alpha: isDark ? 0.36 : 0.26),
-                  blurRadius: 26,
-                  spreadRadius: 2.0,
-                ),
-              ]
-            : const [],
-      ),
-      child: Stack(
-        fit: StackFit.passthrough,
-        children: [
-          Positioned.fill(
-            child: IgnorePointer(
-              child: ClipRRect(
-                borderRadius: borderRadius,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 280),
-                  curve: Curves.easeOutCubic,
-                  opacity: isGlowing ? 1.0 : 0.0,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        center: Alignment.centerLeft,
-                        radius: 1.25,
-                        colors: [
-                          accentColor.withValues(alpha: isDark ? 0.18 : 0.11),
-                          Colors.transparent,
-                        ],
+    return Stack(
+      fit: StackFit.passthrough,
+      children: [
+        child,
+        Positioned.fill(
+          child: IgnorePointer(
+            child: ClipRRect(
+              borderRadius: borderRadius,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 500),
+                curve: Curves.easeOutCubic,
+                opacity: isGlowing ? 1.0 : 0.0,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: borderRadius,
+                    border: Border.all(
+                      color: accentColor.withValues(alpha: isDark ? 0.65 : 0.55),
+                      width: 1.35,
+                    ),
+                    gradient: LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      colors: [
+                        accentColor.withValues(alpha: isDark ? 0.16 : 0.10),
+                        accentColor.withValues(alpha: isDark ? 0.04 : 0.02),
+                        Colors.transparent,
+                      ],
+                      stops: const [0.0, 0.45, 1.0],
+                    ),
+                  ),
+                  child: Align(
+                    alignment: Alignment.topLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 7, left: 7),
+                      child: Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: accentColor,
+                        ),
                       ),
                     ),
                   ),
@@ -697,9 +769,8 @@ class GradeFirstSeenGlow extends StatelessWidget {
               ),
             ),
           ),
-          child,
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

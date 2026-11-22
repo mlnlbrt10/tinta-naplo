@@ -104,7 +104,9 @@ class CustomSkinConfig {
         return val != null ? Color(val) : null;
       }
       if (hex.length == 8) {
-        final val = int.tryParse(hex, radix: 16);
+        // CSS 8-digit hex is #RRGGBBAA; Flutter Color expects 0xAARRGGBB.
+        final argbHex = '${hex.substring(6, 8)}${hex.substring(0, 6)}';
+        final val = int.tryParse(argbHex, radix: 16);
         return val != null ? Color(val) : null;
       }
       return null;

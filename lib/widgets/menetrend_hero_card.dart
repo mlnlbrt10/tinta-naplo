@@ -3,13 +3,14 @@ import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
 import '../providers/app_providers.dart';
-import '../theme/oled_theme.dart';
 import '../services/menetrend_service.dart';
 import '../services/token_storage_service.dart';
+import '../theme/oled_theme.dart';
 import '../utils/html_sanitizer.dart';
 import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
 import 'edge_fade_horizontal_scroll.dart';
+import 'frosted_inspection_modal.dart';
 import 'glass_card.dart';
 
 /// Home wrapper for the MenetrendGO card. Outside morning/afternoon commute
@@ -77,11 +78,11 @@ Widget _buildMenetrendHeroShuttle(
       ? fromRender.size
       : (flightDirection == HeroFlightDirection.push
           ? const Size(210, 26)
-          : const Size(42, 42));
+          : const Size(48, 48));
   final toSize = (toRender != null && toRender.hasSize)
       ? toRender.size
       : (flightDirection == HeroFlightDirection.push
-          ? const Size(42, 42)
+          ? const Size(48, 48)
           : const Size(210, 26));
 
   final fromHero = fromHeroContext.widget as Hero;
@@ -130,6 +131,41 @@ Widget _buildMenetrendHeroShuttle(
   );
 }
 
+class _TransitStatusInfo {
+  final Color color;
+  final String label;
+
+  const _TransitStatusInfo({
+    required this.color,
+    required this.label,
+  });
+
+  factory _TransitStatusInfo.fromTrip(MenetrendTripOption trip) {
+    if (trip.isCancelled) {
+      return const _TransitStatusInfo(
+        color: Color(0xFFEF4444),
+        label: 'Kimarad',
+      );
+    }
+    if (trip.delayMinutes >= 10) {
+      return _TransitStatusInfo(
+        color: const Color(0xFFEF4444),
+        label: '+${trip.delayMinutes}p késés',
+      );
+    }
+    if (trip.delayMinutes > 0) {
+      return _TransitStatusInfo(
+        color: const Color(0xFFF59E0B),
+        label: '+${trip.delayMinutes}p késés',
+      );
+    }
+    return const _TransitStatusInfo(
+      color: Color(0xFF22C55E),
+      label: 'Időben',
+    );
+  }
+}
+
 class MenetrendHeroCard extends StatelessWidget {
   final CommuteEvaluation evaluation;
   final UserProfilePrefs prefs;
@@ -155,7 +191,8 @@ class MenetrendHeroCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final activePrefs = AppProvidersScope.maybeOf(context)?.settings.prefs ?? prefs;
+    final activePrefs =
+        AppProvidersScope.maybeOf(context)?.settings.prefs ?? prefs;
     final trip = evaluation.recommendedTrip;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -164,26 +201,8 @@ class MenetrendHeroCard extends StatelessWidget {
     final secondaryText =
         isDark ? OledTheme.textSecondary : onSurface.withValues(alpha: 0.72);
     final bool isDelayed = trip.delayMinutes > 0 && !trip.isCancelled;
-    final Color statusColor;
-    final String statusBadgeText;
-    final IconData statusIcon;
-    if (trip.isCancelled) {
-      statusColor = const Color(0xFFEF4444);
-      statusBadgeText = 'Kimarad';
-      statusIcon = Icons.cancel_rounded;
-    } else if (trip.delayMinutes >= 10) {
-      statusColor = const Color(0xFFEF4444);
-      statusBadgeText = '+${trip.delayMinutes} perc késés';
-      statusIcon = Icons.schedule_rounded;
-    } else if (trip.delayMinutes > 0) {
-      statusColor = const Color(0xFFF59E0B);
-      statusBadgeText = '+${trip.delayMinutes} perc késés';
-      statusIcon = Icons.schedule_rounded;
-    } else {
-      statusColor = const Color(0xFF22C55E);
-      statusBadgeText = 'Időben';
-      statusIcon = Icons.check_circle_rounded;
-    }
+    final statusInfo = _TransitStatusInfo.fromTrip(trip);
+    final statusColor = statusInfo.color;
 
     final Color? arrivalTimeColor = trip.isCancelled
         ? const Color(0xFFEF4444)
@@ -194,19 +213,16 @@ class MenetrendHeroCard extends StatelessWidget {
         ? trip.effectiveDestinationArrivalTimeFormatted
         : trip.destinationArrivalTimeFormatted;
 
-    final countdownBadgeText =
-        'Indulásig: ${evaluation.minutesUntilDeparture} perc';
     final walkStartFormatted =
         DateFormat('HH:mm').format(evaluation.latestWalkStartTime);
     final safeLine = trip.safeRouteShortName;
 
-    final walkSubtitle = evaluation.effectiveWalkMinutes > 0
-        ? 'Séta ind.: $walkStartFormatted (${evaluation.effectiveWalkMinutes} p séta)'
-            '${trip.walkToDestinationMinutes > 0 ? " • Cél séta: ${trip.walkToDestinationMinutes} p" : ""}'
-            '${trip.platformCode != null ? " • ${trip.platformCode}" : ""}'
-        : (trip.walkToDestinationMinutes > 0
-            ? 'Cél séta: ${trip.walkToDestinationMinutes} perc${trip.platformCode != null ? " • ${trip.platformCode}" : ""}'
-            : '$countdownBadgeText${trip.platformCode != null ? " • ${trip.platformCode}" : ""}');
+    final walkSubtitle = uwuLabel(
+      evaluation.effectiveWalkMinutes > 0
+          ? 'Indulás: $walkStartFormatted (${evaluation.effectiveWalkMinutes}p séta)'
+          : 'Indulásig: ${evaluation.minutesUntilDeparture}p',
+      enabled: activePrefs.uwuModeEnabled,
+    );
 
     final cardContent = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -218,86 +234,61 @@ class MenetrendHeroCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Flexible(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4.5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: statusColor.withValues(alpha: 0.16),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(
-                              color: statusColor.withValues(alpha: 0.45),
+                  Expanded(
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          TextSpan(
+                            text: 'MENETRENDGO',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.8,
+                              color: onSurface.withValues(alpha: 0.50),
                             ),
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                statusIcon,
-                                size: 13.5,
-                                color: statusColor,
-                              ),
-                              const SizedBox(width: 5),
-                              Text(
-                                UwuHelper.apply(statusBadgeText),
-                                maxLines: 1,
-                                style: TextStyle(
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.w800,
-                                  color: statusColor,
-                                ),
-                              ),
-                            ],
+                          TextSpan(
+                            text: '  •  ',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: onSurface.withValues(alpha: 0.35),
+                            ),
                           ),
-                        ),
+                          TextSpan(
+                            text: uwuLabel(
+                              statusInfo.label,
+                              enabled: activePrefs.uwuModeEnabled,
+                            ),
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w700,
+                              color: statusColor.withValues(alpha: 0.92),
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   const SizedBox(width: 8),
                   TactileBounce(
-                    pressedScale: 0.95,
+                    pressedScale: 0.92,
                     onTap: () => MenetrendService.openInMenetrendGo(
                       trip: trip,
                       evaluation: evaluation,
                       prefs: activePrefs,
                     ),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4.5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: primary.withValues(alpha: 0.16),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: primary.withValues(alpha: 0.42),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'MenetrendGO',
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w800,
-                              color: primary,
-                            ),
-                          ),
-                          const SizedBox(width: 5),
-                          Icon(
-                            Icons.open_in_new_rounded,
-                            size: 13.5,
-                            color: primary,
-                          ),
-                        ],
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: Icon(
+                        Icons.open_in_new_rounded,
+                        size: 16,
+                        color: onSurface.withValues(alpha: 0.54),
                       ),
                     ),
                   ),
@@ -318,7 +309,10 @@ class MenetrendHeroCard extends StatelessWidget {
                     ),
                   ),
                   child: Text(
-                    trip.favoriteBadgeText,
+                    uwuLabel(
+                      trip.favoriteBadgeText,
+                      enabled: activePrefs.uwuModeEnabled,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -344,6 +338,7 @@ class MenetrendHeroCard extends StatelessWidget {
                           constraints: BoxConstraints(maxWidth: maxBadgeW),
                           child: Hero(
                             tag: 'menetrend_hero_card',
+                            createRectTween: createLinearHeroRectTween,
                             flightShuttleBuilder: _buildMenetrendHeroShuttle,
                             child: Material(
                               type: MaterialType.transparency,
@@ -377,6 +372,7 @@ class MenetrendHeroCard extends StatelessWidget {
                       ] else ...[
                         Hero(
                           tag: 'menetrend_hero_card',
+                          createRectTween: createLinearHeroRectTween,
                           flightShuttleBuilder: _buildMenetrendHeroShuttle,
                           child: Material(
                             type: MaterialType.transparency,
@@ -401,8 +397,11 @@ class MenetrendHeroCard extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              HtmlSanitizer.clean(
-                                '${trip.departureStation} → ${trip.arrivalStation}',
+                              uwuLabel(
+                                HtmlSanitizer.clean(
+                                  '${trip.departureStation} → ${trip.arrivalStation}',
+                                ),
+                                enabled: activePrefs.uwuModeEnabled,
                               ),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
@@ -422,6 +421,9 @@ class MenetrendHeroCard extends StatelessWidget {
                                 fontSize: 12,
                                 color: secondaryText,
                                 fontWeight: FontWeight.w600,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
                               ),
                             ),
                           ],
@@ -443,25 +445,40 @@ class MenetrendHeroCard extends StatelessWidget {
                                   fontSize: 20,
                                   fontWeight: FontWeight.w900,
                                   color: onSurface,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
                                 ),
                               ),
                               Text(
-                                'Érk: $displayedArrivalTime',
+                                uwuLabel(
+                                  'Érk.: $displayedArrivalTime',
+                                  enabled: activePrefs.uwuModeEnabled,
+                                ),
                                 style: TextStyle(
                                   fontSize: 11.5,
                                   fontWeight: arrivalTimeColor != null
                                       ? FontWeight.w800
                                       : FontWeight.w600,
                                   color: arrivalTimeColor ?? secondaryText,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
                                 ),
                               ),
                               if (isDelayed)
                                 Text(
-                                  'Becsült ind.: ${trip.effectiveDepartureTimeFormatted}',
+                                  uwuLabel(
+                                    'Becsült ind.: ${trip.effectiveDepartureTimeFormatted}',
+                                    enabled: activePrefs.uwuModeEnabled,
+                                  ),
                                   style: TextStyle(
                                     fontSize: 10.5,
                                     fontWeight: FontWeight.w700,
                                     color: statusColor,
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures(),
+                                    ],
                                   ),
                                 ),
                             ],
@@ -510,8 +527,11 @@ class MenetrendHeroCard extends StatelessWidget {
                         ),
                         const SizedBox(width: 5),
                         Text(
-                          '${i + 1}. szakasz: $cleanLegName '
-                          '(${leg.mode == MenetrendTransportMode.rail ? "vonat" : "busz"})',
+                          uwuLabel(
+                            '${i + 1}. szakasz: $cleanLegName '
+                            '(${leg.mode == MenetrendTransportMode.rail ? "vonat" : "busz"})',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
                           style: TextStyle(
                             fontSize: 11.5,
                             fontWeight: FontWeight.w800,
@@ -545,7 +565,10 @@ class MenetrendHeroCard extends StatelessWidget {
                       ),
                     ),
                     child: Text(
-                      'Átszállás ${trip.legs[i + 1].departure.difference(trip.legs[i].arrival).inMinutes} p',
+                      uwuLabel(
+                        'Átszállás ${trip.legs[i + 1].departure.difference(trip.legs[i].arrival).inMinutes} p',
+                        enabled: activePrefs.uwuModeEnabled,
+                      ),
                       style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w800,
@@ -594,39 +617,31 @@ Future<void> showMenetrendDetailsModal(
   required CommuteEvaluation evaluation,
   required UserProfilePrefs prefs,
 }) async {
-  await Navigator.of(context).push(
-    PageRouteBuilder<void>(
-      opaque: false,
-      barrierDismissible: true,
-      barrierLabel: 'Bezárás',
-      barrierColor: resolveSoftBlurBarrierColor(
-        context,
-        prefs: prefs,
-        solidDarkAlpha: 0.72,
-        solidLightAlpha: 0.48,
-      ),
-      transitionDuration: const Duration(milliseconds: 250),
-      reverseTransitionDuration: const Duration(milliseconds: 230),
-      pageBuilder: (ctx, animation, secondaryAnimation) {
-        return _MenetrendDetailsModalSheet(
-          evaluation: evaluation,
-          prefs: prefs,
-          animation: animation,
-        );
-      },
+  await showFloatingGlassSheet<void>(
+    context: context,
+    prefs: prefs,
+    barrierColor: resolveSoftBlurBarrierColor(
+      context,
+      prefs: prefs,
+      solidDarkAlpha: 0.72,
+      solidLightAlpha: 0.48,
     ),
+    builder: (ctx) {
+      return _MenetrendDetailsModalSheet(
+        evaluation: evaluation,
+        prefs: prefs,
+      );
+    },
   );
 }
 
 class _MenetrendDetailsModalSheet extends StatefulWidget {
   final CommuteEvaluation evaluation;
   final UserProfilePrefs prefs;
-  final Animation<double> animation;
 
   const _MenetrendDetailsModalSheet({
     required this.evaluation,
     required this.prefs,
-    required this.animation,
   });
 
   @override
@@ -637,6 +652,7 @@ class _MenetrendDetailsModalSheet extends StatefulWidget {
 class _MenetrendDetailsModalSheetState
     extends State<_MenetrendDetailsModalSheet> {
   late MenetrendTripOption _selectedTrip;
+  bool _stopsExpanded = false;
 
   @override
   void initState() {
@@ -653,12 +669,11 @@ class _MenetrendDetailsModalSheetState
     final isDark = theme.brightness == Brightness.dark;
     final primary = theme.colorScheme.primary;
     final onSurface = theme.colorScheme.onSurface;
-    final secondaryText =
-        isDark ? OledTheme.textSecondary : onSurface.withValues(alpha: 0.72);
+    final secondaryText = onSurface.withValues(alpha: 0.58);
     final surfaceElevated =
         isDark ? OledTheme.surfaceElevated : theme.colorScheme.surfaceContainerHigh;
-    final borderSubtle =
-        isDark ? OledTheme.borderSubtle : onSurface.withValues(alpha: 0.14);
+    final hairlineColor =
+        onSurface.withValues(alpha: isDark ? 0.08 : 0.07);
 
     final closeMode = activePrefs.modalCloseMode;
     final firstLessonStart = activeEval.isMorningMode
@@ -693,117 +708,70 @@ class _MenetrendDetailsModalSheetState
         ? candidateTrip
         : visibleAlternatives.last;
     final safeLine = trip.safeRouteShortName;
-    final safeLongLine = MenetrendService.sanitizeRouteLongName(trip.routeLongName);
-    final headerSubtitle =
-        safeLongLine.isNotEmpty && safeLongLine != safeLine
-            ? safeLongLine
-            : 'MenetrendGO valós idejű útvonal';
+    final statusInfo = _TransitStatusInfo.fromTrip(trip);
+    final isDelayed = trip.delayMinutes > 0 && !trip.isCancelled;
 
-    // Use OFFICIAL scheduled departure/arrival so delayed transit catches-ups
-    // never leave the user late at the station, and show true destination arrival.
     final walkLeave = trip.scheduledDeparture
         .subtract(Duration(minutes: trip.walkToStationMinutes));
     final destinationArrive = trip.scheduledDestinationArrival;
-    final fallbackDestLabel = activeEval.isMorningMode
-        ? activePrefs.schoolAddress
-        : activePrefs.homeAddress;
-    final destLabel = (trip.destinationLabel != null &&
-            trip.destinationLabel!.trim().isNotEmpty &&
-            trip.destinationLabel!.trim() != trip.arrivalStation.trim())
-        ? trip.destinationLabel!.trim()
-        : (fallbackDestLabel.trim().isNotEmpty &&
-                fallbackDestLabel.trim() != trip.arrivalStation.trim()
-            ? fallbackDestLabel.trim()
-            : '');
+    final arrivalTimeStr = isDelayed
+        ? trip.effectiveArrivalTimeFormatted
+        : trip.arrivalTimeFormatted;
 
-    final String statusBannerText;
-    if (trip.isCancelled) {
-      statusBannerText =
-          'Járat kimarad • Menetrend szerinti ind.: ${trip.departureTimeFormatted}';
-    } else if (trip.delayMinutes > 0) {
-      statusBannerText =
-          'Élő késés: +${trip.delayMinutes} perc • Becsült ind.: ${trip.effectiveDepartureTimeFormatted}';
-    } else {
-      statusBannerText =
-          'Menetrend szerint pontos (${trip.travelDurationMinutes} perc menetidő)';
-    }
+    final arrivalPlatform = trip.arrivalPlatformCode?.trim() ?? '';
+    final arrivalSubtitle = arrivalPlatform.isNotEmpty
+        ? 'Leszállás • $arrivalPlatform'
+        : 'Leszállás';
 
-    final fadeCurved = CurvedAnimation(
-      parent: widget.animation,
-      curve: Curves.easeOutCubic,
-      reverseCurve: Curves.easeInCubic,
-    );
-    final scaleCurved = CurvedAnimation(
-      parent: widget.animation,
-      curve: Curves.easeOutCubic,
-      reverseCurve: Curves.easeInCubic,
-    );
+    final boardingPlatform = trip.platformCode?.trim() ?? '';
+    final boardingSubtitle = boardingPlatform.isNotEmpty
+        ? 'Felszállás • $safeLine • $boardingPlatform'
+        : 'Felszállás • $safeLine';
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () {
-                if (ModalRoute.of(context)?.isCurrent ?? true) {
-                  Navigator.of(context).pop();
-                }
-              },
-              child: const ColoredBox(color: Colors.transparent),
-            ),
-          ),
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 28),
-              child: ScaleTransition(
-                scale: Tween<double>(begin: 0.96, end: 1.0).animate(
-                  scaleCurved,
-                ),
-                child: RepaintBoundary(
-                  child: Material(
-                    type: MaterialType.transparency,
-                    child: LiquidGlassSurface(
-                      prefs: activePrefs,
-                      highContrastExpanded: true,
-                      solidColor: resolveLiquidGlassEnabled(activePrefs)
-                          ? (isDark
-                              ? const Color(0xF0121212)
-                              : theme.colorScheme.surface.withValues(alpha: 0.96))
-                          : null,
-                      borderRadius: BorderRadius.circular(24),
-                      contentOpacityAnimation: fadeCurved,
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(
-                          maxWidth: 460,
-                          maxHeight: 640,
-                        ),
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.fromLTRB(0, 18, 0, 20),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 20),
-                                child: Row(
-                                  children: [
+    return Align(
+      alignment: Alignment.bottomCenter,
+      heightFactor: 1.0,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 560,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.88,
+        ),
+        child: FrostedBottomSheetSurface(
+          prefs: activePrefs,
+          showDragHandle: true,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(0, 6, 0, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
                                     Hero(
                                       tag: 'menetrend_hero_card',
+                                      createRectTween: createLinearHeroRectTween,
                                       flightShuttleBuilder:
                                           _buildMenetrendHeroShuttle,
                                       child: Material(
                                         type: MaterialType.transparency,
                                         child: Container(
-                                          padding: const EdgeInsets.all(10),
+                                          width: 48,
+                                          height: 48,
+                                          alignment: Alignment.center,
                                           decoration: BoxDecoration(
                                             color: primary.withValues(
                                               alpha: 0.16,
                                             ),
-                                            borderRadius:
-                                                BorderRadius.circular(14),
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                              color: primary.withValues(
+                                                alpha: 0.28,
+                                              ),
+                                              width: 1.2,
+                                            ),
                                           ),
                                           child: Icon(
                                             trip.mode ==
@@ -817,45 +785,103 @@ class _MenetrendDetailsModalSheetState
                                         ),
                                       ),
                                     ),
-                                    const SizedBox(width: 12),
+                                    const SizedBox(width: 14),
                                     Expanded(
                                       child: Column(
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
+                                        mainAxisSize: MainAxisSize.min,
                                         children: [
                                           Text(
-                                            '$safeLine • ${trip.mode.displayName}',
-                                            style: TextStyle(
-                                              fontSize: 17,
+                                            uwuLabel(
+                                              '$safeLine • ${trip.mode.displayName}',
+                                              enabled:
+                                                  activePrefs.uwuModeEnabled,
+                                            ),
+                                            style: theme.textTheme.titleMedium
+                                                ?.copyWith(
+                                              fontSize: 18.5,
+                                              height: 1.22,
+                                              letterSpacing: -0.3,
                                               fontWeight: FontWeight.w800,
                                               color: onSurface,
                                             ),
                                           ),
-                                          Text(
-                                            headerSubtitle,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: secondaryText,
+                                          const SizedBox(height: 3),
+                                          Text.rich(
+                                            TextSpan(
+                                              style: theme.textTheme.bodySmall
+                                                  ?.copyWith(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w600,
+                                                color: secondaryText,
+                                                fontFeatures: const [
+                                                  FontFeature.tabularFigures(),
+                                                ],
+                                              ),
+                                              children: [
+                                                TextSpan(
+                                                  text: uwuLabel(
+                                                    statusInfo.label,
+                                                    enabled: activePrefs
+                                                        .uwuModeEnabled,
+                                                  ),
+                                                  style: TextStyle(
+                                                    color: statusInfo.color
+                                                        .withValues(alpha: 0.92),
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                                TextSpan(
+                                                  text: uwuLabel(
+                                                    ' • ${trip.travelDurationMinutes}p menetidő',
+                                                    enabled: activePrefs
+                                                        .uwuModeEnabled,
+                                                  ),
+                                                ),
+                                                if (isDelayed)
+                                                  TextSpan(
+                                                    text: uwuLabel(
+                                                      ' • Becsült ind.: ${trip.effectiveDepartureTimeFormatted}',
+                                                      enabled: activePrefs
+                                                          .uwuModeEnabled,
+                                                    ),
+                                                  ),
+                                              ],
                                             ),
                                           ),
                                         ],
                                       ),
                                     ),
-                                    if (closeMode.showTopX)
-                                      IconButton(
-                                        onPressed: () =>
+                                    if (closeMode.showTopX) ...[
+                                      const SizedBox(width: 8),
+                                      TactileBounce(
+                                        onTap: () =>
                                             Navigator.of(context).pop(),
-                                        icon: Icon(
-                                          Icons.close_rounded,
-                                          color: secondaryText,
+                                        child: Container(
+                                          width: 32,
+                                          height: 32,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: onSurface.withValues(
+                                              alpha: isDark ? 0.08 : 0.06,
+                                            ),
+                                          ),
+                                          child: Icon(
+                                            Icons.close_rounded,
+                                            size: 18,
+                                            color: onSurface.withValues(
+                                              alpha: 0.72,
+                                            ),
+                                          ),
                                         ),
                                       ),
+                                    ],
                                   ],
                                 ),
                               ),
-                              const SizedBox(height: 14),
-                              // Alternative departures selector
                               if (visibleAlternatives.length > 1) ...[
+                                const SizedBox(height: 12),
                                 EdgeFadeHorizontalScroll(
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 20,
@@ -875,100 +901,51 @@ class _MenetrendDetailsModalSheetState
                                           color: isSel
                                               ? theme.colorScheme.onPrimary
                                               : onSurface,
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
                                         ),
                                       ),
                                       selected: isSel,
                                       selectedColor: primary,
                                       backgroundColor: surfaceElevated,
                                       onSelected: (_) {
-                                        setState(() => _selectedTrip = alt);
+                                        setState(() {
+                                          _selectedTrip = alt;
+                                          _stopsExpanded = false;
+                                        });
                                       },
                                     );
                                   }).toList(),
                                 ),
-                                const SizedBox(height: 12),
                               ],
+                              const SizedBox(height: 16),
                               Padding(
                                 padding:
                                     const EdgeInsets.symmetric(horizontal: 20),
                                 child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
                                   children: [
-                                    // Delay & platform status banner
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 10,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: surfaceElevated,
-                                        borderRadius: BorderRadius.circular(14),
-                                        border: Border.all(color: borderSubtle),
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          Icon(
-                                            trip.isCancelled
-                                                ? Icons.cancel_rounded
-                                                : (trip.delayMinutes > 0
-                                                    ? Icons
-                                                        .warning_amber_rounded
-                                                    : Icons.verified_rounded),
-                                            size: 18,
-                                            color: trip.isCancelled
-                                                ? const Color(0xFFEF5350)
-                                                : (trip.delayMinutes > 0
-                                                    ? const Color(0xFFFFB300)
-                                                    : const Color(0xFF66BB6A)),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Expanded(
-                                            child: Text(
-                                              statusBannerText,
-                                              style: TextStyle(
-                                                fontSize: 12.5,
-                                                fontWeight: FontWeight.w700,
-                                                color: onSurface,
-                                              ),
-                                            ),
-                                          ),
-                                          if (trip.platformCode != null)
-                                            Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                horizontal: 8,
-                                                vertical: 3,
-                                              ),
-                                              decoration: BoxDecoration(
-                                                color: primary.withValues(
-                                                  alpha: 0.16,
-                                                ),
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                              ),
-                                              child: Text(
-                                                trip.platformCode!,
-                                                style: TextStyle(
-                                                  fontSize: 11.5,
-                                                  fontWeight: FontWeight.w800,
-                                                  color: primary,
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                      ),
+                                    Divider(
+                                      height: 1,
+                                      thickness: 1,
+                                      color: hairlineColor,
                                     ),
                                     const SizedBox(height: 16),
-                                    // Step-by-step Trip Breakdown
                                     if (trip.walkToStationMinutes > 0)
                                       _buildTimelineStep(
                                         context: context,
                                         icon: Icons.directions_walk_rounded,
-                                        time:
-                                            DateFormat('HH:mm').format(walkLeave),
-                                        title: 'Gyaloglás az állomásra',
-                                        subtitle:
-                                            '${trip.walkToStationMinutes} perc séta (${MenetrendService.walkingSpeedLabel(activePrefs.walkingSpeedKmh)})',
+                                        time: DateFormat('HH:mm')
+                                            .format(walkLeave),
+                                        title: uwuLabel(
+                                          'Séta az állomásra',
+                                          enabled: activePrefs.uwuModeEnabled,
+                                        ),
+                                        subtitle: uwuLabel(
+                                          '${trip.walkToStationMinutes}p séta',
+                                          enabled: activePrefs.uwuModeEnabled,
+                                        ),
                                         accentColor: secondaryText,
                                       ),
                                     if (trip.legs.length > 1)
@@ -981,106 +958,31 @@ class _MenetrendDetailsModalSheetState
                                             ? Icons.train_rounded
                                             : Icons.directions_bus_rounded,
                                         time: trip.departureTimeFormatted,
-                                        title:
-                                            'Felszállás: ${HtmlSanitizer.clean(trip.departureStation)}',
-                                        subtitle:
-                                            'Menetrend szerinti indulás: ${trip.departureTimeFormatted} • $safeLine${trip.platformCode != null ? " • ${trip.platformCode}" : ""}',
+                                        title: uwuLabel(
+                                          HtmlSanitizer.clean(
+                                            trip.departureStation,
+                                          ),
+                                          enabled: activePrefs.uwuModeEnabled,
+                                        ),
+                                        subtitle: uwuLabel(
+                                          boardingSubtitle,
+                                          enabled: activePrefs.uwuModeEnabled,
+                                        ),
                                         accentColor: primary,
                                       ),
                                       if (trip.intermediateStops.isNotEmpty)
-                                        Padding(
-                                          padding: const EdgeInsets.only(
-                                            left: 22,
-                                            top: 4,
-                                            bottom: 8,
-                                          ),
-                                          child: Container(
-                                            padding: const EdgeInsets.all(10),
-                                            decoration: BoxDecoration(
-                                              color: onSurface.withValues(
-                                                alpha: isDark ? 0.03 : 0.04,
-                                              ),
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                              border:
-                                                  Border.all(color: borderSubtle),
-                                            ),
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  'Köztes megállók (${trip.intermediateStops.length}):',
-                                                  style: TextStyle(
-                                                    fontSize: 11.5,
-                                                    fontWeight: FontWeight.w800,
-                                                    color: secondaryText,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 6),
-                                                ...trip.intermediateStops.map(
-                                                  (stop) => Padding(
-                                                    padding: const EdgeInsets
-                                                        .symmetric(
-                                                      vertical: 2,
-                                                    ),
-                                                    child: Row(
-                                                      children: [
-                                                        Icon(
-                                                          Icons.circle,
-                                                          size: 6,
-                                                          color: secondaryText,
-                                                        ),
-                                                        const SizedBox(width: 8),
-                                                        Expanded(
-                                                          child: Text(
-                                                            HtmlSanitizer.clean(
-                                                              stop.name,
-                                                            ),
-                                                            style: TextStyle(
-                                                              fontSize: 12,
-                                                              color: onSurface,
-                                                            ),
-                                                          ),
-                                                        ),
-                                                        if (stop.platformCode !=
-                                                            null)
-                                                          Text(
-                                                            '${stop.platformCode!} • ',
-                                                            style: TextStyle(
-                                                              fontSize: 11,
-                                                              color:
-                                                                  secondaryText,
-                                                            ),
-                                                          ),
-                                                        if (stop.timeLabel !=
-                                                            null)
-                                                          Text(
-                                                            stop.timeLabel!,
-                                                            style: TextStyle(
-                                                              fontSize: 11.5,
-                                                              fontWeight:
-                                                                  FontWeight.w700,
-                                                              color:
-                                                                  secondaryText,
-                                                            ),
-                                                          ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
+                                        _buildIntermediateStopsInlineRow(
+                                          context: context,
+                                          stops: trip.intermediateStops,
+                                          onSurface: onSurface,
+                                          secondaryText: secondaryText,
+                                          isDark: isDark,
                                         ),
                                     ],
                                     _buildTimelineStep(
                                       context: context,
                                       icon: Icons.location_on_rounded,
-                                      time: (trip.delayMinutes > 0 &&
-                                              !trip.isCancelled)
-                                          ? trip.effectiveArrivalTimeFormatted
-                                          : trip.arrivalTimeFormatted,
+                                      time: arrivalTimeStr,
                                       timeColor: trip.isCancelled
                                           ? const Color(0xFFEF4444)
                                           : (trip.delayMinutes >= 10
@@ -1088,14 +990,17 @@ class _MenetrendDetailsModalSheetState
                                               : (trip.delayMinutes > 0
                                                   ? const Color(0xFFF59E0B)
                                                   : null)),
-                                      title:
-                                          'Leszállás: ${HtmlSanitizer.clean(trip.arrivalStation)}',
-                                      subtitle: trip.arrivalPlatformCode ??
-                                          (trip.mode ==
-                                                  MenetrendTransportMode.rail
-                                              ? 'Érkező vágány • jármű érkezése: ${(trip.delayMinutes > 0 && !trip.isCancelled) ? trip.effectiveArrivalTimeFormatted : trip.arrivalTimeFormatted}'
-                                              : 'Leszálló megálló • jármű érkezése: ${(trip.delayMinutes > 0 && !trip.isCancelled) ? trip.effectiveArrivalTimeFormatted : trip.arrivalTimeFormatted}'),
-                                      accentColor: const Color(0xFF66BB6A),
+                                      title: uwuLabel(
+                                        HtmlSanitizer.clean(
+                                          trip.arrivalStation,
+                                        ),
+                                        enabled: activePrefs.uwuModeEnabled,
+                                      ),
+                                      subtitle: uwuLabel(
+                                        arrivalSubtitle,
+                                        enabled: activePrefs.uwuModeEnabled,
+                                      ),
+                                      accentColor: const Color(0xFF22C55E),
                                       isLast: trip.walkToDestinationMinutes <= 0,
                                     ),
                                     if (trip.walkToDestinationMinutes > 0)
@@ -1106,17 +1011,23 @@ class _MenetrendDetailsModalSheetState
                                             : Icons.home_rounded,
                                         time: DateFormat('HH:mm')
                                             .format(destinationArrive),
-                                        title: activeEval.isMorningMode
-                                            ? 'Séta az iskoláig'
-                                            : 'Séta hazáig',
-                                        subtitle:
-                                            '${trip.walkToDestinationMinutes} perc séta${destLabel.isNotEmpty ? " • $destLabel" : " a célállomásig"}',
+                                        title: uwuLabel(
+                                          activeEval.isMorningMode
+                                              ? 'Iskola'
+                                              : 'Otthon',
+                                          enabled: activePrefs.uwuModeEnabled,
+                                        ),
+                                        subtitle: uwuLabel(
+                                          '${trip.walkToDestinationMinutes}p séta',
+                                          enabled: activePrefs.uwuModeEnabled,
+                                        ),
                                         accentColor: secondaryText,
                                         isLast: true,
                                       ),
-                                    const SizedBox(height: 16),
+                                    const SizedBox(height: 18),
                                     SizedBox(
                                       width: double.infinity,
+                                      height: 47,
                                       child: FilledButton.icon(
                                         onPressed: () =>
                                             MenetrendService.openInMenetrendGo(
@@ -1126,21 +1037,22 @@ class _MenetrendDetailsModalSheetState
                                         ),
                                         icon: const Icon(
                                           Icons.open_in_new_rounded,
-                                          size: 18,
+                                          size: 17,
                                         ),
-                                        label: const Text(
-                                          'Részletek a MenetrendGO-ban',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w800,
+                                        label: Text(
+                                          uwuLabel(
+                                            'Megnyitás MenetrendGO-ban',
+                                            enabled: activePrefs.uwuModeEnabled,
+                                          ),
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13.5,
                                           ),
                                         ),
                                         style: FilledButton.styleFrom(
                                           backgroundColor: primary,
                                           foregroundColor:
                                               theme.colorScheme.onPrimary,
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 13,
-                                          ),
                                           shape: RoundedRectangleBorder(
                                             borderRadius:
                                                 BorderRadius.circular(14),
@@ -1155,20 +1067,151 @@ class _MenetrendDetailsModalSheetState
                                         child: TextButton(
                                           onPressed: () =>
                                               Navigator.of(context).pop(),
-                                          child: const Text('Bezárás'),
+                                          child: Text(
+                                            uwuLabel(
+                                              'Bezárás',
+                                              enabled:
+                                                  activePrefs.uwuModeEnabled,
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ],
-                                  ],
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),
+                    );
+                  }
+
+  Widget _buildIntermediateStopsInlineRow({
+    required BuildContext context,
+    required List<MenetrendStop> stops,
+    required Color onSurface,
+    required Color secondaryText,
+    required bool isDark,
+  }) {
+    final connectorColor =
+        onSurface.withValues(alpha: isDark ? 0.14 : 0.12);
+    final isSingle = stops.length == 1;
+    final headerText = uwuLabel(
+      isSingle
+          ? '1 köztes megálló: ${HtmlSanitizer.clean(stops.first.name)}'
+          : '${stops.length} köztes megálló',
+    );
+
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: 28,
+            child: Center(
+              child: Container(
+                width: 1.5,
+                color: connectorColor,
+              ),
+            ),
+          ),
+          const SizedBox(width: 56),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (isSingle)
+                    Text(
+                      headerText,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: secondaryText,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    )
+                  else ...[
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () =>
+                          setState(() => _stopsExpanded = !_stopsExpanded),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            headerText,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: secondaryText,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(
+                            _stopsExpanded
+                                ? Icons.expand_less_rounded
+                                : Icons.expand_more_rounded,
+                            size: 16,
+                            color: secondaryText,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ),
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 180),
+                      curve: Curves.easeOutCubic,
+                      alignment: Alignment.topLeft,
+                      child: _stopsExpanded
+                          ? Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  for (final stop in stops)
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 2,
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              uwuLabel(
+                                                HtmlSanitizer.clean(stop.name),
+                                              ),
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: onSurface.withValues(
+                                                  alpha: 0.78,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          if (stop.timeLabel != null)
+                                            Text(
+                                              stop.timeLabel!,
+                                              style: TextStyle(
+                                                fontSize: 11.5,
+                                                fontWeight: FontWeight.w600,
+                                                color: secondaryText,
+                                                fontFeatures: const [
+                                                  FontFeature.tabularFigures(),
+                                                ],
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),
@@ -1194,29 +1237,33 @@ class _MenetrendDetailsModalSheetState
         rawTripShortName: leg.tripShortName,
         mode: leg.mode,
       );
+      final platform =
+          (rail && leg.platformCode != null && leg.platformCode!.trim().isNotEmpty)
+              ? ' • ${leg.platformCode!.trim()}'
+              : '';
       out.add(
         _buildTimelineStep(
           context: context,
           icon: rail ? Icons.train_rounded : Icons.directions_bus_rounded,
           time: fmt.format(leg.departure),
-          title:
-              '${i + 1}. szakasz: $cleanLegName • ${HtmlSanitizer.clean(leg.fromName)}',
-          subtitle:
-              'Menetrend szerinti ind.: ${fmt.format(leg.departure)} → ${HtmlSanitizer.clean(leg.toName)} (${fmt.format(leg.arrival)})'
-              '${rail && leg.platformCode != null ? ' • ${leg.platformCode}' : ''}',
+          title: uwuLabel(HtmlSanitizer.clean(leg.fromName)),
+          subtitle: uwuLabel(
+            'Felszállás • $cleanLegName → ${HtmlSanitizer.clean(leg.toName)} (${fmt.format(leg.arrival)})$platform',
+          ),
           accentColor: primary,
         ),
       );
       if (i < trip.legs.length - 1) {
-        final wait = trip.legs[i + 1].departure.difference(leg.arrival).inMinutes;
+        final wait =
+            trip.legs[i + 1].departure.difference(leg.arrival).inMinutes;
         out.add(
           _buildTimelineStep(
             context: context,
             icon: Icons.transfer_within_a_station_rounded,
             time: fmt.format(leg.arrival),
-            title: 'Átszállás: ${HtmlSanitizer.clean(leg.toName)}',
-            subtitle: '$wait perc várakozás',
-            accentColor: const Color(0xFFFFB300),
+            title: uwuLabel(HtmlSanitizer.clean(leg.toName)),
+            subtitle: uwuLabel('Átszállás • ${wait}p várakozás'),
+            accentColor: const Color(0xFFF59E0B),
           ),
         );
       }
@@ -1237,10 +1284,9 @@ class _MenetrendDetailsModalSheetState
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final onSurface = theme.colorScheme.onSurface;
-    final secondaryText =
-        isDark ? OledTheme.textSecondary : onSurface.withValues(alpha: 0.72);
-    final borderSubtle =
-        isDark ? OledTheme.borderSubtle : onSurface.withValues(alpha: 0.16);
+    final secondaryText = onSurface.withValues(alpha: 0.58);
+    final connectorColor =
+        onSurface.withValues(alpha: isDark ? 0.14 : 0.12);
 
     return Padding(
       padding: EdgeInsets.only(bottom: isLast ? 0 : 8),
@@ -1253,16 +1299,16 @@ class _MenetrendDetailsModalSheetState
                 width: 28,
                 height: 28,
                 decoration: BoxDecoration(
-                  color: accentColor.withValues(alpha: 0.16),
+                  color: accentColor.withValues(alpha: 0.14),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(icon, size: 15, color: accentColor),
               ),
               if (!isLast)
                 Container(
-                  width: 2,
+                  width: 1.5,
                   height: 22,
-                  color: borderSubtle,
+                  color: connectorColor,
                 ),
             ],
           ),
@@ -1277,6 +1323,7 @@ class _MenetrendDetailsModalSheetState
                   fontSize: 13,
                   fontWeight: FontWeight.w800,
                   color: timeColor ?? onSurface,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
             ),
@@ -1298,8 +1345,10 @@ class _MenetrendDetailsModalSheetState
                   Text(
                     subtitle,
                     style: TextStyle(
-                      fontSize: 11.5,
+                      fontSize: 12,
                       color: secondaryText,
+                      fontWeight: FontWeight.w500,
+                      fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
                 ],

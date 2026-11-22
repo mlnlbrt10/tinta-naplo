@@ -81,7 +81,7 @@ class _WebViewLoginScreenState extends State<WebViewLoginScreen> {
             if (mounted) {
               setState(() {
                 _errorMessage =
-                    'WebView error (${error.errorCode}): ${error.description}';
+                    'Nem sikerült betölteni a bejelentkezési oldalt (${error.errorCode}).';
               });
             }
           },
@@ -96,15 +96,28 @@ class _WebViewLoginScreenState extends State<WebViewLoginScreen> {
 
     final uri = Uri.tryParse(redirectUrl);
     final code = uri?.queryParameters['code'];
+    final returnedState = uri?.queryParameters['state'];
     final error = uri?.queryParameters['error'];
-    final errorDescription = uri?.queryParameters['error_description'];
 
     if (error != null && error.isNotEmpty) {
       if (mounted) {
         setState(() {
           _hasInterceptedCode = false;
           _errorMessage =
-              'OAuth error: $error${errorDescription != null ? " ($errorDescription)" : ""}';
+              'A bejelentkezés megszakadt. Kérlek próbáld újra.';
+        });
+      }
+      return;
+    }
+
+    if (returnedState != null &&
+        returnedState.isNotEmpty &&
+        returnedState != _pkce.state) {
+      if (mounted) {
+        setState(() {
+          _hasInterceptedCode = false;
+          _errorMessage =
+              'A bejelentkezési folyamat lejárt. Kérlek próbáld újra.';
         });
       }
       return;
@@ -115,7 +128,7 @@ class _WebViewLoginScreenState extends State<WebViewLoginScreen> {
         setState(() {
           _hasInterceptedCode = false;
           _errorMessage =
-              'Redirect intercepted, but no authorization code was present.';
+              'A bejelentkezés nem fejeződött be. Kérlek próbáld újra.';
         });
       }
       return;
@@ -129,11 +142,13 @@ class _WebViewLoginScreenState extends State<WebViewLoginScreen> {
     }
 
     try {
-      final session = await widget.kretaClient.exchangeCodeForTokens(
-        code: code,
-        codeVerifier: _pkce.codeVerifier,
-        fallbackInstituteCode: widget.initialInstituteCode,
-      );
+      final session = await widget.kretaClient
+          .exchangeCodeForTokens(
+            code: code,
+            codeVerifier: _pkce.codeVerifier,
+            fallbackInstituteCode: widget.initialInstituteCode,
+          )
+          .timeout(const Duration(seconds: 20));
       if (!mounted) return;
       Navigator.of(context).pop<StoredSession>(session);
     } catch (e) {
@@ -160,7 +175,7 @@ class _WebViewLoginScreenState extends State<WebViewLoginScreen> {
         loginHint: widget.initialUsername,
       );
     });
-    _webViewController.loadRequest(_authorizationUri);
+    _webViewController.loadRequest(_authorizationUri).catchError((_) {});
   }
 
   @override
@@ -172,7 +187,7 @@ class _WebViewLoginScreenState extends State<WebViewLoginScreen> {
         title: const Text('E-Kréta Bejelentkezés'),
         actions: [
           IconButton(
-            tooltip: 'Újratöltés új PKCE munkamenettel',
+            tooltip: 'Újratöltés',
             onPressed: _isExchangingToken ? null : _reloadFreshAuthSession,
             icon: const Icon(Icons.refresh),
           ),
@@ -229,7 +244,7 @@ class _WebViewLoginScreenState extends State<WebViewLoginScreen> {
                       const CircularProgressIndicator(),
                       const SizedBox(height: 16),
                       Text(
-                        'Kód beváltása tokenre (/connect/token)...',
+                        'Bejelentkezés...',
                         style: theme.textTheme.titleMedium,
                         textAlign: TextAlign.center,
                       ),

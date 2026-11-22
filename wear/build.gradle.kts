@@ -25,8 +25,9 @@ android {
         applicationId = "hu.mlnlbrt.tintanaplo"
         minSdk = 30
         targetSdk = 34
-        versionCode = 5
-        versionName = "2.0.2"
+        versionCode = 6
+        versionName = "3.0.0"
+        resourceConfigurations += listOf("hu", "en")
     }
 
     signingConfigs {
@@ -56,6 +57,9 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            ndk {
+                debugSymbolLevel = "NONE"
+            }
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -82,14 +86,21 @@ android {
     }
 
     packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources {
             excludes += listOf(
                 "/META-INF/{AL2.0,LGPL2.1}",
                 "META-INF/*.kotlin_module",
+                "META-INF/*.version",
+                "META-INF/proguard/*",
                 "META-INF/DEPENDENCIES",
                 "META-INF/LICENSE*",
                 "META-INF/NOTICE*",
                 "DebugProbesKt.bin",
+                "kotlin/**",
+                "**/*.kotlin_builtins",
             )
         }
     }
@@ -108,7 +119,6 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
 
     // Core Wear OS & Remote Auth
     implementation("androidx.wear:wear-remote-interactions:1.2.0")
@@ -122,7 +132,6 @@ dependencies {
     // Wear OS Tiles & ProtoLayout
     implementation("androidx.wear.tiles:tiles:1.6.2")
     implementation("androidx.wear.protolayout:protolayout:1.4.2")
-    implementation("androidx.wear.protolayout:protolayout-expression:1.4.2")
     implementation("androidx.wear.protolayout:protolayout-material:1.4.2")
 
     // Background sync & secure token storage

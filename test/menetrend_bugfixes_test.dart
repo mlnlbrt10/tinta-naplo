@@ -302,9 +302,9 @@ void main() {
         await tester.tap(find.byType(MenetrendHeroCard));
         await tester.pumpAndSettle();
 
-        expect(find.text('Leszállás: $alightingStop'), findsOneWidget);
-        final expectedWalkTitle =
-            isMorning ? 'Séta az iskoláig' : 'Séta hazáig';
+        expect(find.text(alightingStop), findsOneWidget);
+        expect(find.text('Leszállás'), findsOneWidget);
+        final expectedWalkTitle = isMorning ? 'Iskola' : 'Otthon';
         expect(find.text(expectedWalkTitle), findsOneWidget);
         // True destination arrival time (vehicle arrival + 10 min tail walk = :52, NOT double-counted :02)
         expect(find.text(expectedFinalTime), findsWidgets);
@@ -417,17 +417,18 @@ void main() {
         ),
       );
 
-      // Card headline uses official scheduled departure 07:14 + separate live delay pill
+      // Card headline uses official scheduled departure 07:14 + clean editorial delay status
       expect(find.text('07:14'), findsOneWidget);
-      expect(find.textContaining('+6 perc késés'), findsOneWidget);
-      expect(find.textContaining('Becsült: 07:20'), findsOneWidget);
+      expect(find.textContaining('+6p késés'), findsOneWidget);
+      expect(find.textContaining('Becsült ind.: 07:20'), findsOneWidget);
 
       await tester.tap(find.byType(MenetrendHeroCard));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('Menetrend szerinti indulás: 07:14'), findsOneWidget);
-      expect(find.textContaining('Felszállás: Bodajk'), findsOneWidget);
-      expect(find.textContaining('Élő késés: +6 perc • Becsült ind.: 07:20'), findsWidgets);
+      expect(find.text('Bodajk'), findsOneWidget);
+      expect(find.textContaining('Felszállás • S150'), findsOneWidget);
+      expect(find.textContaining('+6p késés'), findsWidgets);
+      expect(find.textContaining('Becsült ind.: 07:20'), findsWidgets);
     });
   });
 
@@ -593,7 +594,7 @@ void main() {
 
         expect(tester.takeException(), isNull);
         expect(find.text(isMorning ? '07:54' : '12:54'), findsOneWidget);
-        expect(find.text(isMorning ? 'Érk: 07:54' : 'Érk: 13:54'), findsOneWidget);
+        expect(find.text(isMorning ? 'Érk.: 07:58' : 'Érk.: 13:58'), findsOneWidget);
       }
     });
 
@@ -844,24 +845,26 @@ void main() {
       await tester.pumpAndSettle();
       expect(settings.prefs.themeStyle, AppThemeStyle.light);
 
-      // Pop back to AppSettingsScreen, open MenetrendGO sub-screen, tap 6.0 km/h fast walk chip
+      // Pop back to AppSettingsScreen, open MenetrendGO sub-screen, set walking speed Slider to 6.0 km/h
       await tester.pageBack();
       await tester.pumpAndSettle();
-      await tester.tap(find.text('MenetrendGO'));
+      await tester.tap(find.text('MenetrendGO').last);
       await tester.pumpAndSettle();
 
-      final fastLabel = MenetrendService.walkingSpeedLabel(6.0);
+      final speedSlider = find.byKey(
+        const ValueKey<String>('menetrend-walking-speed-slider'),
+      );
       await tester.dragUntilVisible(
-        find.text(fastLabel),
+        speedSlider,
         find.byType(Scrollable).last,
         const Offset(0, -120),
       );
       await Scrollable.ensureVisible(
-        tester.element(find.text(fastLabel)),
+        tester.element(speedSlider),
         alignment: 0.5,
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text(fastLabel));
+      tester.widget<Slider>(speedSlider).onChanged?.call(6.0);
       await tester.pumpAndSettle();
 
       expect(settings.prefs.walkingSpeedKmh, 6.0);

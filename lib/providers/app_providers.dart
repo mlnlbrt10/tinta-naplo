@@ -43,6 +43,8 @@ class SettingsProvider extends ChangeNotifier {
   UserProfilePrefs get prefs => _prefs;
   bool get demoModeEnabled => _prefs.demoModeEnabled;
   bool get minimalistModeEnabled => _prefs.minimalistModeEnabled;
+  bool get funGreetingsEnabled => _prefs.funGreetingsEnabled;
+  String get activeAppIconAsset => _prefs.activeAppIconAsset;
   Set<String> get completedHomeworkIds =>
       Set<String>.unmodifiable(_completedHomeworkIds);
   Set<String> get glowingGradeIds => Set<String>.unmodifiable(_glowingGradeIds);
@@ -79,6 +81,14 @@ class SettingsProvider extends ChangeNotifier {
     }
   }
 
+  bool _disposed = false;
+
+  void _safeNotifyListeners() {
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
+
   Future<void> _loadGradeGlowStateFromPrefs() async {
     if (_gradePrefsLoaded) return;
     try {
@@ -91,10 +101,9 @@ class SettingsProvider extends ChangeNotifier {
         _acknowledgedGradeIds =
             list.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
       }
+      _gradePrefsLoaded = true;
     } catch (_) {
       // Keep safe in-memory fallback when SharedPreferences isn't available.
-    } finally {
-      _gradePrefsLoaded = true;
     }
   }
 
@@ -133,7 +142,7 @@ class SettingsProvider extends ChangeNotifier {
 
     _acknowledgedGradeIds = <String>{..._acknowledgedGradeIds, ...newlySeen};
     _glowingGradeIds = <String>{..._glowingGradeIds, ...newlySeen};
-    notifyListeners();
+    _safeNotifyListeners();
 
     final snapshot = Set<String>.from(_acknowledgedGradeIds);
     _saveQueue = _saveQueue
@@ -218,13 +227,20 @@ class SettingsProvider extends ChangeNotifier {
     final loaded = await _storage.loadProfilePrefs();
     final completed = await loadCompletedHomeworkIdsFromPrefs();
     await (_gradePrefsLoadFuture ??= _loadGradeGlowStateFromPrefs());
+    if (_disposed) return loaded;
     _prefs = loaded;
     if (completed.isNotEmpty) {
       _completedHomeworkIds = completed;
     }
     UserProfilePrefs.syncActiveGlobals(loaded);
-    notifyListeners();
+    _safeNotifyListeners();
     return loaded;
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 
   /// Synchronously toggles a homework completion key, notifies listeners
@@ -260,6 +276,27 @@ class SettingsProvider extends ChangeNotifier {
   Future<bool> toggleHomeworkCompleted(Homework homework) =>
       toggleHomeworkKeyCompleted(homeworkCompletionKey(homework));
 
+  /// Marks all provided [homeworks] as completed in one batch and persists.
+  Future<void> markAllHomeworksCompleted(Iterable<Homework> homeworks) async {
+    final next = Set<String>.from(_completedHomeworkIds);
+    var changed = false;
+    for (final hw in homeworks) {
+      final key = homeworkCompletionKey(hw).trim();
+      if (key.isNotEmpty && next.add(key)) {
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    _completedHomeworkIds = next;
+    notifyListeners();
+
+    final queued = _saveQueue.then((_) async {
+      await saveCompletedHomeworkIdsToPrefs(next);
+    }).catchError((_) {});
+    _saveQueue = queued;
+    return queued;
+  }
+
   /// Synchronously updates in-memory state, notifies all listeners immediately,
   /// writes to `SharedPreferences` right away, and serializes full persistence.
   Future<void> updatePrefs(UserProfilePrefs nextPrefs) {
@@ -281,14 +318,14 @@ class SettingsProvider extends ChangeNotifier {
     return updatePrefs(transform(_prefs));
   }
 
-  /// Persists custom timetable period number badge color (`null` = theme default).
-  Future<void> setTimetablePeriodColor(int? argb) =>
-      updateWith((p) => p.withTimetablePeriodColor(argb));
-
   /// Toggles isolated showcase Demo Mode (`Kovács Bence` dataset) without
   /// touching stored real credentials or KRÉTA caches.
   Future<void> setDemoModeEnabled(bool enabled) =>
       updateWith((p) => p.withDemoMode(enabled));
+
+  /// Toggles playful Hungarian greetings on the Home screen.
+  Future<void> setFunGreetingsEnabled(bool enabled) =>
+      updateWith((p) => p.withFunGreetings(enabled));
 
   /// Waits for any in-flight persistence writes to finish (useful in tests).
   Future<void> flushPersistence() => _saveQueue;
@@ -338,10 +375,6 @@ class ThemeProvider extends ChangeNotifier {
   double get cardOpacity => _snapshot.cardOpacity;
   double get cardBlurSigma => _snapshot.cardBlurSigma;
   String get backgroundPreset => _snapshot.backgroundPreset;
-  int? get timetablePeriodColorValue => _snapshot.timetablePeriodColorValue;
-  Color? get timetablePeriodColor => timetablePeriodColorValue == null
-      ? null
-      : Color(timetablePeriodColorValue!);
 
   ThemeData buildLightTheme([ColorScheme? dynamicLight]) {
     return OledTheme.buildTheme(
@@ -380,8 +413,8 @@ class _ThemeSnapshot {
   final bool useDynamicColor;
   final int seedColorValue;
   final bool uwuModeEnabled;
-  final bool tsundereModeEnabled;
   final bool christmasModeEnabled;
+  final String appIconPreset;
   final String backgroundPreset;
   final bool liquidGlassEnabled;
   final LiquidGlassMode liquidGlassMode;
@@ -397,16 +430,17 @@ class _ThemeSnapshot {
   final double cardBlurSigma;
   final Map<int, int> customGradeColors;
   final ModalCloseButtonMode modalCloseMode;
-  final int? timetablePeriodColorValue;
   final bool minimalistModeEnabled;
+  final bool customSkinEnabled;
+  final String customSkinCss;
 
   const _ThemeSnapshot({
     required this.themeStyle,
     required this.useDynamicColor,
     required this.seedColorValue,
     required this.uwuModeEnabled,
-    required this.tsundereModeEnabled,
     required this.christmasModeEnabled,
+    required this.appIconPreset,
     required this.backgroundPreset,
     required this.liquidGlassEnabled,
     required this.liquidGlassMode,
@@ -419,8 +453,9 @@ class _ThemeSnapshot {
     required this.cardBlurSigma,
     required this.customGradeColors,
     required this.modalCloseMode,
-    this.timetablePeriodColorValue,
     required this.minimalistModeEnabled,
+    required this.customSkinEnabled,
+    required this.customSkinCss,
   });
 
   factory _ThemeSnapshot.fromPrefs(UserProfilePrefs p) => _ThemeSnapshot(
@@ -428,8 +463,8 @@ class _ThemeSnapshot {
         useDynamicColor: p.useDynamicColor,
         seedColorValue: p.seedColorValue,
         uwuModeEnabled: p.uwuModeEnabled,
-        tsundereModeEnabled: p.tsundereModeEnabled,
         christmasModeEnabled: p.christmasModeEnabled,
+        appIconPreset: p.appIconPreset,
         backgroundPreset: p.backgroundPreset,
         liquidGlassEnabled: p.liquidGlassEnabled,
         liquidGlassMode: p.liquidGlassMode,
@@ -442,8 +477,9 @@ class _ThemeSnapshot {
         cardBlurSigma: p.cardBlurSigma,
         customGradeColors: p.customGradeColors,
         modalCloseMode: p.modalCloseMode,
-        timetablePeriodColorValue: p.timetablePeriodColorValue,
         minimalistModeEnabled: p.minimalistModeEnabled,
+        customSkinEnabled: p.customSkinEnabled,
+        customSkinCss: p.customSkinCss,
       );
 
   @override
@@ -454,8 +490,8 @@ class _ThemeSnapshot {
         other.useDynamicColor == useDynamicColor &&
         other.seedColorValue == seedColorValue &&
         other.uwuModeEnabled == uwuModeEnabled &&
-        other.tsundereModeEnabled == tsundereModeEnabled &&
         other.christmasModeEnabled == christmasModeEnabled &&
+        other.appIconPreset == appIconPreset &&
         other.backgroundPreset == backgroundPreset &&
         other.liquidGlassEnabled == liquidGlassEnabled &&
         other.liquidGlassMode == liquidGlassMode &&
@@ -467,19 +503,20 @@ class _ThemeSnapshot {
         other.cardOpacity == cardOpacity &&
         other.cardBlurSigma == cardBlurSigma &&
         other.modalCloseMode == modalCloseMode &&
-        other.timetablePeriodColorValue == timetablePeriodColorValue &&
         other.minimalistModeEnabled == minimalistModeEnabled &&
+        other.customSkinEnabled == customSkinEnabled &&
+        other.customSkinCss == customSkinCss &&
         mapEquals(other.customGradeColors, customGradeColors);
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
         themeStyle,
         useDynamicColor,
         seedColorValue,
         uwuModeEnabled,
-        tsundereModeEnabled,
         christmasModeEnabled,
+        appIconPreset,
         backgroundPreset,
         liquidGlassEnabled,
         liquidGlassMode,
@@ -491,10 +528,11 @@ class _ThemeSnapshot {
         cardOpacity,
         cardBlurSigma,
         modalCloseMode,
-        timetablePeriodColorValue,
         minimalistModeEnabled,
+        customSkinEnabled,
+        customSkinCss,
         customGradeColors.length,
-      );
+      ]);
 }
 
 /// Reactive commute controller managing MenetrendGO evaluation state.
@@ -631,15 +669,20 @@ class CommuteProvider extends ChangeNotifier {
     final hadEval = _evaluation != null;
     if (!hadEval && !_isLoading) {
       _isLoading = true;
-      notifyListeners();
+      if (!_disposed) notifyListeners();
     }
 
-    final eval = await _menetrendService.fetchLiveCommuteEvaluation(
-      todaysLessons: _todaysLessons,
-      prefs: prefs,
-      nowOverride: nowOverride,
-    );
-    if (epoch != _syncEpoch) return;
+    CommuteEvaluation? eval;
+    try {
+      eval = await _menetrendService.fetchLiveCommuteEvaluation(
+        todaysLessons: _todaysLessons,
+        prefs: prefs,
+        nowOverride: nowOverride,
+      );
+    } catch (_) {
+      eval = null;
+    }
+    if (_disposed || epoch != _syncEpoch) return;
 
     final prevEval = _evaluation;
     final evalChanged = _hasEvaluationChanged(prevEval, eval);
@@ -656,7 +699,7 @@ class CommuteProvider extends ChangeNotifier {
           evaluation: eval,
           prefs: prefs,
           allowDelayNotification: allowDelayNotifications,
-        ),
+        ).then<void>((_) {}, onError: (_, _) {}),
       );
     }
   }
@@ -709,8 +752,12 @@ class CommuteProvider extends ChangeNotifier {
     }
   }
 
+  bool _disposed = false;
+
   @override
   void dispose() {
+    _disposed = true;
+    ++_syncEpoch;
     _settings.removeListener(_handleSettingsChanged);
     super.dispose();
   }
@@ -725,6 +772,7 @@ class _CommuteSettingsSnapshot {
   final bool transitAllowTrain;
   final bool transitAllowCoach;
   final bool transitAllowLocalBus;
+  final bool transitAllowTramSubway;
   final double walkingSpeedKmh;
   final int walkingDurationMinutes;
   final int walkHomeToBusMinutes;
@@ -746,6 +794,7 @@ class _CommuteSettingsSnapshot {
     required this.transitAllowTrain,
     required this.transitAllowCoach,
     required this.transitAllowLocalBus,
+    required this.transitAllowTramSubway,
     required this.walkingSpeedKmh,
     required this.walkingDurationMinutes,
     required this.walkHomeToBusMinutes,
@@ -770,6 +819,7 @@ class _CommuteSettingsSnapshot {
         transitAllowTrain: p.transitAllowTrain,
         transitAllowCoach: p.transitAllowCoach,
         transitAllowLocalBus: p.transitAllowLocalBus,
+        transitAllowTramSubway: p.transitAllowTramSubway,
         walkingSpeedKmh: p.walkingSpeedKmh,
         walkingDurationMinutes: p.walkingDurationMinutes,
         walkHomeToBusMinutes: p.walkHomeToBusMinutes,
@@ -780,8 +830,16 @@ class _CommuteSettingsSnapshot {
         transitNotificationsEnabled: p.transitNotificationsEnabled,
         favoriteRoute1stPeriod: p.favoriteRoute1stPeriod,
         favoriteRoute2ndPeriod: p.favoriteRoute2ndPeriod,
-        commuteDaysJson: jsonEncode(p.extras['commuteDays']),
+        commuteDaysJson: _safeEncodeCommuteDays(p.extras['commuteDays']),
       );
+
+  static String _safeEncodeCommuteDays(Object? raw) {
+    try {
+      return jsonEncode(raw);
+    } catch (_) {
+      return raw?.toString() ?? 'null';
+    }
+  }
 
   bool requiresNetworkRefresh(_CommuteSettingsSnapshot other) =>
       transitHomeStation != other.transitHomeStation ||
@@ -791,6 +849,7 @@ class _CommuteSettingsSnapshot {
       transitAllowTrain != other.transitAllowTrain ||
       transitAllowCoach != other.transitAllowCoach ||
       transitAllowLocalBus != other.transitAllowLocalBus ||
+      transitAllowTramSubway != other.transitAllowTramSubway ||
       commuteDaysJson != other.commuteDaysJson;
 
   @override
@@ -805,6 +864,7 @@ class _CommuteSettingsSnapshot {
         other.transitAllowTrain == transitAllowTrain &&
         other.transitAllowCoach == transitAllowCoach &&
         other.transitAllowLocalBus == transitAllowLocalBus &&
+        other.transitAllowTramSubway == transitAllowTramSubway &&
         other.walkingSpeedKmh == walkingSpeedKmh &&
         other.walkingDurationMinutes == walkingDurationMinutes &&
         other.walkHomeToBusMinutes == walkHomeToBusMinutes &&
@@ -828,6 +888,7 @@ class _CommuteSettingsSnapshot {
         transitAllowTrain,
         transitAllowCoach,
         transitAllowLocalBus,
+        transitAllowTramSubway,
         walkingSpeedKmh,
         walkingDurationMinutes,
         walkHomeToBusMinutes,

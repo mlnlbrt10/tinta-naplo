@@ -54,7 +54,7 @@ object TintaWidgetRenderer {
     ) {
         val views = buildCompactRemoteViews(context, state)
         for (id in appWidgetIds) {
-            appWidgetManager.updateAppWidget(id, views)
+            runCatching { appWidgetManager.updateAppWidget(id, views) }
         }
     }
 
@@ -66,7 +66,7 @@ object TintaWidgetRenderer {
     ) {
         val views = buildExpandedRemoteViews(context, state)
         for (id in appWidgetIds) {
-            appWidgetManager.updateAppWidget(id, views)
+            runCatching { appWidgetManager.updateAppWidget(id, views) }
         }
     }
 

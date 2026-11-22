@@ -157,7 +157,6 @@ data class AuthSessionPayload(
 
         val keepExistingTokens = existing != null &&
             sameAccount &&
-            !forceSync &&
             existing.refreshToken.isNotBlank() &&
             !existing.isExpired() &&
             existing.expiresAtEpochMs > expiresAtEpochMs
@@ -313,8 +312,8 @@ data class Homework(
                 .replace("&quot;", "\"")
                 .replace("&#39;", "'")
                 .replace("&apos;", "'")
-                .replace("&ndash;", "–")
-                .replace("&mdash;", "—")
+                .replace("&ndash;", "-")
+                .replace("&mdash;", "-")
                 .lines()
                 .joinToString("\n") { it.trim() }
                 .replace(Regex("\\n{3,}"), "\n\n")
@@ -369,10 +368,10 @@ data class Lesson(
         get() = !homeworkUid.isNullOrBlank() && !isHomeworkComplete
 
     val timeRangeLabel: String
-        get() = "${KretaDateParser.formatHm(startEpochMs)} – ${KretaDateParser.formatHm(endEpochMs)}"
+        get() = "${KretaDateParser.formatHm(startEpochMs)} - ${KretaDateParser.formatHm(endEpochMs)}"
 
     val compactTimeRangeLabel: String
-        get() = "${KretaDateParser.formatHm(startEpochMs)}–${KretaDateParser.formatHm(endEpochMs)}"
+        get() = "${KretaDateParser.formatHm(startEpochMs)}-${KretaDateParser.formatHm(endEpochMs)}"
 
     fun periodAndSubjectLabel(): String =
         if (lessonNumber != null) "$lessonNumber. $displaySubject" else displaySubject
@@ -611,9 +610,11 @@ data class Exam(
                 .ifEmpty { tantargy?.optString("Nev", "")?.trim().orEmpty() }
                 .ifEmpty { "Számonkérés" }
             val modja = json.optJSONObject("Modja")
-            val method = modja?.optNullableString("Leiras")
-                ?: modja?.optNullableString("Nev")
-                ?: json.optNullableString("Modja")
+            val method = if (modja != null) {
+                modja.optNullableString("Leiras") ?: modja.optNullableString("Nev")
+            } else {
+                json.optNullableString("Modja")
+            }
             val topic = json.optNullableString("Temaja") ?: json.optNullableString("Tema")
             val dateMs = KretaDateParser.parseEpochMillis(json.optString("Datum", ""), zoneId)
                 ?: KretaDateParser.parseEpochMillis(json.optString("BejelentesDatuma", ""), zoneId)
@@ -845,7 +846,7 @@ object TimetableStatusEvaluator {
                 phase = TimetablePhase.BREAK,
                 badgeLabel = "SZÜNET",
                 titleLabel = "Következik: ${next.periodAndSubjectLabel()}",
-                subtitleLabel = "${KretaDateParser.formatHm(prev.endEpochMs)}–${KretaDateParser.formatHm(next.startEpochMs)}",
+                subtitleLabel = "${KretaDateParser.formatHm(prev.endEpochMs)}-${KretaDateParser.formatHm(next.startEpochMs)}",
                 roomLabel = next.cleanRoomName,
                 remainingMillis = remMs,
                 remainingFraction = fraction,

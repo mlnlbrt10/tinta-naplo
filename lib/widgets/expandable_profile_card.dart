@@ -12,10 +12,12 @@ import '../services/demo_data_service.dart';
 import '../services/kreta_client.dart';
 import '../services/token_storage_service.dart';
 import '../services/wear_sync_service.dart';
+import '../theme/oled_theme.dart';
 import '../utils/greeting_utils.dart';
 import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
 import 'bug_report_sheet.dart';
+import 'frosted_inspection_modal.dart';
 import 'glass_card.dart';
 import 'tinta_toast.dart';
 
@@ -58,6 +60,8 @@ class ProfileTopBarAvatar extends StatelessWidget {
           children: [
             Hero(
               tag: 'profile_avatar_hero',
+              createRectTween: createLinearHeroRectTween,
+              flightShuttleBuilder: buildBoomerangBadgeHeroShuttle,
               child: Material(
                 type: MaterialType.transparency,
                 child: Container(
@@ -115,9 +119,10 @@ class ProfileTopBarAvatar extends StatelessWidget {
   }
 }
 
-/// Opens the streamlined Profile & Settings modal bottom sheet using a
-/// [PageRouteBuilder] so `Hero('profile_avatar_hero')` boomerangs seamlessly
-/// between the top-right AppBar and the expanded profile modal.
+/// Opens the streamlined Profile & Settings modal bottom sheet using
+/// [showFloatingGlassSheet] so the card floats detached with Liquid Glass
+/// translucency while `Hero('profile_avatar_hero')` boomerangs linearly
+/// between the top-right AppBar and the expanded profile sheet.
 Future<void> showStreamlinedProfileSheet({
   required BuildContext context,
   required Student? student,
@@ -130,68 +135,32 @@ Future<void> showStreamlinedProfileSheet({
 }) {
   HapticFeedback.lightImpact();
 
-  return Navigator.of(context).push<void>(
-    PageRouteBuilder<void>(
-      opaque: false,
-      barrierDismissible: true,
-      barrierLabel: 'Bezárás',
-      barrierColor: resolveSoftBlurBarrierColor(
-        context,
-        prefs: prefs,
-        solidDarkAlpha: 0.65,
-        solidLightAlpha: 0.45,
-      ),
-      transitionDuration: const Duration(milliseconds: 250),
-      reverseTransitionDuration: const Duration(milliseconds: 230),
-      pageBuilder: (sheetContext, animation, secondaryAnimation) {
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-          reverseCurve: Curves.easeInCubic,
-        );
-        return Scaffold(
-          backgroundColor: Colors.transparent,
-          body: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {
-              if (ModalRoute.of(sheetContext)?.isCurrent ?? true) {
-                Navigator.of(sheetContext).pop();
-              }
-            },
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: SlideTransition(
-                position: Tween<Offset>(
-                  begin: const Offset(0, 0.16),
-                  end: Offset.zero,
-                ).animate(curved),
-                child: ScaleTransition(
-                  scale: Tween<double>(begin: 0.96, end: 1.0).animate(curved),
-                  alignment: Alignment.bottomCenter,
-                  child: GestureDetector(
-                    onTap: () {},
-                    child: _StreamlinedProfileModalSheet(
-                      student: student,
-                      session: session,
-                      kretaClient: kretaClient,
-                      wearSyncService: wearSyncService,
-                      initialPrefs: prefs,
-                      onPrefsChanged: onPrefsChanged,
-                      contentOpacityAnimation: curved,
-                      onOpenFullSettings: () {
-                        FocusManager.instance.primaryFocus?.unfocus();
-                        Navigator.of(sheetContext).pop();
-                        onOpenFullSettings();
-                      },
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
+  return showFloatingGlassSheet<void>(
+    context: context,
+    prefs: prefs,
+    barrierColor: resolveSoftBlurBarrierColor(
+      context,
+      prefs: prefs,
+      solidDarkAlpha: 0.65,
+      solidLightAlpha: 0.45,
+      glassDarkAlpha: 0.46,
+      glassLightAlpha: 0.30,
     ),
+    builder: (sheetContext) {
+      return _StreamlinedProfileModalSheet(
+        student: student,
+        session: session,
+        kretaClient: kretaClient,
+        wearSyncService: wearSyncService,
+        initialPrefs: prefs,
+        onPrefsChanged: onPrefsChanged,
+        onOpenFullSettings: () {
+          FocusManager.instance.primaryFocus?.unfocus();
+          Navigator.of(sheetContext).pop();
+          onOpenFullSettings();
+        },
+      );
+    },
   );
 }
 
@@ -203,7 +172,6 @@ class _StreamlinedProfileModalSheet extends StatefulWidget {
   final UserProfilePrefs initialPrefs;
   final ValueChanged<UserProfilePrefs> onPrefsChanged;
   final VoidCallback onOpenFullSettings;
-  final Animation<double>? contentOpacityAnimation;
 
   const _StreamlinedProfileModalSheet({
     required this.student,
@@ -213,7 +181,6 @@ class _StreamlinedProfileModalSheet extends StatefulWidget {
     required this.initialPrefs,
     required this.onPrefsChanged,
     required this.onOpenFullSettings,
-    this.contentOpacityAnimation,
   });
 
   @override
@@ -227,8 +194,6 @@ class _StreamlinedProfileModalSheetState
   late final TextEditingController _nicknameController;
   final ImagePicker _imagePicker = ImagePicker();
   WearConnectionStatus _wearStatus = WearConnectionStatus.disconnected;
-  bool _isSyncingWear = false;
-  bool _wearSyncedRecently = false;
 
   WearSyncService get _wearService =>
       widget.wearSyncService ?? WearSyncService.instance;
@@ -245,44 +210,6 @@ class _StreamlinedProfileModalSheetState
     final status = await _wearService.getConnectionStatus();
     if (!mounted) return;
     setState(() => _wearStatus = status);
-  }
-
-  Future<void> _syncWithWatch() async {
-    if (_isSyncingWear) return;
-    final activePrefs =
-        AppProvidersScope.maybeOf(context)?.settings.prefs ?? _prefs;
-    setState(() {
-      _isSyncingWear = true;
-      _wearSyncedRecently = false;
-    });
-    StoredSession active = widget.session;
-    if (active.isExpired && widget.kretaClient != null) {
-      try {
-        active = await widget.kretaClient!.ensureValidSession(active);
-      } catch (_) {}
-    }
-    final ok = await _wearService.syncSessionToWatch(
-      session: active,
-      student: widget.student,
-      nickname: activePrefs.nickname,
-      forceSync: true,
-    );
-    final refreshedStatus = await _wearService.getConnectionStatus();
-    if (!mounted) return;
-    setState(() {
-      _isSyncingWear = false;
-      _wearSyncedRecently = ok;
-      if (refreshedStatus.isConnected) {
-        _wearStatus = refreshedStatus;
-      }
-    });
-    TintaToast.show(
-      context,
-      ok
-          ? 'Munkamenet szinkronizálva az órával'
-          : 'Nem sikerült szinkronizálni az órával',
-      type: ok ? TintaToastType.success : TintaToastType.error,
-    );
   }
 
   @override
@@ -322,6 +249,7 @@ class _StreamlinedProfileModalSheetState
         maxHeight: 720,
         imageQuality: 88,
       );
+      if (!mounted) return;
       if (picked != null && picked.path.isNotEmpty) {
         _applyPrefs(_prefs.copyWith(customPhotoPath: picked.path));
       }
@@ -387,47 +315,46 @@ class _StreamlinedProfileModalSheetState
           );
 
     final menuTileBg = isDark
-        ? Colors.white.withValues(alpha: 0.04)
-        : scheme.surfaceContainerHigh.withValues(alpha: 0.55);
+        ? Colors.white.withValues(alpha: 0.05)
+        : const Color(0xFFF4F6F8);
     final menuTileBorder = isDark
         ? Colors.white.withValues(alpha: 0.08)
-        : scheme.onSurface.withValues(alpha: 0.10);
+        : Colors.black.withValues(alpha: 0.06);
+    final maxSheetHeight =
+        ((MediaQuery.sizeOf(context).height - bottomInset) * 0.86)
+            .clamp(240.0, 820.0);
 
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
-      child: LiquidGlassSurface(
-        prefs: activePrefs,
-        highContrastExpanded: true,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
-        contentOpacityAnimation: widget.contentOpacityAnimation,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(22, 12, 22, 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 4, bottom: 10),
-                  child: Container(
-                    width: 42,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: scheme.onSurface.withValues(alpha: 0.24),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                ),
-              ),
-              Center(
-                child: GestureDetector(
-                  onTap: isDemo ? null : _pickCustomPhoto,
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      Hero(
-                        tag: 'profile_avatar_hero',
-                        child: Material(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 560,
+          maxHeight: maxSheetHeight,
+        ),
+        child: FrostedBottomSheetSurface(
+          key: const ValueKey<String>('profile-floating-sheet-surface'),
+          prefs: activePrefs,
+          topRadius: 26.0,
+          showDragHandle: true,
+          includeSafeAreaBottom: true,
+          padding: EdgeInsets.zero,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(22, 6, 22, 22),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: GestureDetector(
+                    onTap: isDemo ? null : _pickCustomPhoto,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Hero(
+                          tag: 'profile_avatar_hero',
+                          createRectTween: createLinearHeroRectTween,
+                          flightShuttleBuilder: buildBoomerangBadgeHeroShuttle,
+                          child: Material(
                           type: MaterialType.transparency,
                           child: Container(
                             padding: const EdgeInsets.all(3),
@@ -489,7 +416,10 @@ class _StreamlinedProfileModalSheetState
               ),
               const SizedBox(height: 12),
               Text(
-                displayNick,
+                uwuLabel(
+                  displayNick,
+                  enabled: activePrefs.uwuModeEnabled,
+                ),
                 textAlign: TextAlign.center,
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.w900,
@@ -499,7 +429,10 @@ class _StreamlinedProfileModalSheetState
               if (widget.student?.instituteName.isNotEmpty == true) ...[
                 const SizedBox(height: 4),
                 Text(
-                  widget.student!.instituteName,
+                  uwuLabel(
+                    widget.student!.instituteName,
+                    enabled: activePrefs.uwuModeEnabled,
+                  ),
                   textAlign: TextAlign.center,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -522,9 +455,12 @@ class _StreamlinedProfileModalSheetState
                         size: 18,
                       ),
                       label: Text(
-                        photoFile != null
-                            ? 'Új kép választása'
-                            : 'Kép galériából',
+                        uwuLabel(
+                          photoFile != null
+                              ? 'Új kép választása'
+                              : 'Kép galériából',
+                          enabled: activePrefs.uwuModeEnabled,
+                        ),
                       ),
                     ),
                     if (photoFile != null)
@@ -536,7 +472,12 @@ class _StreamlinedProfileModalSheetState
                           Icons.delete_outline_rounded,
                           size: 18,
                         ),
-                        label: const Text('Kép törlése'),
+                        label: Text(
+                          uwuLabel(
+                            'Kép törlése',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
+                        ),
                       ),
                   ],
                 ),
@@ -547,12 +488,17 @@ class _StreamlinedProfileModalSheetState
                       child: TextField(
                         controller: _nicknameController,
                         decoration: InputDecoration(
-                          labelText: uwu('Becenév szerkesztése'),
-                          hintText: 'pl. Alexa',
+                          labelText: uwuLabel(
+                            'Becenév szerkesztése',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
                           prefixIcon: const Icon(Icons.person_outline_rounded),
                           suffixIcon: _nicknameController.text.isNotEmpty
                               ? IconButton(
-                                  tooltip: 'Törlés',
+                                  tooltip: uwuLabel(
+                                    'Törlés',
+                                    enabled: activePrefs.uwuModeEnabled,
+                                  ),
                                   onPressed: () {
                                     _nicknameController.clear();
                                     _saveNickname();
@@ -613,7 +559,10 @@ class _StreamlinedProfileModalSheetState
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              _wearStatus.resolvedDeviceName ?? 'Wear OS óra',
+                              uwuLabel(
+                                _wearStatus.resolvedDeviceName ?? 'Wear OS óra',
+                                enabled: activePrefs.uwuModeEnabled,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.labelLarge?.copyWith(
@@ -622,51 +571,20 @@ class _StreamlinedProfileModalSheetState
                               ),
                             ),
                             Text(
-                              _wearSyncedRecently
-                                  ? 'Szinkronizálva'
-                                  : (_wearStatus.lastSyncedAt != null
-                                      ? 'Csatlakozva • ${DateFormat('HH:mm').format(_wearStatus.lastSyncedAt!)}'
-                                      : 'Wear OS csatlakozva'),
+                              uwuLabel(
+                                _wearStatus.lastSyncedAt != null
+                                    ? 'Csatlakozva • ${DateFormat('HH:mm').format(_wearStatus.lastSyncedAt!)}'
+                                    : 'Wear OS csatlakozva',
+                                enabled: activePrefs.uwuModeEnabled,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.labelSmall?.copyWith(
-                                color: _wearSyncedRecently
-                                    ? const Color(0xFF26D0A8)
-                                    : scheme.onSurface.withValues(alpha: 0.65),
+                                color: scheme.onSurface.withValues(alpha: 0.65),
                               ),
                             ),
                           ],
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton.tonal(
-                        key: const ValueKey<String>('profile-wear-sync-button'),
-                        onPressed: _isSyncingWear ? null : _syncWithWatch,
-                        style: FilledButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                        ),
-                        child: _isSyncingWear
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text(
-                                'Szinkronizálás órával',
-                                style: TextStyle(
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
                       ),
                     ],
                   ),
@@ -696,7 +614,10 @@ class _StreamlinedProfileModalSheetState
                       _buildMenuIconBubble(
                         context: context,
                         icon: Icons.bug_report_rounded,
-                        tint: const Color(0xFFF59E0B),
+                        tint: OledTheme.semanticForeground(
+                          const Color(0xFFF59E0B),
+                          theme.brightness,
+                        ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -789,6 +710,7 @@ class _StreamlinedProfileModalSheetState
           ),
         ),
       ),
+    ),
     );
   }
 }

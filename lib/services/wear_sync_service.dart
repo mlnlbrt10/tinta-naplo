@@ -108,7 +108,10 @@ class WearSyncService {
       return null;
     }
     final userName = raw['userName']?.toString().trim();
-    final expiresAtMs = (raw['expiresAtMs'] as num?)?.toInt() ?? 0;
+    final rawExp = raw['expiresAtMs'];
+    final expiresAtMs = rawExp is num
+        ? rawExp.toInt()
+        : int.tryParse(rawExp?.toString() ?? '') ?? 0;
     return StoredSession(
       accessToken: accessToken,
       refreshToken: refreshToken,
@@ -126,25 +129,33 @@ class WearSyncService {
     _onWatchAuthRequested = onWatchAuthRequested;
     _onSessionUpdatedFromWatch = onSessionUpdatedFromWatch;
     if (_handlerRegistered) return;
-    _handlerRegistered = true;
     try {
       _channel.setMethodCallHandler((call) async {
-        if (call.method == 'onWatchAuthRequested') {
-          _onWatchAuthRequested?.call();
-        } else if (call.method == 'onSessionUpdatedFromWatch') {
-          final parsed = _parseNativeSessionMap(call.arguments);
-          if (parsed != null) {
-            _onSessionUpdatedFromWatch?.call(parsed);
+        try {
+          if (call.method == 'onWatchAuthRequested') {
+            _onWatchAuthRequested?.call();
+          } else if (call.method == 'onSessionUpdatedFromWatch') {
+            final parsed = _parseNativeSessionMap(call.arguments);
+            if (parsed != null) {
+              _onSessionUpdatedFromWatch?.call(parsed);
+            }
           }
-        }
+        } catch (_) {}
         return null;
       });
+      _handlerRegistered = true;
     } catch (_) {}
   }
 
   void disposeListener() {
     _onWatchAuthRequested = null;
     _onSessionUpdatedFromWatch = null;
+    if (_handlerRegistered) {
+      try {
+        _channel.setMethodCallHandler(null);
+      } catch (_) {}
+      _handlerRegistered = false;
+    }
   }
 
   Future<StoredSession?> loadCachedSessionFromNative() async {

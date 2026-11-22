@@ -199,7 +199,7 @@ class BugReportService {
     BugAttachment? attachment,
   }) {
     final buf = StringBuffer()
-      ..writeln('${UwuHelper.brandName()} — Hibajelentés')
+      ..writeln('${UwuHelper.brandName()} - Hibajelentés')
       ..writeln('Kategória: $category')
       ..writeln('Beküldő: $reporter')
       ..writeln('Verzió: $appVersion')
@@ -282,7 +282,7 @@ class BugReportService {
         streamed = await httpClient.send(request).timeout(timeout);
       }
 
-      await streamed.stream.drain<void>();
+      await streamed.stream.drain<void>().timeout(timeout);
       if (streamed.statusCode >= 200 && streamed.statusCode < 300) {
         return BugReportSubmitResult.ok(statusCode: streamed.statusCode);
       }

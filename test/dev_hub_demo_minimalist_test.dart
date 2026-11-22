@@ -334,8 +334,9 @@ void main() {
         expect(find.text('Mikor'), findsNothing);
         expect(find.text('Hol'), findsNothing);
         expect(find.text('Kivel'), findsNothing);
-        expect(find.text('Idősáv'), findsOneWidget);
-        expect(find.text('Tanterem'), findsOneWidget);
+        expect(find.text('Időpont'), findsOneWidget);
+        expect(find.text('Tanterem'), findsNothing);
+        expect(find.text('Terem'), findsOneWidget);
         expect(find.text('Tanár'), findsOneWidget);
         expect(find.text('3.'), findsOneWidget);
         final heroFinder = find.byWidgetPredicate(
@@ -350,12 +351,12 @@ void main() {
         await tester.tap(find.text('OpenGrade'));
         await tester.pumpAndSettle();
 
-        expect(find.text('Mikor lett beírva'), findsNothing);
-        expect(find.text('Ki által'), findsNothing);
-        expect(find.text('Milyen típusú értékelés'), findsNothing);
-        expect(find.text('Rögzítés ideje'), findsOneWidget);
-        expect(find.text('Értékelő tanár'), findsOneWidget);
-        expect(find.text('Értékelés módja'), findsOneWidget);
+        expect(find.text('Értékelés / Jegy'), findsNothing);
+        expect(find.text('Tantárgy'), findsNothing);
+        expect(find.text('Átlagra hatás'), findsNothing);
+        expect(find.text('Típus'), findsOneWidget);
+        expect(find.text('Tanár'), findsOneWidget);
+        expect(find.text('Dátum'), findsOneWidget);
 
         await tester.tap(find.text('Bezárás'));
         await tester.pumpAndSettle();
@@ -364,12 +365,11 @@ void main() {
         await tester.tap(find.text('OpenTest'));
         await tester.pumpAndSettle();
 
-        expect(find.text('Mikor lesz'), findsNothing);
-        expect(find.text('Mi a téma'), findsNothing);
-        expect(find.text('Milyen típusú számonkérés'), findsNothing);
-        expect(find.text('Számonkérés\nnapja'), findsOneWidget);
-        expect(find.text('Számonkérés témája'), findsOneWidget);
-        expect(find.text('Számonkérés módja'), findsOneWidget);
+        expect(find.text('Bejelentett számonkérés'), findsNothing);
+        expect(find.text('Bejelentve'), findsNothing);
+        expect(find.text('Időpont'), findsOneWidget);
+        expect(find.text('Típus'), findsOneWidget);
+        expect(find.text('Tanár'), findsOneWidget);
       },
     );
   });

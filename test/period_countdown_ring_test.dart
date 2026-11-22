@@ -9,6 +9,7 @@ import 'package:tinta_naplo/screens/timetable_screen.dart';
 import 'package:tinta_naplo/services/kreta_client.dart';
 import 'package:tinta_naplo/services/token_storage_service.dart';
 import 'package:tinta_naplo/theme/oled_theme.dart';
+import 'package:tinta_naplo/widgets/christmas_snowfall_overlay.dart';
 
 Lesson _makeLesson({
   required String uid,
@@ -278,31 +279,39 @@ void main() {
         // NO circular countdown rings on either period 1 or period 2 during break
         expect(findRingPainters(tester), isEmpty);
 
-        // BreakCountdownCard renders immediately without replay when mounted mid-break
+        // Sleek BreakCountdownCard strip renders immediately without glow or bulky pause square
         expect(find.byType(BreakCountdownCard), findsOneWidget);
         expect(find.text('Szünet'), findsOneWidget);
-        expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
-        expect(find.text('08:45 – 09:00'), findsOneWidget);
+        expect(find.byIcon(Icons.pause_rounded), findsNothing);
+        expect(find.text('08:45 - 09:00'), findsOneWidget);
+        expect(find.text('8p hátra'), findsOneWidget);
 
-        Iterable<BreakPerimeterCountdownPainter> findBreakPainters() => tester
-            .widgetList<CustomPaint>(find.byType(CustomPaint))
-            .map((cp) => cp.foregroundPainter)
-            .whereType<BreakPerimeterCountdownPainter>();
+        final breakBar0 = tester.widget<LinearProgressIndicator>(
+          find.descendant(
+            of: find.byType(BreakCountdownCard),
+            matching: find.byType(LinearProgressIndicator),
+          ),
+        );
+        expect(breakBar0.value, closeTo(0.5, 0.01));
 
-        expect(findBreakPainters().length, 1);
-        expect(findBreakPainters().first.progress, closeTo(0.5, 0.01));
-
-        // Advance clock by 3 minutes (4.5m / 15m = 0.30 remaining) & pump 1s ticker
+        // Advance clock by 3 minutes (4.5m / 15m = 0.30 remaining -> 0.70 elapsed) & pump 1s ticker
         fakeNow = fakeNow.add(const Duration(minutes: 3));
         await tester.pump(const Duration(seconds: 1));
         await tester.pump(const Duration(milliseconds: 50));
-        expect(findBreakPainters().first.progress, closeTo(0.3, 0.01));
+        final breakBar1 = tester.widget<LinearProgressIndicator>(
+          find.descendant(
+            of: find.byType(BreakCountdownCard),
+            matching: find.byType(LinearProgressIndicator),
+          ),
+        );
+        expect(breakBar1.value, closeTo(0.7, 0.01));
+        expect(find.text('5p hátra'), findsOneWidget);
 
         // Advance to next lesson -> break card collapses & exits cleanly, lesson 2 ring appears
         fakeNow = DateTime(2026, 11, 13, 9, 5, 0);
         await tester.pump(const Duration(seconds: 1));
         await tester.pump(const Duration(milliseconds: 350));
-        expect(findBreakPainters(), isEmpty);
+        expect(find.byType(BreakCountdownCard), findsNothing);
         expect(findRingPainters(tester).length, 1);
       },
     );
@@ -576,14 +585,25 @@ void main() {
           isEmpty,
         );
 
-        // During break (08:52:30): clean pause icon & Szünet status, still zero ring
+        // At rest (scrollOffset == 0), VerticalScrollEdgeFades protects HomeScreen body cleanly
+        final edgeFades = tester.widget<VerticalScrollEdgeFades>(
+          find
+              .ancestor(
+                of: find.byType(RefreshIndicator),
+                matching: find.byType(VerticalScrollEdgeFades),
+              )
+              .first,
+        );
+        expect(edgeFades.scrollDrivenTopFeather, isTrue);
+        expect(edgeFades.bottomFadeHeight, greaterThan(0));
+
+        // During break (08:52:30): flat Szünet status & compact countdown, zero ring
         fakeNow = DateTime(2026, 11, 13, 8, 52, 30);
         await tester.pump(const Duration(seconds: 1));
         await tester.pump(const Duration(milliseconds: 50));
 
-        expect(find.byIcon(Icons.pause_rounded), findsWidgets);
-        expect(find.text('Szünet'), findsOneWidget);
-        expect(find.text('Szünet • 8 perc van hátra'), findsOneWidget);
+        expect(find.text('SZÜNET'), findsOneWidget);
+        expect(find.text('Kezdés: 8p múlva'), findsOneWidget);
         expect(
           tester
               .widgetList<CustomPaint>(find.byType(CustomPaint))
@@ -592,11 +612,13 @@ void main() {
           isEmpty,
         );
 
-        // Ongoing lesson (09:22:30): circular countdown ring renders actively
+        // Ongoing lesson (09:22:30): flat 'FOLYAMATBAN' editorial top row & circular countdown ring
         fakeNow = DateTime(2026, 11, 13, 9, 22, 30);
         await tester.pump(const Duration(seconds: 1));
         await tester.pump(const Duration(milliseconds: 50));
 
+        expect(find.text('FOLYAMATBAN'), findsOneWidget);
+        expect(find.text('23p hátra'), findsOneWidget);
         final rings = tester
             .widgetList<CustomPaint>(find.byType(CustomPaint))
             .map((cp) => cp.painter)
@@ -605,7 +627,7 @@ void main() {
         expect(rings.length, 1);
         expect(rings.first.remainingFraction, closeTo(0.5, 0.005));
 
-        // Fast-forward past all lessons today -> no ring and no Szünet status
+        // Fast-forward past all lessons today -> no ring and no SZÜNET status
         fakeNow = DateTime(2026, 11, 13, 10, 0);
         await tester.pump(const Duration(seconds: 1));
         await tester.pump(const Duration(milliseconds: 50));
@@ -617,7 +639,7 @@ void main() {
               .whereType<PeriodCountdownRingPainter>(),
           isEmpty,
         );
-        expect(find.text('Szünet'), findsNothing);
+        expect(find.text('SZÜNET'), findsNothing);
       },
     );
   });

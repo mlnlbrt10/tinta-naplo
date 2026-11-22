@@ -121,15 +121,15 @@ class LiquidGlassRimPainter extends CustomPainter {
 
     switch (mode) {
       case LiquidGlassMode.hydroMercury:
-        final top = ((isDark ? 0.90 : 0.92) * topBoost).clamp(0.0, 0.98);
+        final top = ((isDark ? 0.44 : 0.52) * topBoost).clamp(0.0, 0.72);
         final metallicSilver = const Color(0xFFDCE4EE);
-        final mid = ((isDark ? 0.22 : 0.28) * (1.0 + 0.2 * t)).clamp(0.0, 0.70);
-        final bottom = ((isDark ? 0.52 : 0.58) * bottomBoost).clamp(0.0, 0.92);
+        final mid = ((isDark ? 0.16 : 0.22) * (1.0 + 0.2 * t)).clamp(0.0, 0.52);
+        final bottom = ((isDark ? 0.34 : 0.40) * bottomBoost).clamp(0.0, 0.68);
         return <Color>[
           Colors.white.withValues(alpha: top),
-          metallicSilver.withValues(alpha: (top * 0.55).clamp(0.0, 0.85)),
+          metallicSilver.withValues(alpha: (top * 0.52).clamp(0.0, 0.60)),
           metallicSilver.withValues(alpha: mid),
-          metallicSilver.withValues(alpha: (bottom * 0.60).clamp(0.0, 0.82)),
+          metallicSilver.withValues(alpha: (bottom * 0.55).clamp(0.0, 0.60)),
           Colors.white.withValues(alpha: bottom),
         ];
 
@@ -137,41 +137,50 @@ class LiquidGlassRimPainter extends CustomPainter {
         const warmAmber = Color(0xFFFFB86C);
         const coolIce = Color(0xFF8BE9FD);
         final bx = _effectiveBias.dx.clamp(-1.0, 1.0);
-        final warmA = ((isDark ? 0.62 : 0.68) * (1.0 + bx.abs() * 0.25 + 0.2 * t))
-            .clamp(0.0, 0.88);
-        final iceA = ((isDark ? 0.60 : 0.66) * (1.0 + bx.abs() * 0.25 + 0.2 * t))
-            .clamp(0.0, 0.88);
+        final warmA = ((isDark ? 0.50 : 0.56) * (1.0 + bx.abs() * 0.25 + 0.2 * t))
+            .clamp(0.0, 0.76);
+        final iceA = ((isDark ? 0.48 : 0.54) * (1.0 + bx.abs() * 0.25 + 0.2 * t))
+            .clamp(0.0, 0.76);
         return <Color>[
           (bx >= 0 ? warmAmber : coolIce).withValues(alpha: warmA),
-          Colors.white.withValues(alpha: isDark ? 0.40 : 0.48),
-          Colors.white.withValues(alpha: isDark ? 0.16 : 0.22),
-          Colors.white.withValues(alpha: isDark ? 0.34 : 0.42),
+          Colors.white.withValues(alpha: isDark ? 0.24 : 0.32),
+          Colors.white.withValues(alpha: isDark ? 0.10 : 0.16),
+          Colors.white.withValues(alpha: isDark ? 0.22 : 0.28),
           (bx >= 0 ? coolIce : warmAmber).withValues(alpha: iceA),
         ];
 
       case LiquidGlassMode.smokedObsidian:
-        final topBevel = ((isDark ? 0.46 : 0.54) * topBoost).clamp(0.0, 0.75);
-        final edgeBevel = isDark ? 0.10 : 0.14;
+        final topBevel = ((isDark ? 0.24 : 0.32) * topBoost).clamp(0.0, 0.50);
+        final edgeBevel = isDark ? 0.08 : 0.12;
         return <Color>[
           Colors.white.withValues(alpha: topBevel),
-          const Color(0xFFD0D5DD).withValues(alpha: topBevel * 0.45),
+          const Color(0xFFD0D5DD).withValues(alpha: topBevel * 0.42),
           const Color(0xFF98A2B3).withValues(alpha: edgeBevel),
-          const Color(0xFF475467).withValues(alpha: 0.26),
-          const Color(0xFF1D222B).withValues(alpha: isDark ? 0.42 : 0.24),
+          const Color(0xFF475467).withValues(alpha: 0.22),
+          const Color(0xFF1D222B).withValues(alpha: isDark ? 0.36 : 0.20),
         ];
 
       case LiquidGlassMode.rippleGel:
       case LiquidGlassMode.classicFrost:
-        final topAlpha = ((isDark ? 0.65 : 0.72) * topBoost).clamp(0.0, 0.92);
+        if (!isDark) {
+          return <Color>[
+            Colors.white.withValues(alpha: 0.85),
+            const Color(0xFF94A3B8).withValues(alpha: 0.22),
+            const Color(0xFF94A3B8).withValues(alpha: 0.18),
+            const Color(0xFF64748B).withValues(alpha: 0.20),
+            const Color(0xFF64748B).withValues(alpha: 0.26),
+          ];
+        }
+        final topAlpha = ((isDark ? 0.32 : 0.42) * topBoost).clamp(0.0, 0.62);
         final upperSideAlpha =
-            ((isDark ? 0.30 : 0.36) * (0.9 + 0.2 * t)).clamp(0.0, 0.80);
+            ((isDark ? 0.16 : 0.22) * (0.9 + 0.2 * t)).clamp(0.0, 0.52);
         final sideAlpha =
-            ((isDark ? 0.14 : 0.18) * (1.0 + 0.25 * t)).clamp(0.0, 0.60);
+            ((isDark ? 0.10 : 0.14) * (1.0 + 0.25 * t)).clamp(0.0, 0.42);
         final lowerSideAlpha =
-            ((isDark ? 0.18 : 0.22) * (1.0 + 0.35 * math.max(0.0, by)))
-                .clamp(0.0, 0.70);
+            ((isDark ? 0.14 : 0.18) * (1.0 + 0.35 * math.max(0.0, by)))
+                .clamp(0.0, 0.48);
         final bottomAlpha =
-            ((isDark ? 0.25 : 0.30) * bottomBoost).clamp(0.0, 0.82);
+            ((isDark ? 0.18 : 0.24) * bottomBoost).clamp(0.0, 0.56);
 
         return <Color>[
           Colors.white.withValues(alpha: topAlpha),
@@ -257,7 +266,7 @@ class LiquidGlassRimPainter extends CustomPainter {
 }
 
 /// Translucent Liquid Glass pill surface with a uniform translucent fill and an
-/// ultra-thin (`1.0px–1.2px`) pure-white perimeter specular rim tracing the
+/// ultra-thin (`1.0px-1.2px`) pure-white perimeter specular rim tracing the
 /// stadium contour, intensifying smoothly as [pressProgress] approaches `1.0`.
 ///
 /// Uses a pure uniform color fill, `CustomPainter` perimeter stroke, and soft
@@ -318,32 +327,32 @@ class LiquidGlassPillSurface extends StatelessWidget {
           uniformTint = Color.lerp(
             baseColor,
             Colors.white,
-            0.22 + 0.14 * t,
-          )!.withValues(alpha: isDark ? lerpDouble(0.14, 0.24, t)! : lerpDouble(0.12, 0.20, t)!);
+            isDark ? (0.22 + 0.14 * t) : (0.14 + 0.14 * t),
+          )!.withValues(alpha: isDark ? lerpDouble(0.14, 0.24, t)! : lerpDouble(0.16, 0.24, t)!);
           rimStrokeWidth = 1.5;
           break;
         case LiquidGlassMode.smokedObsidian:
-          uniformTint = (isDark ? const Color(0xFF1A1D22) : const Color(0xFFCBD2DC))
-              .withValues(alpha: isDark ? lerpDouble(0.46, 0.56, t)! : lerpDouble(0.36, 0.46, t)!);
+          uniformTint = (isDark ? const Color(0xFF1A1D22) : const Color(0xFF94A3B8))
+              .withValues(alpha: isDark ? lerpDouble(0.46, 0.56, t)! : lerpDouble(0.26, 0.36, t)!);
           rimStrokeWidth = 1.0;
           break;
         case LiquidGlassMode.rippleGel:
           uniformTint = Color.lerp(
             baseColor,
             Colors.white,
-            isDark ? (0.16 + 0.16 * t) : (0.20 + 0.18 * t),
-          )!.withValues(alpha: isDark ? lerpDouble(0.24, 0.38, t)! : lerpDouble(0.20, 0.32, t)!);
+            isDark ? (0.16 + 0.16 * t) : (0.12 + 0.16 * t),
+          )!.withValues(alpha: isDark ? lerpDouble(0.24, 0.38, t)! : lerpDouble(0.22, 0.34, t)!);
           rimStrokeWidth = lerpDouble(1.10, 1.28, t)!;
           break;
         case LiquidGlassMode.classicFrost:
           uniformTint = Color.lerp(
             baseColor,
             Colors.white,
-            isDark ? (0.10 + 0.14 * t) : (0.14 + 0.18 * t),
+            isDark ? (0.10 + 0.14 * t) : (0.08 + 0.14 * t),
           )!.withValues(
             alpha: isDark
                 ? lerpDouble(0.24, 0.36, t)!
-                : lerpDouble(0.18, 0.28, t)!,
+                : lerpDouble(0.20, 0.30, t)!,
           );
           rimStrokeWidth = lerpDouble(1.05, 1.20, t)!;
           break;
@@ -1247,7 +1256,7 @@ class _LiquidInteractivePhysics {
   }) {
     if (!enabled) return child;
     if (!_liquidGlassEnabled) {
-      // Material 3 mode supports tap selection only — press-and-hold grab and
+      // Material 3 mode supports tap selection only - press-and-hold grab and
       // horizontal/2D drag are strictly exclusive to Liquid Glass mode.
       return RawGestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -1826,12 +1835,14 @@ class _LiquidBubbleTabBarState extends State<LiquidBubbleTabBar>
     final isDark = theme.brightness == Brightness.dark;
     final liquidGlass = resolvedLiquidGlassEnabled;
     final activeTextColor = liquidGlass
-        ? (isDark ? Colors.white : const Color(0xFF0F172A))
+        ? (isDark
+            ? Colors.white
+            : Color.lerp(scheme.primary, const Color(0xFF0F172A), 0.35)!)
         : scheme.onSecondaryContainer;
     final inactiveTextColor = liquidGlass
         ? (isDark
             ? Colors.white.withValues(alpha: 0.72)
-            : const Color(0xFF0F172A).withValues(alpha: 0.65))
+            : const Color(0xFF64748B))
         : scheme.onSurfaceVariant;
     final flexWeights = widget.equalFlex
         ? List<int>.filled(widget.items.length, 1)
@@ -1849,18 +1860,27 @@ class _LiquidBubbleTabBarState extends State<LiquidBubbleTabBar>
             color: liquidGlass
                 ? (isDark
                     ? scheme.surfaceContainerHigh.withValues(alpha: 0.72)
-                    : scheme.surfaceContainerHighest.withValues(alpha: 0.85))
+                    : Colors.white.withValues(alpha: 0.88))
                 : (isDark
                     ? scheme.surfaceContainer
-                    : scheme.surfaceContainerHigh),
+                    : scheme.surfaceContainer),
             borderRadius: BorderRadius.circular(999),
             border: Border.all(
               color: liquidGlass
                   ? (isDark
                       ? Colors.white.withValues(alpha: 0.12)
-                      : theme.dividerColor)
+                      : Colors.black.withValues(alpha: 0.06))
                   : scheme.outlineVariant,
             ),
+            boxShadow: !isDark
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.04),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                  ]
+                : null,
           ),
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -2251,7 +2271,7 @@ class StaggeredEntranceItem extends StatefulWidget {
 class _StaggeredEntranceItemState extends State<StaggeredEntranceItem>
     with SingleTickerProviderStateMixin {
   AnimationController? _controller;
-  Animation<double>? _curved;
+  CurvedAnimation? _curved;
   bool _hasAnimated = false;
   bool _completed = true;
 
@@ -2281,6 +2301,7 @@ class _StaggeredEntranceItemState extends State<StaggeredEntranceItem>
     final delayMs = effectiveIdx * widget.stepMs;
     final totalMs = delayMs + widget.durationMs;
 
+    _curved?.dispose();
     _controller?.dispose();
     final ctrl = AnimationController(
       vsync: this,
@@ -2303,6 +2324,7 @@ class _StaggeredEntranceItemState extends State<StaggeredEntranceItem>
 
   @override
   void dispose() {
+    _curved?.dispose();
     _controller?.dispose();
     super.dispose();
   }

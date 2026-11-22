@@ -60,17 +60,20 @@ class HomeWidgetSyncService {
     Color? themePrimary,
   }) {
     if (prefs.uwuModeEnabled) return OledTheme.uwuPastelPink.toARGB32();
-    if (prefs.tsundereModeEnabled) return const Color(0xFFFF7043).toARGB32();
     if (themePrimary != null) return themePrimary.toARGB32();
     return prefs.seedColorValue;
   }
 
+  int _cacheGeneration = 0;
+
   /// Clears in-memory lesson buckets (e.g. during logout or mode switch).
   void clearMemoryCache() {
+    _cacheGeneration++;
     _cachedLessonsByDate.clear();
     _cachedDemoMode = null;
     _lastUpcomingFetchAt = null;
     _lastUpcomingFetchDemo = null;
+    _inFlightUpcomingFetch = null;
   }
 
   /// Synchronizes [lessons] immediately into Android `"tinta_home_widget_prefs"`
@@ -161,8 +164,15 @@ class HomeWidgetSyncService {
 
     final today = DateUtils.dateOnly(now);
     final futureEnd = today.add(const Duration(days: 7));
-    final fetchFuture = () async {
+    final fetchGen = _cacheGeneration;
+    late final Future<void> fetchFuture;
+    fetchFuture = () async {
       try {
+        // Skip background network fetch if session already requires re-auth
+        // so widget prefetch never spams token refreshes or triggers auth errors.
+        if (!isDemo && TokenStorageService.reauthRequiredNotifier.value != null) {
+          return;
+        }
         final rangeLessons = isDemo
             ? DemoDataService.instance.buildTimetableForRange(
                 today,
@@ -174,6 +184,8 @@ class HomeWidgetSyncService {
                 from: today,
                 to: futureEnd,
               );
+        // Abort if logout or demo toggle happened while in flight.
+        if (_cacheGeneration != fetchGen) return;
         _lastUpcomingFetchAt = now;
         _lastUpcomingFetchDemo = isDemo;
         await syncFromLessons(
@@ -186,7 +198,9 @@ class HomeWidgetSyncService {
       } catch (_) {
         // Non-critical background enrichment for next school day; keep today's data.
       } finally {
-        _inFlightUpcomingFetch = null;
+        if (identical(_inFlightUpcomingFetch, fetchFuture)) {
+          _inFlightUpcomingFetch = null;
+        }
       }
     }();
     _inFlightUpcomingFetch = fetchFuture;

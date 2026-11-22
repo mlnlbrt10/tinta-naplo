@@ -581,12 +581,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
 
         final appBarRect = tester.getRect(find.byType(AppBar));
-        final firstCardFinder = find
-            .ancestor(
-              of: find.text('Fiók és munkamenet'),
-              matching: find.byType(SoftGlassCard),
-            )
-            .first;
+        final firstCardFinder = find.byType(SoftGlassCard).first;
         final firstCardRect = tester.getRect(firstCardFinder);
 
         final topGapBelowAppBar = firstCardRect.top - appBarRect.bottom;

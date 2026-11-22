@@ -237,7 +237,7 @@ class DemoDataService {
         (1, 'VLAN és trönk portok konfigurálása', null),
         (2, 'SQL JOIN és aggregáló lekérdezések', null),
         (3, 'Academic Writing & Essay Structure', null),
-        (4, 'Az 1848–49-es forradalom és szabadságharc', null),
+        (4, 'Az 1848-49-es forradalom és szabadságharc', null),
         (5, 'Elektromágneses indukció törvényei', null),
         (6, 'Ady Endre költészetének újításai', null),
       ],
@@ -393,7 +393,7 @@ class DemoDataService {
       (3, 4, 'Jó (4)', '4', 50, 'Szódolgozat', 'IT & Cloud Infrastructure Phrasal Verbs', 18),
 
       // Történelem (3 grades: 4@200%, 4@50%, 5@50%)
-      (4, 4, 'Jó (4)', '4', 200, 'Témazáró dolgozat', 'Az 1848–49-es szabadságharc és dualizmus', 4),
+      (4, 4, 'Jó (4)', '4', 200, 'Témazáró dolgozat', 'Az 1848-49-es szabadságharc és dualizmus', 4),
       (4, 4, 'Jó (4)', '4', 50, 'Forráselemzés', 'Áprilisi törvények szövegelemzése', 13),
       (4, 5, 'Jeles (5)', '5', 50, 'Kiselőadás', 'Ipari forradalom és magyar vasútépítés', 20),
 
@@ -498,7 +498,7 @@ class DemoDataService {
       (
         0,
         1,
-        'Gyakorló feladatlap 12–18. feladat (logaritmikus egyenletek megoldása füzetben).',
+        'Gyakorló feladatlap 12-18. feladat (logaritmikus egyenletek megoldása füzetben).',
         false,
       ),
       (
@@ -600,7 +600,7 @@ class DemoDataService {
         sender: 'Kovácsné Szabó Éva',
         senderTitle: 'Osztályfőnök • 11.B',
         recipients: const [demoStudentName],
-        subject: 'Nyílt nap és pályaorientációs műhely — jövő hét csütörtök',
+        subject: 'Nyílt nap és pályaorientációs műhely - jövő hét csütörtök',
         body:
             'Kedves 11.B!\n\nJövő hét csütörtökön 10:00 órától az auditóriumban kerül megrendezésre az őszi informatikai pályaorientációs nap. A 4. óra után közösen megyünk át.',
         sentAt: now.subtract(const Duration(hours: 5)),
@@ -614,7 +614,7 @@ class DemoDataService {
         sender: 'Kiss Gábor',
         senderTitle: 'Szaktanár',
         recipients: const [demoStudentName],
-        subject: 'Cisco Hálózati Akadémia — gyakorló feladatsor elérhető',
+        subject: 'Cisco Hálózati Akadémia - gyakorló feladatsor elérhető',
         body:
             'Szia Bence!\n\nFeltöltöttem az OSPF és IPv6 gyakorló Packet Tracer fájlokat a pénteki mérés előkészítéséhez.',
         sentAt: now.subtract(const Duration(days: 2)),

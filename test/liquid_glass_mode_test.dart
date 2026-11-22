@@ -107,6 +107,8 @@ void main() {
       );
       expect(find.text('Áttetszőség'), findsNothing);
       expect(find.text('Elmosás erőssége'), findsNothing);
+      expect(find.text('Háttér effektus / atmoszféra:'), findsNothing);
+      expect(find.text('Liquid Glass Mód (Fizikai optika)'), findsNothing);
       expect(theme.liquidGlassEnabled, isFalse);
 
       await tester.tap(find.text('Liquid Glass'));
@@ -116,6 +118,8 @@ void main() {
       expect(theme.liquidGlassEnabled, isTrue);
       expect(find.text('Áttetszőség'), findsOneWidget);
       expect(find.text('Elmosás erőssége'), findsOneWidget);
+      expect(find.text('Háttér effektus / atmoszféra:'), findsOneWidget);
+      expect(find.text('Liquid Glass Mód (Fizikai optika)'), findsOneWidget);
     });
 
     testWidgets('SoftGlassCard, LiquidGlassSurface, and ChristmasAndBackgroundOverlay render opaque M3 surfaces when Liquid Glass is OFF', (tester) async {
@@ -568,14 +572,21 @@ void main() {
         expect(c.g, closeTo(1.0, 0.001));
         expect(c.b, closeTo(1.0, 0.001));
       }
-      expect(colors[0].a, closeTo(0.65, 0.01));
-      expect(colors[2].a, closeTo(0.14, 0.01));
-      expect(colors[4].a, closeTo(0.25, 0.01));
+      expect(colors[0].a, closeTo(0.32, 0.01));
+      expect(colors[2].a, closeTo(0.10, 0.01));
+      expect(colors[4].a, closeTo(0.18, 0.01));
     });
 
     testWidgets(
       'toggling Liquid Glass OFF in Megjelenés és témák synchronously updates SettingsProvider/ThemeProvider and allows immediate Backdrop Color selection on same frame',
       (tester) async {
+        tester.view.physicalSize = const Size(1080, 2400);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
         const initialPrefs = UserProfilePrefs(
           themeStyle: AppThemeStyle.oledPureBlack,
           liquidGlassEnabled: true,
@@ -618,19 +629,22 @@ void main() {
 
         expect(find.text('Áttetszőség'), findsOneWidget);
         expect(find.text('Elmosás erőssége'), findsOneWidget);
+        expect(find.text('Háttér effektus / atmoszféra:'), findsOneWidget);
 
-        // Toggle Liquid Glass OFF
-        await tester.tap(find.widgetWithText(SwitchListTile, 'Liquid Glass'));
-        await tester.pump();
-
-        expect(settings.prefs.liquidGlassEnabled, isFalse);
-        expect(theme.liquidGlassEnabled, isFalse);
-        expect(find.text('Áttetszőség'), findsNothing);
-        expect(find.text('Elmosás erőssége'), findsNothing);
-
-        // Select studio preset 'Nordic Slate' immediately without leaving Settings
+        // Select studio preset 'Nordic Slate' while Liquid Glass sub-options are expanded
+        final outerScroll = find
+            .byWidgetPredicate(
+              (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
+            )
+            .last;
         final slateChip = find.text('Nordic Slate');
+        await tester.scrollUntilVisible(
+          slateChip,
+          160,
+          scrollable: outerScroll,
+        );
         await tester.ensureVisible(slateChip);
+        await tester.pumpAndSettle();
         await tester.tap(slateChip);
         await tester.pump();
 
@@ -643,6 +657,25 @@ void main() {
           ),
           isTrue,
         );
+
+        // Toggle Liquid Glass OFF -> all sub-options (sliders, backdrop presets, physics modes) collapse immediately
+        final lgSwitch = find.widgetWithText(SwitchListTile, 'Liquid Glass');
+        await tester.scrollUntilVisible(
+          lgSwitch,
+          -160,
+          scrollable: outerScroll,
+        );
+        await tester.ensureVisible(lgSwitch);
+        await tester.pumpAndSettle();
+        await tester.tap(lgSwitch);
+        await tester.pump();
+
+        expect(settings.prefs.liquidGlassEnabled, isFalse);
+        expect(theme.liquidGlassEnabled, isFalse);
+        expect(find.text('Áttetszőség'), findsNothing);
+        expect(find.text('Elmosás erőssége'), findsNothing);
+        expect(find.text('Háttér effektus / atmoszféra:'), findsNothing);
+        expect(find.text('Liquid Glass Mód (Fizikai optika)'), findsNothing);
       },
     );
 

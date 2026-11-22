@@ -112,6 +112,8 @@ Lesson _fakeLesson({
   String stateName = 'Megtartott',
   String stateDesc = 'Megtartott óra',
   String? substituteTeacher,
+  String roomName = '204',
+  String teacherName = 'Nagy Péter',
 }) {
   final end = start.add(const Duration(minutes: 45));
   final dayIso = '${start.toIso8601String().split('T').first}T00:00:00Z';
@@ -128,9 +130,9 @@ Lesson _fakeLesson({
       'Kategoria': {'Uid': 'c', 'Nev': subjectName, 'Leiras': subjectName},
       'SortIndex': lessonNumber,
     },
-    'TanarNeve': 'Nagy Péter',
+    'TanarNeve': teacherName,
     'HelyettesTanarNeve': substituteTeacher,
-    'TeremNeve': '204',
+    'TeremNeve': roomName,
     'Tipus': {
       'Uid': 'ora',
       'Nev': 'TanitasiOra',
@@ -382,7 +384,7 @@ void main() {
                       ),
                       items: const [
                         LiquidBubbleTabItem(
-                          label: 'A–Z',
+                          label: 'A-Z',
                           icon: Icons.sort_by_alpha_rounded,
                         ),
                         LiquidBubbleTabItem(
@@ -788,37 +790,12 @@ void main() {
     );
   });
 
-  group('Feature 4: Customizable Timetable Period Number Color (Settings + List + Popup)', () {
-    test('SettingsProvider & ThemeProvider expose, notify, persist, and reset timetablePeriodColor', () async {
-      final settings = SettingsProvider();
-      final themeProvider = ThemeProvider(settings);
-      var notifications = 0;
-      themeProvider.addListener(() => notifications++);
-
-      expect(themeProvider.timetablePeriodColor, isNull);
-
-      await settings.setTimetablePeriodColor(0xFFFFEB3B);
-      expect(settings.prefs.timetablePeriodColorValue, 0xFFFFEB3B);
-      expect(themeProvider.timetablePeriodColor, const Color(0xFFFFEB3B));
-      expect(notifications, 1);
-
-      // Re-reading from SharedPreferences preserves custom color
-      final reloaded = await const TokenStorageService().loadProfilePrefs();
-      expect(reloaded.timetablePeriodColorValue, 0xFFFFEB3B);
-
-      // Reset restores null and notifies ThemeProvider
-      await settings.setTimetablePeriodColor(null);
-      expect(themeProvider.timetablePeriodColor, isNull);
-      expect(notifications, 2);
-
-      themeProvider.dispose();
-    });
-
+  group('Feature 4: Theme-Synced Circular Timetable Lesson Cards & Decluttered Header', () {
     testWidgets(
-      'Settings UI saves custom HEX/RGB & resets Órarend óraszámok színe cleanly',
+      'Settings Megjelenés removes separate Órarend óraszámok színe picker so timetable syncs strictly with active theme',
       (tester) async {
         final session = _fakeSession();
-        var currentPrefs = const UserProfilePrefs();
+        const currentPrefs = UserProfilePrefs();
         final settings = SettingsProvider(initialPrefs: currentPrefs);
         final themeProvider = ThemeProvider(settings);
         final commute = CommuteProvider(
@@ -840,10 +817,7 @@ void main() {
                   student: null,
                   kretaClient: _TestKretaClient(),
                   prefs: settings.prefs,
-                  onPrefsChanged: (next) {
-                    currentPrefs = next;
-                    unawaited(settings.updatePrefs(next));
-                  },
+                  onPrefsChanged: (_) {},
                   onLogout: () {},
                 ),
               ),
@@ -852,73 +826,25 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        // Open "Megjelenés és témák" sub-screen
         await tester.tap(find.text('Megjelenés és témák'));
         await tester.pumpAndSettle();
-        expect(find.text('Világos'), findsOneWidget);
-
-        await tester.scrollUntilVisible(
-          find.text('Órarend óraszámok színe'),
-          200,
-          scrollable: find.byType(Scrollable).first,
-        );
-        await tester.pumpAndSettle();
-        expect(find.text('Órarend óraszámok színe'), findsOneWidget);
-        expect(find.text('Egyedi HEX / RGB'), findsOneWidget);
-
-        // Open custom HEX / RGB dialog and enter bright yellow #FFEB3B
-        await tester.tap(find.text('Egyedi HEX / RGB'));
-        await tester.pumpAndSettle();
-        await tester.enterText(find.byType(TextField), '#FFEB3B');
-        await tester.pump();
-        expect(find.text('255'), findsOneWidget);
-        expect(find.text('235'), findsOneWidget);
-        expect(find.text('59'), findsOneWidget);
-
-        await tester.ensureVisible(find.text('Alkalmaz'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('Alkalmaz'));
-        await tester.pumpAndSettle();
-
-        expect(currentPrefs.timetablePeriodColorValue, 0xFFFFEB3B);
-        expect(themeProvider.timetablePeriodColor, const Color(0xFFFFEB3B));
-        expect(tester.takeException(), isNull);
-
-        // Reset via inline "Alapértelmezett" chip (use .last since Grade colors above also has one)
-        await tester.ensureVisible(find.text('Alapértelmezett').last);
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('Alapértelmezett').last);
-        await tester.pumpAndSettle();
-        expect(currentPrefs.timetablePeriodColorValue, isNull);
-        expect(themeProvider.timetablePeriodColor, isNull);
-
-        // Also test applying dark indigo #1A237E and resetting inside the HEX/RGB dialog
-        await tester.tap(find.text('Egyedi HEX / RGB'));
-        await tester.pumpAndSettle();
-        await tester.enterText(find.byType(TextField), '#1A237E');
-        await tester.pump();
-        await tester.tap(find.text('Alkalmaz'));
-        await tester.pumpAndSettle();
-        expect(currentPrefs.timetablePeriodColorValue, 0xFF1A237E);
-
-        await tester.tap(find.text('Egyedi HEX / RGB'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('Alapértelmezett').last);
-        await tester.pumpAndSettle();
-        expect(currentPrefs.timetablePeriodColorValue, isNull);
-        expect(tester.takeException(), isNull);
+        expect(find.text('Órarend óraszámok színe'), findsNothing);
+        expect(find.text('Egyedi HEX / RGB'), findsNothing);
 
         themeProvider.dispose();
         commute.dispose();
+        settings.dispose();
       },
     );
 
     testWidgets(
-      'TimetableScreen list and showLessonInspectionModal match configured period colors & preserve overrides',
+      'TimetableScreen renders circular theme-tinted lesson badges, clean Terem • Tanár metadata, 2-line tabular times, and decluttered header',
       (tester) async {
         final session = _fakeSession();
-        final initialPrefs = const UserProfilePrefs().withTimetablePeriodColor(
-          0xFFFFEB3B,
+        const greenAccent = Color(0xFF2E7D32);
+        const blueAccent = Color(0xFF4DA3FF);
+        final initialPrefs = UserProfilePrefs(
+          seedColorValue: greenAccent.toARGB32(),
         );
         final settings = SettingsProvider(initialPrefs: initialPrefs);
         final themeProvider = ThemeProvider(settings);
@@ -927,34 +853,24 @@ void main() {
           menetrendService: MenetrendService(),
         );
 
-        final now = DateTime.now();
-        var targetDay = DateTime(now.year, now.month, now.day);
-        if (targetDay.weekday > 5) {
-          targetDay = targetDay.add(Duration(days: 8 - targetDay.weekday));
-        } else if (now.hour >= 18) {
-          targetDay = targetDay.add(
-            Duration(days: targetDay.weekday == 5 ? 3 : 1),
-          );
-        }
-        final isTodayTarget =
-            targetDay.year == now.year &&
-            targetDay.month == now.month &&
-            targetDay.day == now.day;
-        final dayBase = isTodayTarget
-            ? DateTime(now.year, now.month, now.day, 21, 0)
-            : DateTime(targetDay.year, targetDay.month, targetDay.day, 8, 0);
+        final fakeNow = DateTime(2026, 11, 16, 8, 15);
+        final dayBase = DateTime(2026, 11, 16, 8, 0);
         final lessons = [
           _fakeLesson(
             uid: 'l1',
             lessonNumber: 1,
             subjectName: 'Matematika',
             start: dayBase,
+            roomName: 'M1. 110',
+            teacherName: 'Vas Dominik Vajk',
           ),
           _fakeLesson(
             uid: 'l2',
             lessonNumber: 2,
             subjectName: 'Fizika',
             start: dayBase.add(const Duration(minutes: 55)),
+            roomName: '205',
+            teacherName: 'Nagy Réka',
             stateName: 'Elmaradt',
             stateDesc: 'Elmaradt',
           ),
@@ -963,6 +879,8 @@ void main() {
             lessonNumber: 3,
             subjectName: 'Irodalom',
             start: dayBase.add(const Duration(minutes: 110)),
+            roomName: '108',
+            teacherName: 'Tóth Béla',
             substituteTeacher: 'Kovács Réka',
           ),
         ];
@@ -983,6 +901,7 @@ void main() {
                     initialTodaysLessons: lessons,
                     prefs: settings.prefs,
                     onPrefsChanged: (_) {},
+                    clock: () => fakeNow,
                   ),
                 ),
               ),
@@ -992,96 +911,126 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
 
-        // Period 1. list badge has configured yellow fill & dark contrast text
+        // Decluttered header: no clock icon beside day name, plain muted count
+        expect(find.byIcon(Icons.schedule_rounded), findsNothing);
+        expect(find.text('3 óra'), findsOneWidget);
+
+        // Clean 2-line hierarchy: no door icon, exact "Terem • Tanár" format
+        expect(find.byIcon(Icons.meeting_room_rounded), findsNothing);
+        expect(find.text('M1. 110 • Vas Dominik Vajk'), findsOneWidget);
+        expect(find.text('108 • Kovács Réka'), findsOneWidget);
+
+        // Two-line right-aligned tabular times
+        expect(find.text('08:00'), findsOneWidget);
+        expect(find.text('08:45'), findsOneWidget);
+        final startTimeRect = tester.getRect(find.text('08:00'));
+        final endTimeRect = tester.getRect(find.text('08:45'));
+        expect(startTimeRect.top, lessThan(endTimeRect.top));
+
+        // Period 1 (ongoing) has circular theme-tinted badge and NO extra blueAccent card border
+        final activeScheme =
+            Theme.of(tester.element(find.text('1.'))).colorScheme;
         final badge1Finder = find
             .ancestor(of: find.text('1.'), matching: find.byType(Container))
             .first;
         final badge1Deco =
             tester.widget<Container>(badge1Finder).decoration as BoxDecoration;
-        expect(badge1Deco.color, const Color(0xFFFFEB3B));
+        expect(badge1Deco.shape, BoxShape.circle);
+        expect(
+          badge1Deco.color,
+          activeScheme.primary.withValues(alpha: 0.14),
+        );
         expect(
           tester.widget<Text>(find.text('1.')).style?.color,
-          const Color(0xFF101318),
+          activeScheme.primary,
         );
 
-        // Cancelled period 2. keeps red override
-        final badge2Finder = find
-            .ancestor(of: find.text('2.'), matching: find.byType(Container))
-            .first;
-        final badge2Deco =
-            tester.widget<Container>(badge2Finder).decoration as BoxDecoration;
-        expect(badge2Deco.color, const Color(0xFFC62828));
+        final noBlueGlowBorder = tester
+            .widgetList<SoftGlassCard>(find.byType(SoftGlassCard))
+            .any(
+              (c) =>
+                  c.border is Border &&
+                  (c.border as Border).top.color == Colors.blueAccent,
+            );
+        expect(noBlueGlowBorder, isFalse);
 
-        // Substitute period 3. keeps amber override
-        final badge3Finder = find
-            .ancestor(of: find.text('3.'), matching: find.byType(Container))
-            .first;
-        final badge3Deco =
-            tester.widget<Container>(badge3Finder).decoration as BoxDecoration;
-        expect(badge3Deco.color, const Color(0xFFF9A825));
+        // Cancelled period 2 & substituted period 3 keep restrained semantic tints
+        final badge2Deco = tester
+            .widget<Container>(
+              find
+                  .ancestor(of: find.text('2.'), matching: find.byType(Container))
+                  .first,
+            )
+            .decoration as BoxDecoration;
+        expect(badge2Deco.shape, BoxShape.circle);
+        expect(
+          badge2Deco.color,
+          const Color(0xFFEF5350).withValues(alpha: 0.14),
+        );
 
-        // Tap Period 1. lesson card -> Lesson Detail Popup badge matches custom yellow & contrast text!
+        final badge3Deco = tester
+            .widget<Container>(
+              find
+                  .ancestor(of: find.text('3.'), matching: find.byType(Container))
+                  .first,
+            )
+            .decoration as BoxDecoration;
+        expect(badge3Deco.shape, BoxShape.circle);
+        expect(
+          badge3Deco.color,
+          const Color(0xFFF59E0B).withValues(alpha: 0.14),
+        );
+
+        // Switching the active theme accent reactively updates the circular lesson badge & modal badge
+        unawaited(
+          settings.updatePrefs(
+            settings.prefs.copyWith(seedColorValue: blueAccent.toARGB32()),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        final updatedScheme =
+            Theme.of(tester.element(find.text('1.'))).colorScheme;
+        final updatedBadge1Deco = tester
+            .widget<Container>(
+              find
+                  .ancestor(of: find.text('1.'), matching: find.byType(Container))
+                  .first,
+            )
+            .decoration as BoxDecoration;
+        expect(
+          updatedBadge1Deco.color,
+          updatedScheme.primary.withValues(alpha: 0.14),
+        );
+        expect(
+          tester.widget<Text>(find.text('1.')).style?.color,
+          updatedScheme.primary,
+        );
+
+        // Opening inspection modal shows matching circular translucent theme badge
         await tester.tap(find.text('Matematika'));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
-        final popupBadgeFinder = find
-            .ancestor(of: find.text('1.').last, matching: find.byType(Container))
-            .first;
-        final popupBadgeDeco =
-            tester.widget<Container>(popupBadgeFinder).decoration
-                as BoxDecoration;
-        expect(popupBadgeDeco.color, const Color(0xFFFFEB3B));
+        final modalBadgeDeco = tester
+            .widget<Container>(
+              find
+                  .ancestor(
+                    of: find.text('1.').last,
+                    matching: find.byType(Container),
+                  )
+                  .first,
+            )
+            .decoration as BoxDecoration;
+        expect(modalBadgeDeco.shape, BoxShape.circle);
         expect(
-          tester.widget<Text>(find.text('1.').last).style?.color,
-          const Color(0xFF101318),
-        );
-
-        // Close popup and verify reactive update to deep indigo #1A237E -> white text
-        Navigator.of(tester.element(find.text('1.').last)).pop();
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
-        unawaited(settings.setTimetablePeriodColor(0xFF1A237E));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
-
-        final indigoListBadgeDeco =
-            tester
-                    .widget<Container>(
-                      find
-                          .ancestor(
-                            of: find.text('1.'),
-                            matching: find.byType(Container),
-                          )
-                          .first,
-                    )
-                    .decoration
-                as BoxDecoration;
-        expect(indigoListBadgeDeco.color, const Color(0xFF1A237E));
-        expect(tester.widget<Text>(find.text('1.')).style?.color, Colors.white);
-
-        await tester.tap(find.text('Matematika'));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
-        final indigoPopupDeco =
-            tester
-                    .widget<Container>(
-                      find
-                          .ancestor(
-                            of: find.text('1.').last,
-                            matching: find.byType(Container),
-                          )
-                          .first,
-                    )
-                    .decoration
-                as BoxDecoration;
-        expect(indigoPopupDeco.color, const Color(0xFF1A237E));
-        expect(
-          tester.widget<Text>(find.text('1.').last).style?.color,
-          Colors.white,
+          modalBadgeDeco.color,
+          updatedScheme.primary.withValues(alpha: 0.16),
         );
 
         themeProvider.dispose();
         commute.dispose();
+        settings.dispose();
       },
     );
   });

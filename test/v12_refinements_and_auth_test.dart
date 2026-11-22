@@ -32,7 +32,6 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     FlutterSecureStorage.setMockInitialValues(<String, String>{});
     UwuHelper.isEnabled = false;
-    UwuHelper.isTsundereEnabled = false;
     UwuHelper.isFitymaEnabled = false;
     UserProfilePrefs.syncActiveGlobals(const UserProfilePrefs());
     TokenStorageService.externalSessionFallbackLoader = null;
@@ -41,7 +40,6 @@ void main() {
 
   tearDown(() {
     UwuHelper.isEnabled = false;
-    UwuHelper.isTsundereEnabled = false;
     UwuHelper.isFitymaEnabled = false;
     UserProfilePrefs.syncActiveGlobals(const UserProfilePrefs());
     TokenStorageService.externalSessionFallbackLoader = null;
@@ -169,8 +167,17 @@ void main() {
         final fitymaPrefs = const UserProfilePrefs().withFitymaMode(true);
         UserProfilePrefs.syncActiveGlobals(fitymaPrefs);
         expect(UwuHelper.isFitymaEnabled, isTrue);
+        expect(AppIconPresetInfo.resolve(fitymaPrefs).id, 'icon_fityma');
+        expect(
+          AppIconPresetInfo.resolve(fitymaPrefs).activityAlias,
+          '.MainActivityFityma',
+        );
+        expect(
+          AppIconPresetInfo.resolve(fitymaPrefs).assetPath,
+          'assets/images/fityma-icon.png',
+        );
         expect(uwu('Tinta Napló'), 'Fityma Napló');
-        expect(uwu('Tinta Napló v2.0.2'), 'Fityma Napló v2.0.2');
+        expect(uwu('Tinta Napló v3.0.0'), 'Fityma Napló v3.0.0');
 
         await tester.pumpWidget(
           MaterialApp(

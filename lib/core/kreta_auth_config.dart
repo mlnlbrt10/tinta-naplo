@@ -132,9 +132,15 @@ class KretaAuthConfig {
     if (parts.length < 2) {
       return const {};
     }
-    final normalized = base64Url.normalize(parts[1]);
-    final payloadString = utf8.decode(base64Url.decode(normalized));
-    final decoded = jsonDecode(payloadString);
-    return decoded is Map<String, dynamic> ? decoded : const {};
+    try {
+      final normalized = base64Url.normalize(parts[1]);
+      final payloadString = utf8.decode(base64Url.decode(normalized));
+      final decoded = jsonDecode(payloadString);
+      return decoded is Map<String, dynamic>
+          ? decoded
+          : (decoded is Map ? Map<String, dynamic>.from(decoded) : const {});
+    } catch (_) {
+      return const {};
+    }
   }
 }

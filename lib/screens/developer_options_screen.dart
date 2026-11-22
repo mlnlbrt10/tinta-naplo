@@ -97,7 +97,6 @@ class DeveloperOptionsMenuList extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final appearanceActive = prefs.minimalistModeEnabled ||
         prefs.uwuModeEnabled ||
-        prefs.tsundereModeEnabled ||
         prefs.customSkinEnabled ||
         prefs.fitymaModeEnabled;
 
@@ -110,7 +109,7 @@ class DeveloperOptionsMenuList extends StatelessWidget {
           icon: Icons.palette_outlined,
           accent: scheme.primary,
           title: uwu('Megjelenés és UI'),
-          subtitle: uwu('Minimalista mód, Liquid Glass fizika és hátterek'),
+          subtitle: uwu('Minimalista mód, saját háttérkép és egyéni CSS skin'),
           statusBadge: appearanceActive ? 'Aktív' : null,
           onTap: () => _pushSubPage(
             context,
@@ -242,7 +241,7 @@ class _DeveloperCategoryCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        title,
+                        uwu(title),
                         style: theme.textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w800,
                           color: scheme.onSurface,
@@ -250,7 +249,7 @@ class _DeveloperCategoryCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        subtitle,
+                        uwu(subtitle),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.labelSmall?.copyWith(
@@ -275,7 +274,7 @@ class _DeveloperCategoryCard extends StatelessWidget {
                       ),
                     ),
                     child: Text(
-                      statusBadge!,
+                      uwuLabel(statusBadge!),
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w800,
@@ -372,7 +371,6 @@ class DeveloperOptionsHubScreen extends StatelessWidget {
                     .copyWith(
                       developerModeUnlocked: false,
                       uwuModeEnabled: false,
-                      tsundereModeEnabled: false,
                     );
                 UserProfilePrefs.syncActiveGlobals(next);
                 scope?.settings.updatePrefs(next);
@@ -569,16 +567,20 @@ class _DeveloperAppearanceSubPageState
                   SwitchListTile.adaptive(
                     contentPadding: EdgeInsets.zero,
                     activeThumbColor: scheme.primary,
-                    title: const Text(
-                      'Minimalista mód',
-                      style: TextStyle(
+                    title: Text(
+                      uwuLabel(
+                        'Minimalista mód',
+                        enabled: activePrefs.uwuModeEnabled,
+                      ),
+                      style: const TextStyle(
                         fontWeight: FontWeight.w900,
                         fontSize: 15,
                       ),
                     ),
                     subtitle: Text(
-                      uwu(
+                      uwuLabel(
                         'Kizárólag a 3 legfontosabb standard adatmezőt mutatja a kártyák megnyitásakor, változatlan mezőnevekkel és Hero animációval.',
+                        enabled: activePrefs.uwuModeEnabled,
                       ),
                       style: TextStyle(
                         fontSize: 12,
@@ -605,9 +607,12 @@ class _DeveloperAppearanceSubPageState
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          activePrefs.minimalistModeEnabled
-                              ? 'Aktív szűrt kártyanézet:'
-                              : 'Bekapcsoláskor szűrt kártyák:',
+                          uwuLabel(
+                            activePrefs.minimalistModeEnabled
+                                ? 'Aktív szűrt kártyanézet:'
+                                : 'Bekapcsoláskor szűrt kártyák:',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
                           style: theme.textTheme.labelMedium?.copyWith(
                             fontWeight: FontWeight.w800,
                             color: scheme.primary,
@@ -615,9 +620,12 @@ class _DeveloperAppearanceSubPageState
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          '• Órarend: csak Idősáv, Tanterem és Tanár sorok\n'
-                          '• Jegyek: csak Rögzítés ideje, Értékelő tanár és Értékelés módja\n'
-                          '• Számonkérések: csak Számonkérés napja, témája és módja',
+                          uwuLabel(
+                            '• Órarend: csak Idősáv, Tanterem és Tanár sorok\n'
+                            '• Jegyek: csak Rögzítés ideje, Értékelő tanár és Értékelés módja\n'
+                            '• Számonkérések: csak Számonkérés napja, témája és módja',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: scheme.onSurface.withValues(alpha: 0.78),
                             height: 1.45,
@@ -638,113 +646,13 @@ class _DeveloperAppearanceSubPageState
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
-                    uwu('Liquid Glass Mód (Fizikai optika)'),
+                    uwu('Saját háttérkép'),
                     style: theme.textTheme.labelLarge?.copyWith(
                       fontWeight: FontWeight.w900,
                       color: scheme.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    activePrefs.liquidGlassMode.description,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: scheme.onSurface.withValues(alpha: 0.72),
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: LiquidGlassMode.values.map((mode) {
-                      final selected = activePrefs.liquidGlassMode == mode;
-                      return ChoiceChip(
-                        label: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              mode.label,
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                fontWeight: selected
-                                    ? FontWeight.w900
-                                    : FontWeight.w700,
-                              ),
-                            ),
-                            Text(
-                              mode.subtitle,
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                color:
-                                    scheme.onSurface.withValues(alpha: 0.65),
-                              ),
-                            ),
-                          ],
-                        ),
-                        selected: selected,
-                        onSelected: (_) {
-                          HapticFeedback.selectionClick();
-                          _update(activePrefs.copyWith(liquidGlassMode: mode));
-                        },
-                      );
-                    }).toList(),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            SoftGlassCard(
-              prefs: activePrefs,
-              padding: const EdgeInsets.all(18),
-              borderRadius: OledTheme.largeRadius,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    uwu('Stúdió hátterek & Saját háttérkép'),
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      color: scheme.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: BackgroundPresetInfo.presets.map((bg) {
-                      final selected = !activePrefs.hasAnimatedBackdrop &&
-                          !activePrefs.hasCustomBackdrop &&
-                          activePrefs.backgroundPreset == bg.id;
-                      return ChoiceChip(
-                        avatar: Icon(
-                          selected ? Icons.check_circle_rounded : bg.icon,
-                          size: 16,
-                          color: selected ? scheme.primary : null,
-                        ),
-                        label: Text(
-                          bg.label,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight:
-                                selected ? FontWeight.w800 : FontWeight.w600,
-                          ),
-                        ),
-                        selected: selected,
-                        onSelected: (_) {
-                          HapticFeedback.selectionClick();
-                          _update(
-                            activePrefs.copyWith(
-                              animatedBackdropPreset:
-                                  AnimatedBackdropPreset.off,
-                              backgroundPreset: bg.id,
-                              clearCustomBackdropPath: true,
-                            ),
-                          );
-                        },
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 12),
                   Wrap(
                     spacing: 10,
                     runSpacing: 8,
@@ -805,87 +713,6 @@ class _DeveloperAppearanceSubPageState
                       activePrefs.copyWith(customBackdropDim: v),
                     ),
                   ),
-                  const Divider(height: 22),
-                  Text(
-                    uwu('Animált hátterek (kísérleti)'),
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      color: scheme.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    uwu(
-                      '120Hz-barát optikai árnyékolás egyetlen RepaintBoundary rétegen — háttérbe lépéskor automatikusan szünetel.',
-                    ),
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: scheme.onSurface.withValues(alpha: 0.72),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: AnimatedBackdropPreset.values.map((preset) {
-                      final selected =
-                          activePrefs.animatedBackdropPreset == preset;
-                      final IconData icon = switch (preset) {
-                        AnimatedBackdropPreset.off =>
-                          Icons.layers_clear_outlined,
-                        AnimatedBackdropPreset.gyroLiquidHorizon =>
-                          Icons.sensors_rounded,
-                        AnimatedBackdropPreset.causticWater =>
-                          Icons.water_outlined,
-                        AnimatedBackdropPreset.ferrofluidDrift =>
-                          Icons.blur_on_rounded,
-                        AnimatedBackdropPreset.sunbeamDust =>
-                          Icons.wb_sunny_outlined,
-                        AnimatedBackdropPreset.topographicPulse =>
-                          Icons.terrain_outlined,
-                        AnimatedBackdropPreset.analogFilmLight =>
-                          Icons.camera_roll_outlined,
-                      };
-                      return ChoiceChip(
-                        avatar: Icon(
-                          selected ? Icons.check_circle_rounded : icon,
-                          size: 16,
-                          color: selected ? scheme.primary : null,
-                        ),
-                        label: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              preset.label,
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                fontWeight: selected
-                                    ? FontWeight.w900
-                                    : FontWeight.w700,
-                              ),
-                            ),
-                            Text(
-                              preset.subtitle,
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                color:
-                                    scheme.onSurface.withValues(alpha: 0.65),
-                              ),
-                            ),
-                          ],
-                        ),
-                        selected: selected,
-                        onSelected: (_) {
-                          HapticFeedback.selectionClick();
-                          _update(
-                            activePrefs.copyWith(
-                              animatedBackdropPreset: preset,
-                            ),
-                          );
-                        },
-                      );
-                    }).toList(),
-                  ),
                 ],
               ),
             ),
@@ -905,13 +732,20 @@ class _DeveloperAppearanceSubPageState
                 child: SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
                   activeThumbColor: OledTheme.uwuPastelPink,
-                  title: const Text(
-                    'UwU mód',
-                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                  title: Text(
+                    uwuLabel(
+                      'UwU mód',
+                      enabled: activePrefs.uwuModeEnabled,
+                    ),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 15,
+                    ),
                   ),
                   subtitle: Text(
-                    uwu(
+                    uwuLabel(
                       'Cuki fonetikus átalakítás (r/l -> w, :3, uwu, >w<) és pasztell rózsaszín/levendula árnyalatok az egész appban!',
+                      enabled: activePrefs.uwuModeEnabled,
                     ),
                     style: TextStyle(
                       fontSize: 12,
@@ -922,41 +756,6 @@ class _DeveloperAppearanceSubPageState
                   onChanged: (val) {
                     HapticFeedback.mediumImpact();
                     _update(activePrefs.copyWith(uwuModeEnabled: val));
-                  },
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Material(
-              color: const Color(0xFFFF7043).withValues(alpha: 0.14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(22),
-                side: BorderSide(
-                  color: const Color(0xFFFF7043).withValues(alpha: 0.45),
-                ),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                child: SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  activeThumbColor: const Color(0xFFFF7043),
-                  title: const Text(
-                    'Tsundere mód',
-                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
-                  ),
-                  subtitle: Text(
-                    'Csípős tsundere beszólások és köszöntések („N-nem mintha érdekelne a házi feladatod, b-baka~!”)',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onSurface.withValues(alpha: 0.75),
-                    ),
-                  ),
-                  value: activePrefs.tsundereModeEnabled,
-                  onChanged: (val) {
-                    HapticFeedback.mediumImpact();
-                    _update(activePrefs.copyWith(tsundereModeEnabled: val));
                   },
                 ),
               ),
@@ -978,12 +777,21 @@ class _DeveloperAppearanceSubPageState
                   key: const ValueKey<String>('dev-fityma-mode-switch'),
                   contentPadding: EdgeInsets.zero,
                   activeThumbColor: const Color(0xFFFFB74D),
-                  title: const Text(
-                    'Fityma Napló mód',
-                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                  title: Text(
+                    uwuLabel(
+                      'Fityma Napló mód',
+                      enabled: activePrefs.uwuModeEnabled,
+                    ),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 15,
+                    ),
                   ),
                   subtitle: Text(
-                    'Lecseréli az alkalmazás nevét és logóját a játékos „Fityma Napló” kiadásra.',
+                    uwuLabel(
+                      'Lecseréli az alkalmazás nevét és logóját a játékos „Fityma Napló” kiadásra.',
+                      enabled: activePrefs.uwuModeEnabled,
+                    ),
                     style: TextStyle(
                       fontSize: 12,
                       color: scheme.onSurface.withValues(alpha: 0.75),
@@ -992,12 +800,9 @@ class _DeveloperAppearanceSubPageState
                   value: activePrefs.fitymaModeEnabled,
                   onChanged: (val) {
                     HapticFeedback.mediumImpact();
-                    _update(activePrefs.withFitymaMode(val));
-                    unawaited(
-                      DynamicIconService.setAppIcon(
-                        val ? 'icon_fityma' : activePrefs.appIconPreset,
-                      ),
-                    );
+                    final next = activePrefs.withFitymaMode(val);
+                    _update(next);
+                    unawaited(DynamicIconService.syncIconWithPrefs(next));
                     TintaToast.info(
                       context,
                       val
@@ -1020,15 +825,21 @@ class _DeveloperAppearanceSubPageState
                     key: const ValueKey<String>('dev-custom-skin-switch'),
                     contentPadding: EdgeInsets.zero,
                     activeThumbColor: scheme.primary,
-                    title: const Text(
-                      'Egyéni CSS Skin',
-                      style: TextStyle(
+                    title: Text(
+                      uwuLabel(
+                        'Egyéni CSS Skin',
+                        enabled: activePrefs.uwuModeEnabled,
+                      ),
+                      style: const TextStyle(
                         fontWeight: FontWeight.w900,
                         fontSize: 15,
                       ),
                     ),
                     subtitle: Text(
-                      'Élő CSS-változó alapú felület- és témaszerkesztő (:root { --bg, --surface, --accent, --card-radius... }).',
+                      uwuLabel(
+                        'Élő CSS-változó alapú felület- és témaszerkesztő (:root { --bg, --surface, --accent, --card-radius... }).',
+                        enabled: activePrefs.uwuModeEnabled,
+                      ),
                       style: TextStyle(
                         fontSize: 12,
                         color: scheme.onSurface.withValues(alpha: 0.72),
@@ -1085,7 +896,12 @@ class _DeveloperAppearanceSubPageState
                           );
                         },
                         icon: const Icon(Icons.check_rounded, size: 17),
-                        label: const Text('Alkalmaz'),
+                        label: Text(
+                          uwuLabel(
+                            'Alkalmaz',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
+                        ),
                       ),
                       OutlinedButton.icon(
                         key: const ValueKey<String>('dev-custom-skin-reset'),
@@ -1105,30 +921,49 @@ class _DeveloperAppearanceSubPageState
                           );
                         },
                         icon: const Icon(Icons.restart_alt_rounded, size: 17),
-                        label: const Text('Alaphelyzet'),
+                        label: Text(
+                          uwuLabel(
+                            'Alaphelyzet',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
+                        ),
                       ),
                       TextButton.icon(
                         onPressed: () async {
-                          await Clipboard.setData(
-                            ClipboardData(text: _cssSkinController.text),
-                          );
-                          if (!context.mounted) return;
-                          TintaToast.info(context, 'CSS vágólapra másolva');
+                          try {
+                            await Clipboard.setData(
+                              ClipboardData(text: _cssSkinController.text),
+                            );
+                            if (!context.mounted) return;
+                            TintaToast.info(context, 'CSS vágólapra másolva');
+                          } catch (_) {}
                         },
                         icon: const Icon(Icons.copy_rounded, size: 16),
-                        label: const Text('Másolás'),
+                        label: Text(
+                          uwuLabel(
+                            'Másolás',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
+                        ),
                       ),
                       TextButton.icon(
                         onPressed: () async {
-                          final clip = await Clipboard.getData('text/plain');
-                          final pasted = clip?.text;
-                          if (pasted == null || pasted.trim().isEmpty) return;
-                          _cssSkinController.text = pasted;
-                          if (!context.mounted) return;
-                          TintaToast.info(context, 'CSS beillesztve');
+                          try {
+                            final clip = await Clipboard.getData('text/plain');
+                            if (!mounted || !context.mounted) return;
+                            final pasted = clip?.text;
+                            if (pasted == null || pasted.trim().isEmpty) return;
+                            _cssSkinController.text = pasted;
+                            TintaToast.info(context, 'CSS beillesztve');
+                          } catch (_) {}
                         },
                         icon: const Icon(Icons.paste_rounded, size: 16),
-                        label: const Text('Beillesztés'),
+                        label: Text(
+                          uwuLabel(
+                            'Beillesztés',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -1231,16 +1066,20 @@ class _DeveloperDemoModeSubPageState extends State<DeveloperDemoModeSubPage> {
                   SwitchListTile.adaptive(
                     contentPadding: EdgeInsets.zero,
                     activeThumbColor: demoAccent,
-                    title: const Text(
-                      'Demó mód',
-                      style: TextStyle(
+                    title: Text(
+                      uwuLabel(
+                        'Demó mód',
+                        enabled: activePrefs.uwuModeEnabled,
+                      ),
+                      style: const TextStyle(
                         fontWeight: FontWeight.w900,
                         fontSize: 15,
                       ),
                     ),
                     subtitle: Text(
-                      uwu(
+                      uwuLabel(
                         'Teljes bemutató adatkészlet (Kovács Bence • 11.B) a tinta-naplo.mlnlbrt.hu képernyőképekhez. A főoldalon nem jelenít meg zavaró szalagcímet.',
+                        enabled: activePrefs.uwuModeEnabled,
                       ),
                       style: TextStyle(
                         fontSize: 12,
@@ -1271,7 +1110,10 @@ class _DeveloperDemoModeSubPageState extends State<DeveloperDemoModeSubPage> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Teljes izoláció: a valós KRÉTA munkameneted, SecureStorage tokenjeid és letöltött adataid érintetlenek maradnak, kikapcsoláskor azonnal visszatöltenek.',
+                            uwuLabel(
+                              'Teljes izoláció: a valós KRÉTA munkameneted, SecureStorage tokenjeid és letöltött adataid érintetlenek maradnak, kikapcsoláskor azonnal visszatöltenek.',
+                              enabled: activePrefs.uwuModeEnabled,
+                            ),
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: scheme.onSurface.withValues(alpha: 0.82),
                               height: 1.4,
@@ -1306,7 +1148,7 @@ class _DeveloperDemoModeSubPageState extends State<DeveloperDemoModeSubPage> {
                   ),
                   const _DevInfoRow(
                     'Órarend',
-                    'Dinamikus H–P órarend (aktív óra, helyettesítés, elmaradó óra)',
+                    'Dinamikus H-P órarend (aktív óra, helyettesítés, elmaradó óra)',
                   ),
                   const _DevInfoRow(
                     'Értékelések',
@@ -1379,6 +1221,7 @@ class _DeveloperAuthNetworkSubPageState
     extends State<DeveloperAuthNetworkSubPage> {
   StoredSession? _storedSession;
   LogoutDiagnosticEntry? _lastLogoutReason;
+  List<AuthEventEntry> _authTimeline = const [];
   bool _loadingSession = true;
   bool _testingRefresh = false;
   bool _testingSync = false;
@@ -1396,6 +1239,7 @@ class _DeveloperAuthNetworkSubPageState
   Future<void> _loadSessionState() async {
     StoredSession? loaded;
     LogoutDiagnosticEntry? logoutReason;
+    List<AuthEventEntry> timeline = const [];
     try {
       loaded = await _storage.loadSession();
     } catch (_) {
@@ -1406,10 +1250,16 @@ class _DeveloperAuthNetworkSubPageState
     } catch (_) {
       logoutReason = null;
     }
+    try {
+      timeline = await TokenStorageService.loadAuthEventTimeline();
+    } catch (_) {
+      timeline = const [];
+    }
     if (!mounted) return;
     setState(() {
       _storedSession = loaded;
       _lastLogoutReason = logoutReason;
+      _authTimeline = timeline;
       _loadingSession = false;
     });
   }
@@ -1420,6 +1270,7 @@ class _DeveloperAuthNetworkSubPageState
       _testingRefresh = true;
       _diagResult = null;
     });
+    KretaClient? tempClient;
     try {
       final session = await _storage.loadSession();
       if (session == null) {
@@ -1428,25 +1279,33 @@ class _DeveloperAuthNetworkSubPageState
         TintaToast.info(context, 'Nincs mentett munkamenet a teszthez');
         return;
       }
-      final client = widget.kretaClient ?? KretaClient(storage: _storage);
+      final client = widget.kretaClient ??
+          (tempClient = KretaClient(storage: _storage));
       final refreshed = await _storage.refreshToken(
         session: session,
         httpClient: null,
         clientId: client.clientId,
       );
+      final updatedTimeline = await TokenStorageService.loadAuthEventTimeline();
       if (!mounted) return;
       final fmt = DateFormat('yyyy. MM. dd. HH:mm:ss');
       setState(() {
         _storedSession = refreshed;
+        _authTimeline = updatedTimeline;
         _diagResult =
             'Token frissítés sikeres • Új lejárat: ${fmt.format(refreshed.expiresAt.toLocal())}';
       });
       TintaToast.success(context, 'KRÉTA token sikeresen frissítve');
     } catch (e) {
+      final updatedTimeline = await TokenStorageService.loadAuthEventTimeline();
       if (!mounted) return;
-      setState(() => _diagResult = 'Token frissítés hiba: $e');
+      setState(() {
+        _authTimeline = updatedTimeline;
+        _diagResult = 'Token frissítés hiba: $e';
+      });
       TintaToast.error(context, 'Token frissítés sikertelen');
     } finally {
+      tempClient?.close();
       if (mounted) {
         setState(() => _testingRefresh = false);
       }
@@ -1460,6 +1319,7 @@ class _DeveloperAuthNetworkSubPageState
       _diagResult = null;
     });
     final sw = Stopwatch()..start();
+    KretaClient? tempClient;
     try {
       if (activePrefs.demoModeEnabled) {
         final data = DemoDataService.instance.buildDashboardData();
@@ -1467,7 +1327,7 @@ class _DeveloperAuthNetworkSubPageState
         if (!mounted) return;
         setState(() {
           _diagResult =
-              'Demó mód aktív (${sw.elapsedMilliseconds} ms) — valós API hívás letiltva (${data.allGrades.length} jegy, ${data.todaysLessons.length} mai óra).';
+              'Demó mód aktív (${sw.elapsedMilliseconds} ms) - valós API hívás letiltva (${data.allGrades.length} jegy, ${data.todaysLessons.length} mai óra).';
         });
         return;
       }
@@ -1477,7 +1337,8 @@ class _DeveloperAuthNetworkSubPageState
         setState(() => _diagResult = 'Nincs aktív munkamenet.');
         return;
       }
-      final client = widget.kretaClient ?? KretaClient(storage: _storage);
+      final client = widget.kretaClient ??
+          (tempClient = KretaClient(storage: _storage));
       final profile = await client.fetchStudentProfile(session);
       sw.stop();
       if (!mounted) return;
@@ -1497,6 +1358,7 @@ class _DeveloperAuthNetworkSubPageState
       });
       TintaToast.error(context, 'API diagnosztika hibával zárult');
     } finally {
+      tempClient?.close();
       if (mounted) {
         setState(() => _testingSync = false);
       }
@@ -1561,11 +1423,11 @@ class _DeveloperAuthNetworkSubPageState
                       : 'Valós KRÉTA kliens',
                 ),
                 _DevInfoRow('Token állapot', tokenStatusLabel),
-                _DevInfoRow('Intézménykód', s?.instituteCode ?? '—'),
-                _DevInfoRow('Felhasználó', s?.userName ?? '—'),
+                _DevInfoRow('Intézménykód', s?.instituteCode ?? '-'),
+                _DevInfoRow('Felhasználó', s?.userName ?? '-'),
                 _DevInfoRow(
                   'Lejárat ideje',
-                  s != null ? fmt.format(s.expiresAt.toLocal()) : '—',
+                  s != null ? fmt.format(s.expiresAt.toLocal()) : '-',
                 ),
                 const _DevInfoRow('IdP végpont', KretaAuthConfig.tokenEndpoint),
                 const _DevInfoRow('Kliens azonosító', KretaAuthConfig.clientIdIos),
@@ -1579,7 +1441,12 @@ class _DeveloperAuthNetworkSubPageState
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.key_rounded, size: 18),
-                  label: const Text('Token frissítés tesztelése'),
+                  label: Text(
+                    uwuLabel(
+                      'Token frissítés tesztelése',
+                      enabled: activePrefs.uwuModeEnabled,
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
@@ -1592,7 +1459,12 @@ class _DeveloperAuthNetworkSubPageState
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.network_check_rounded, size: 18),
-                  label: const Text('API szinkron diagnosztika'),
+                  label: Text(
+                    uwuLabel(
+                      'API szinkron diagnosztika',
+                      enabled: activePrefs.uwuModeEnabled,
+                    ),
+                  ),
                 ),
                 if (_diagResult != null) ...[
                   const SizedBox(height: 12),
@@ -1688,7 +1560,12 @@ class _DeveloperAuthNetworkSubPageState
                           );
                         },
                         icon: const Icon(Icons.copy_rounded, size: 16),
-                        label: const Text('Másolás'),
+                        label: Text(
+                          uwuLabel(
+                            'Másolás',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
+                        ),
                       ),
                       TextButton.icon(
                         onPressed: () async {
@@ -1697,7 +1574,122 @@ class _DeveloperAuthNetworkSubPageState
                           setState(() => _lastLogoutReason = null);
                         },
                         icon: const Icon(Icons.delete_outline_rounded, size: 16),
-                        label: const Text('Napló törlése'),
+                        label: Text(
+                          uwuLabel(
+                            'Napló törlése',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          SoftGlassCard(
+            key: const ValueKey<String>('dev-auth-timeline-card'),
+            prefs: activePrefs,
+            padding: const EdgeInsets.all(18),
+            borderRadius: OledTheme.largeRadius,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        uwu('Hitelesítési eseménynapló (utolsó 25)'),
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: uwuLabel(
+                        'Frissítés',
+                        enabled: activePrefs.uwuModeEnabled,
+                      ),
+                      onPressed: _loadSessionState,
+                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (_authTimeline.isEmpty)
+                  Text(
+                    uwu('Nincs rögzített hitelesítési esemény.'),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurface.withValues(alpha: 0.72),
+                    ),
+                  )
+                else ...[
+                  Container(
+                    width: double.infinity,
+                    constraints: const BoxConstraints(maxHeight: 260),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHigh.withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: SingleChildScrollView(
+                      child: SelectableText(
+                        TokenStorageService.formatAuthEventTimeline(
+                          _authTimeline,
+                        ),
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          fontFamily: 'monospace',
+                          height: 1.4,
+                          color: scheme.onSurface.withValues(alpha: 0.9),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        key: const ValueKey<String>('dev-auth-timeline-copy'),
+                        onPressed: () async {
+                          try {
+                            final formatted =
+                                TokenStorageService.formatAuthEventTimeline(
+                              _authTimeline,
+                            );
+                            await Clipboard.setData(
+                              ClipboardData(text: formatted),
+                            );
+                            if (!context.mounted) return;
+                            TintaToast.info(
+                              context,
+                              'Hitelesítési eseménynapló vágólapra másolva',
+                            );
+                          } catch (_) {}
+                        },
+                        icon: const Icon(Icons.copy_rounded, size: 16),
+                        label: Text(
+                          uwuLabel(
+                            'Másolás',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: () async {
+                          await TokenStorageService.clearAuthEventTimeline();
+                          if (!mounted) return;
+                          setState(() => _authTimeline = const []);
+                        },
+                        icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                        label: Text(
+                          uwuLabel(
+                            'Napló törlése',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -1776,27 +1768,33 @@ class _DeveloperIntegrationsSubPageState
   }
 
   Future<void> _refreshPromotionStatus({bool refreshIfGranted = false}) async {
-    final canPromote = await _widgetSync.canPostPromotedNotifications();
-    if (!mounted) return;
-    final becameGranted = !_canPromoteLiveNotifications && canPromote;
-    setState(() => _canPromoteLiveNotifications = canPromote);
-    if (refreshIfGranted &&
-        becameGranted &&
-        _activePrefs(context).liveActivityEnabled) {
-      await _widgetSync.refreshLiveUpdateNow();
-    }
+    try {
+      final canPromote = await _widgetSync.canPostPromotedNotifications();
+      if (!mounted) return;
+      final becameGranted = !_canPromoteLiveNotifications && canPromote;
+      setState(() => _canPromoteLiveNotifications = canPromote);
+      if (refreshIfGranted &&
+          becameGranted &&
+          _activePrefs(context).liveActivityEnabled) {
+        await _widgetSync.refreshLiveUpdateNow();
+      }
+    } catch (_) {}
   }
 
   UserProfilePrefs _activePrefs(BuildContext context) =>
       AppProvidersScope.maybeOf(context)?.settings.prefs ?? _localPrefs;
 
   Future<void> _refreshWear() async {
-    final s = await _wear.getConnectionStatus();
-    if (!mounted) return;
-    setState(() {
-      _status = s;
-      _loading = false;
-    });
+    try {
+      final s = await _wear.getConnectionStatus();
+      if (!mounted) return;
+      setState(() {
+        _status = s;
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   Future<void> _manualWearSync(UserProfilePrefs activePrefs) async {
@@ -1824,6 +1822,10 @@ class _DeveloperIntegrationsSubPageState
             : 'Wear OS szinkron sikertelen',
         type: ok ? TintaToastType.success : TintaToastType.error,
       );
+    } catch (_) {
+      if (mounted) {
+        TintaToast.error(context, 'Wear OS szinkron sikertelen');
+      }
     } finally {
       if (mounted) setState(() => _syncing = false);
     }
@@ -1884,6 +1886,10 @@ class _DeveloperIntegrationsSubPageState
           'Élő tevékenység kikapcsolva',
         );
       }
+    } catch (_) {
+      if (mounted) {
+        TintaToast.error(context, 'Nem sikerült módosítani az élő tevékenységet');
+      }
     } finally {
       if (mounted) setState(() => _togglingLiveActivity = false);
     }
@@ -1894,14 +1900,16 @@ class _DeveloperIntegrationsSubPageState
     await showDialog<void>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        title: const Text('Samsung Now Bar / Live Updates engedély'),
-        content: const Text(
-          'Android 16 és One UI alatt az állapotsoron és a zárolási képernyőn való kiemelt megjelenítéshez engedélyezd az „Élő értesítések” opciót a Tinta Napló rendszerbeállításaiban.',
+        title: Text(uwuLabel('Samsung Now Bar / Live Updates engedély')),
+        content: Text(
+          uwu(
+            'Android 16 és One UI alatt az állapotsoron és a zárolási képernyőn való kiemelt megjelenítéshez engedélyezd az „Élő értesítések” opciót a Tinta Napló rendszerbeállításaiban.',
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogCtx).pop(),
-            child: const Text('Később'),
+            child: Text(uwuLabel('Később')),
           ),
           FilledButton.icon(
             onPressed: () {
@@ -1909,7 +1917,7 @@ class _DeveloperIntegrationsSubPageState
               unawaited(_widgetSync.openPromotedNotificationSettings());
             },
             icon: const Icon(Icons.open_in_new_rounded, size: 16),
-            label: const Text('Beállítások megnyitása'),
+            label: Text(uwuLabel('Beállítások megnyitása')),
           ),
         ],
       ),
@@ -1979,16 +1987,20 @@ class _DeveloperIntegrationsSubPageState
                     ),
                     contentPadding: EdgeInsets.zero,
                     activeThumbColor: scheme.primary,
-                    title: const Text(
-                      'Élő tevékenység (Now Bar)',
-                      style: TextStyle(
+                    title: Text(
+                      uwuLabel(
+                        'Élő tevékenység (Now Bar)',
+                        enabled: activePrefs.uwuModeEnabled,
+                      ),
+                      style: const TextStyle(
                         fontWeight: FontWeight.w900,
                         fontSize: 15,
                       ),
                     ),
                     subtitle: Text(
-                      uwu(
+                      uwuLabel(
                         'Aktuális óra és visszaszámláló megjelenítése a zárolási képernyőn és az állapotsoron',
+                        enabled: activePrefs.uwuModeEnabled,
                       ),
                       style: TextStyle(
                         fontSize: 12,
@@ -2018,7 +2030,10 @@ class _DeveloperIntegrationsSubPageState
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Text(
-                            'Now Bar / Live Updates kiemelési engedély hiányzik.',
+                            uwuLabel(
+                              'Now Bar / Live Updates kiemelési engedély hiányzik.',
+                              enabled: activePrefs.uwuModeEnabled,
+                            ),
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w800,
@@ -2037,7 +2052,12 @@ class _DeveloperIntegrationsSubPageState
                               );
                             },
                             icon: const Icon(Icons.tune_rounded, size: 16),
-                            label: const Text('Now Bar engedélyezése'),
+                            label: Text(
+                              uwuLabel(
+                                'Now Bar engedélyezése',
+                                enabled: activePrefs.uwuModeEnabled,
+                              ),
+                            ),
                           ),
                         ],
                       ),
@@ -2067,9 +2087,12 @@ class _DeveloperIntegrationsSubPageState
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.notifications_active_outlined, size: 16),
-                      label: const Text(
-                        'Élő értesítés frissítése most',
-                        style: TextStyle(
+                      label: Text(
+                        uwuLabel(
+                          'Élő értesítés frissítése most',
+                          enabled: activePrefs.uwuModeEnabled,
+                        ),
+                        style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                         ),
@@ -2102,7 +2125,10 @@ class _DeveloperIntegrationsSubPageState
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(
-                                'Bekapcsolási útmutató (Samsung / Android 16+):',
+                                uwuLabel(
+                                  'Bekapcsolási útmutató (Samsung / Android 16+):',
+                                  enabled: activePrefs.uwuModeEnabled,
+                                ),
                                 style: TextStyle(
                                   fontSize: 12.5,
                                   fontWeight: FontWeight.w800,
@@ -2114,7 +2140,10 @@ class _DeveloperIntegrationsSubPageState
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'Beállítások → Fejlesztői beállítások → További beállítások (More settings) → Élő tevékenységek engedélyezése minden alkalmazáshoz (Allow Live Activities for all apps)',
+                          uwuLabel(
+                            'Beállítások → Fejlesztői beállítások → További beállítások (More settings) → Élő tevékenységek engedélyezése minden alkalmazáshoz (Allow Live Activities for all apps)',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
                           style: TextStyle(
                             fontSize: 12,
                             height: 1.4,
@@ -2158,7 +2187,7 @@ class _DeveloperIntegrationsSubPageState
                     'Utolsó szinkron',
                     _status.lastSyncedAt != null
                         ? timeFmt.format(_status.lastSyncedAt!)
-                        : '—',
+                        : '-',
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -2177,12 +2206,20 @@ class _DeveloperIntegrationsSubPageState
                                   ),
                                 )
                               : const Icon(Icons.watch_rounded, size: 18),
-                          label: const Text('Manuális óra szinkron'),
+                          label: Text(
+                            uwuLabel(
+                              'Manuális óra szinkron',
+                              enabled: activePrefs.uwuModeEnabled,
+                            ),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
                       IconButton.outlined(
-                        tooltip: 'Állapot frissítése',
+                        tooltip: uwuLabel(
+                          'Állapot frissítése',
+                          enabled: activePrefs.uwuModeEnabled,
+                        ),
                         onPressed: _refreshWear,
                         icon: const Icon(Icons.refresh_rounded, size: 18),
                       ),
@@ -2231,7 +2268,12 @@ class _DeveloperIntegrationsSubPageState
                       );
                     },
                     icon: const Icon(Icons.open_in_new_rounded, size: 18),
-                    label: const Text('MenetrendGO mélyhivatkozás teszt'),
+                    label: Text(
+                      uwuLabel(
+                        'MenetrendGO mélyhivatkozás teszt',
+                        enabled: activePrefs.uwuModeEnabled,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -2286,12 +2328,14 @@ class _DeveloperSystemCacheSubPageState
   }
 
   Future<void> _loadVersion() async {
-    final (ver, buildNum) = await GitHubUpdaterService.getAppVersionInfo();
-    if (!mounted) return;
-    setState(() {
-      _version = ver;
-      _buildNumber = buildNum;
-    });
+    try {
+      final (ver, buildNum) = await GitHubUpdaterService.getAppVersionInfo();
+      if (!mounted) return;
+      setState(() {
+        _version = ver;
+        _buildNumber = buildNum;
+      });
+    } catch (_) {}
   }
 
   Future<void> _clearDashboardCache() async {
@@ -2318,7 +2362,7 @@ class _DeveloperSystemCacheSubPageState
     if (_resettingGlow) return;
     setState(() => _resettingGlow = true);
     try {
-      final scope = AppProvidersScope.maybeOf(context);
+      final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
       if (scope != null) {
         await scope.settings.resetGradeGlowBaseline(
           previewGrades: activePrefs.demoModeEnabled
@@ -2331,6 +2375,10 @@ class _DeveloperSystemCacheSubPageState
         context,
         'Új jegy ragyogás alapállapota visszaállítva',
       );
+    } catch (_) {
+      if (mounted) {
+        TintaToast.error(context, 'Alapállapot visszaállítása sikertelen');
+      }
     } finally {
       if (mounted) setState(() => _resettingGlow = false);
     }
@@ -2381,38 +2429,36 @@ class _DeveloperSystemCacheSubPageState
                   '${Platform.numberOfProcessors} logikai szál',
                 ),
                 _DevInfoRow('Téma', activePrefs.themeStyle.name),
-                _DevInfoRow('Liquid Glass', activePrefs.liquidGlassMode.label),
                 _DevInfoRow(
                   'Aktív módok',
                   [
                     if (activePrefs.minimalistModeEnabled) 'Minimalista',
                     if (activePrefs.demoModeEnabled) 'Demó',
                     if (activePrefs.uwuModeEnabled) 'UwU',
-                    if (activePrefs.tsundereModeEnabled) 'Tsundere',
                     if (!activePrefs.minimalistModeEnabled &&
                         !activePrefs.demoModeEnabled &&
-                        !activePrefs.uwuModeEnabled &&
-                        !activePrefs.tsundereModeEnabled)
+                        !activePrefs.uwuModeEnabled)
                       'Alapértelmezett',
                   ].join(', '),
                 ),
                 const SizedBox(height: 14),
                 TactileBounce(
                   onTap: () {
+                    final apkName = 'tinta-naplo-v$_version-arm64-v8a.apk';
                     GitHubUpdaterService.showFrostedUpdateDialog(
                       context,
                       currentVersion: _version,
-                      release: const GitHubReleaseInfo(
-                        tagName: 'v2.0.2',
-                        title: 'Tinta Napló v2.0.2 — OTA Frissítő Előnézet',
+                      release: GitHubReleaseInfo(
+                        tagName: 'v$_version',
+                        title: 'Tinta Napló v$_version - OTA Frissítő Előnézet',
                         releaseNotes:
                             '• 120Hz-es fizikai animációk és Hero átmenetek\n'
                             '• MenetrendGO reggeli/délutáni helyreállítás és Szünet visszaszámláló\n'
                             '• Többoldalas Fejlesztői Központ, elszigetelt Demó mód és Minimalista javítások\n'
-                            '• Közvetlen GitHub Releases APK letöltés és telepítés (tinta-naplo-v2.0.2-arm64-v8a.apk)',
+                            '• Közvetlen GitHub Releases APK letöltés és telepítés ($apkName)',
                         htmlUrl: GitHubUpdaterService.repoUrl,
                         apkDownloadUrl:
-                            '${GitHubUpdaterService.repoUrl}/releases/latest/download/tinta-naplo-v2.0.2-arm64-v8a.apk',
+                            '${GitHubUpdaterService.repoUrl}/releases/latest/download/$apkName',
                       ),
                     );
                   },
@@ -2473,7 +2519,12 @@ class _DeveloperSystemCacheSubPageState
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.cleaning_services_rounded, size: 18),
-                  label: const Text('Helyi dashboard cache törlése'),
+                  label: Text(
+                    uwuLabel(
+                      'Helyi dashboard cache törlése',
+                      enabled: activePrefs.uwuModeEnabled,
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
@@ -2487,7 +2538,12 @@ class _DeveloperSystemCacheSubPageState
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.auto_awesome_rounded, size: 18),
-                  label: const Text('Új jegy ragyogás alaphelyzetbe állítása'),
+                  label: Text(
+                    uwuLabel(
+                      'Új jegy ragyogás alaphelyzetbe állítása',
+                      enabled: activePrefs.uwuModeEnabled,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -2516,7 +2572,7 @@ class _DevInfoRow extends StatelessWidget {
           SizedBox(
             width: 112,
             child: Text(
-              label,
+              uwuLabel(label),
               style: theme.textTheme.labelSmall?.copyWith(
                 color: scheme.onSurface.withValues(alpha: 0.62),
                 fontWeight: FontWeight.w600,
@@ -2526,7 +2582,7 @@ class _DevInfoRow extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              value,
+              uwuLabel(value),
               textAlign: TextAlign.right,
               style: theme.textTheme.labelMedium?.copyWith(
                 color: scheme.onSurface,
