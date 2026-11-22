@@ -405,11 +405,11 @@ void main() {
       GitHubUpdaterService.latestReleaseApiUrl,
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest',
     );
-    expect(GitHubUpdaterService.fallbackAppVersion, '3.0.0');
-    expect(GitHubUpdaterService.fallbackBuildNumber, '19');
+    expect(GitHubUpdaterService.fallbackAppVersion, '3.0.1');
+    expect(GitHubUpdaterService.fallbackBuildNumber, '20');
     expect(
       GitHubUpdaterService.defaultApkFileName,
-      'tinta-naplo-v3.0.0-arm64-v8a.apk',
+      'tinta-naplo-v3.0.1-arm64-v8a.apk',
     );
     expect(
       GitHubUpdaterService.apkFileNameForTag('v3.0.0'),

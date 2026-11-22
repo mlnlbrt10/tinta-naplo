@@ -1258,6 +1258,13 @@ void main() {
           findsOneWidget,
         );
         expect(find.text('https://firka.app/'), findsOneWidget);
+        expect(
+          find.text(
+            'A Tinta Napló nem azonos a Tinta alkalmazással (tinta.pacuka.hu).',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('https://tinta.pacuka.hu/'), findsOneWidget);
 
         // Verify AboutAppScreen exposes Privacy Policy & Legal modal and Open-Source Licenses page
         await tester.scrollUntilVisible(

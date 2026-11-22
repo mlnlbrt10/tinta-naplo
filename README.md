@@ -12,6 +12,12 @@
   </p>
 </div>
 
+> [!IMPORTANT]
+> **A Tinta Napló nem azonos a Tintával.**
+> A Tinta egy másik, független alternatív KRÉTA-kliens, amely 2026 októbere óta elérhető, más fejlesztőtől. A két app nem kapcsolódik egymáshoz, és nem ugyanaz a kódjuk.
+> * A Tinta oldala: [tinta.pacuka.hu](https://tinta.pacuka.hu/)
+> * A Tinta hibáit és kérdéseit ott jelentsd be, ne itt.
+
 ---
 
 ## Fő funkciók
@@ -28,7 +34,7 @@
 
 ## Letöltés és telepítés
 
-A legfrissebb kiadás (`tinta-naplo-v3.0.0-arm64-v8a.apk`) elérhető a [GitHub Releases](https://github.com/mlnlbrt10/tinta-naplo/releases/latest) oldalon:
+A legfrissebb kiadás (`tinta-naplo-v3.0.1-arm64-v8a.apk`) elérhető a [GitHub Releases](https://github.com/mlnlbrt10/tinta-naplo/releases/latest) oldalon:
 
 1. Töltsd le a legfrissebb `tinta-naplo-v*.apk` fájlt a [Releases](https://github.com/mlnlbrt10/tinta-naplo/releases/latest) oldalról.
 2. Engedélyezd az ismeretlen forrásból származó alkalmazások telepítését.
@@ -49,7 +55,7 @@ flutter pub get
 flutter build apk --release --target-platform android-arm64 --tree-shake-icons --obfuscate --split-debug-info=build/app/outputs/symbols
 ```
 
-A lefordított APK helye: `build/app/outputs/flutter-apk/tinta-naplo-v3.0.0-arm64-v8a.apk`.
+A lefordított APK helye: `build/app/outputs/flutter-apk/tinta-naplo-v3.0.1-arm64-v8a.apk`.
 
 ---
 

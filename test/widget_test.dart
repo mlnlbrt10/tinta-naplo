@@ -393,7 +393,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('Karácsonyi OLED'), findsOneWidget);
-    expect(find.text('v3.0.0'), findsOneWidget);
+    expect(find.text('v3.0.1'), findsOneWidget);
   });
 
   testWidgets(

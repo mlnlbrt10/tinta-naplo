@@ -15,7 +15,7 @@ import '../widgets/privacy_legal_modal.dart';
 import '../widgets/tinta_toast.dart';
 
 /// Dedicated "Az alkalmazásról" (About App / Rendszer & Névjegy) screen with:
-/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v3.0.0'),
+/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v3.0.1'),
 ///   and developer credits.
 /// - Direct link to `https://github.com/mlnlbrt10/tinta-naplo`.
 /// - Manual "Frissítések keresése" button (GitHub Releases OTA updater).
@@ -170,6 +170,16 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
     try {
       await launchUrl(
         Uri.parse('https://firka.app/'),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _openPacukaTintaWebsite() async {
+    HapticFeedback.lightImpact();
+    try {
+      await launchUrl(
+        Uri.parse('https://tinta.pacuka.hu/'),
         mode: LaunchMode.externalApplication,
       );
     } catch (_) {}
@@ -478,6 +488,50 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
                         ),
                         Text(
                           'https://firka.app/',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    Icons.open_in_new_rounded,
+                    size: 18,
+                    color: scheme.onSurface.withValues(alpha: 0.6),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          TactileBounce(
+            onTap: _openPacukaTintaWebsite,
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 16),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: theme.dividerColor),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline_rounded, size: 19, color: scheme.primary),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          uwu('A Tinta Napló nem azonos a Tinta alkalmazással (tinta.pacuka.hu).'),
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'https://tinta.pacuka.hu/',
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: scheme.primary,
                           ),

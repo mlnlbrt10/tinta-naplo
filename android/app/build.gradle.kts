@@ -88,7 +88,7 @@ android {
 
     applicationVariants.all {
         val variant = this
-        val versionLabel = variant.versionName ?: "3.0.0"
+        val versionLabel = variant.versionName ?: "3.0.1"
         val customApkName = "tinta-naplo-v${versionLabel}.apk"
         val arm64CustomApkName = "tinta-naplo-v${versionLabel}-arm64-v8a.apk"
         variant.assembleProvider.configure {
