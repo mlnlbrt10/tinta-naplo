@@ -44,6 +44,16 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         resourceConfigurations += listOf("hu", "en")
+        val targetPlatforms = (project.findProperty("target-platform") as? String)
+            ?.split(",")
+            ?.map { it.trim() }
+            ?: emptyList()
+        val isSplitPerAbi = (project.findProperty("split-per-abi") as? String)?.toBoolean() == true
+        if (!isSplitPerAbi && targetPlatforms == listOf("android-arm64")) {
+            ndk {
+                abiFilters += listOf("arm64-v8a")
+            }
+        }
     }
 
     signingConfigs {
@@ -100,6 +110,7 @@ android {
         val versionLabel = variant.versionName ?: "3.0.2"
         val customApkName = "tinta-naplo-v${versionLabel}.apk"
         val androidCustomApkName = "tinta-naplo-android-v${versionLabel}.apk"
+        val androidArm64CustomApkName = "tinta-naplo-android-v${versionLabel}-arm64-v8a.apk"
         val arm64CustomApkName = "tinta-naplo-v${versionLabel}-arm64-v8a.apk"
         variant.assembleProvider.configure {
             doFirst {
@@ -129,6 +140,7 @@ android {
                     for (apk in producedApks) {
                         when {
                             apk.name.contains("arm64-v8a") -> {
+                                apk.copyTo(flutterApkDir.resolve(androidArm64CustomApkName), overwrite = true)
                                 apk.copyTo(flutterApkDir.resolve(arm64CustomApkName), overwrite = true)
                             }
                             apk.name == "app-release.apk" -> {

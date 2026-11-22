@@ -409,11 +409,11 @@ void main() {
     expect(GitHubUpdaterService.fallbackBuildNumber, '5000');
     expect(
       GitHubUpdaterService.defaultApkFileName,
-      'tinta-naplo-android-v3.0.2.apk',
+      'tinta-naplo-android-v3.0.2-arm64-v8a.apk',
     );
     expect(
       GitHubUpdaterService.apkFileNameForTag('v3.0.2'),
-      'tinta-naplo-android-v3.0.2.apk',
+      'tinta-naplo-android-v3.0.2-arm64-v8a.apk',
     );
     expect(
       GitHubUpdaterService.isRemoteVersionNewer('3.0.1', 'v3.0.2'),

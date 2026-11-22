@@ -132,15 +132,15 @@ class GitHubUpdaterService {
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest';
   static const String fallbackAppVersion = '3.0.2';
   static const String fallbackBuildNumber = '5000';
-  static const String defaultApkFileName = 'tinta-naplo-android-v3.0.2.apk';
+  static const String defaultApkFileName = 'tinta-naplo-android-v3.0.2-arm64-v8a.apk';
 
   static bool _hasCheckedOnStartup = false;
 
-  /// Resolves the target APK file name for a given release tag (`tinta-naplo-android-v3.0.2.apk`).
+  /// Resolves the target APK file name for a given release tag (`tinta-naplo-android-v3.0.2-arm64-v8a.apk`).
   static String apkFileNameForTag(String tagName) {
     final clean = _stripPrefix(tagName);
     if (clean.isEmpty) return defaultApkFileName;
-    return 'tinta-naplo-android-v$clean.apk';
+    return 'tinta-naplo-android-v$clean-arm64-v8a.apk';
   }
 
   /// Queries GitHub Releases API for the latest tag name, falling back to `v3.0.2`.
