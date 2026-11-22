@@ -34,9 +34,9 @@
 
 ## Letöltés és telepítés
 
-A legfrissebb kiadás (`tinta-naplo-v3.0.1-arm64-v8a.apk`) elérhető a [GitHub Releases](https://github.com/mlnlbrt10/tinta-naplo/releases/latest) oldalon:
+A legfrissebb kiadás (`tinta-naplo-android-v3.0.2.apk`) elérhető a [GitHub Releases](https://github.com/mlnlbrt10/tinta-naplo/releases/latest) oldalon:
 
-1. Töltsd le a legfrissebb `tinta-naplo-v*.apk` fájlt a [Releases](https://github.com/mlnlbrt10/tinta-naplo/releases/latest) oldalról.
+1. Töltsd le a legfrissebb `tinta-naplo-android-v*.apk` fájlt a [Releases](https://github.com/mlnlbrt10/tinta-naplo/releases/latest) oldalról.
 2. Engedélyezd az ismeretlen forrásból származó alkalmazások telepítését.
 3. Telepítsd az APK-t, majd jelentkezz be a KRÉTA-fiókoddal.
 
@@ -52,10 +52,10 @@ Előfeltételek: Flutter SDK, Android SDK / JDK.
 git clone https://github.com/mlnlbrt10/tinta-naplo.git
 cd tinta-naplo
 flutter pub get
-flutter build apk --release --target-platform android-arm64 --tree-shake-icons --obfuscate --split-debug-info=build/app/outputs/symbols
+flutter build apk --release --tree-shake-icons --obfuscate --split-debug-info=build/app/outputs/symbols
 ```
 
-A lefordított APK helye: `build/app/outputs/flutter-apk/tinta-naplo-v3.0.1-arm64-v8a.apk`.
+A lefordított univerzális APK helye: `build/app/outputs/flutter-apk/tinta-naplo-android-v3.0.2.apk`.
 
 ---
 

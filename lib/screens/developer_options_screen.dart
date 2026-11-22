@@ -2444,7 +2444,8 @@ class _DeveloperSystemCacheSubPageState
                 const SizedBox(height: 14),
                 TactileBounce(
                   onTap: () {
-                    final apkName = 'tinta-naplo-v$_version-arm64-v8a.apk';
+                    final apkName =
+                        GitHubUpdaterService.apkFileNameForTag('v$_version');
                     GitHubUpdaterService.showFrostedUpdateDialog(
                       context,
                       currentVersion: _version,

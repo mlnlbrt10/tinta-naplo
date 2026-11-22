@@ -25,31 +25,29 @@ android {
         applicationId = "hu.mlnlbrt.tintanaplo"
         minSdk = 30
         targetSdk = 34
-        versionCode = 7
-        versionName = "3.0.1"
+        versionCode = 8
+        versionName = "3.0.2"
         resourceConfigurations += listOf("hu", "en")
     }
 
     signingConfigs {
-        if (keystorePropertiesFile.exists()) {
-            create("release") {
-                val storeFilePath = keystoreProperties.getProperty("storeFile")
-                if (!storeFilePath.isNullOrBlank()) {
-                    val resolved = listOf(
-                        file(storeFilePath),
-                        rootProject.file("app/$storeFilePath"),
-                        rootProject.file(storeFilePath),
-                    ).firstOrNull { it.exists() }
-                    if (resolved != null) {
-                        storeFile = resolved
-                    }
+        create("release") {
+            val storeFilePath = keystoreProperties.getProperty("storeFile")
+            if (!storeFilePath.isNullOrBlank()) {
+                val resolved = listOf(
+                    file(storeFilePath),
+                    rootProject.file("app/$storeFilePath"),
+                    rootProject.file(storeFilePath),
+                ).firstOrNull { it.exists() && it.isFile }
+                if (resolved != null) {
+                    storeFile = resolved
                 }
-                storePassword = keystoreProperties.getProperty("storePassword")
-                keyAlias = keystoreProperties.getProperty("keyAlias")
-                keyPassword = keystoreProperties.getProperty("keyPassword")
-                enableV1Signing = true
-                enableV2Signing = true
             }
+            storePassword = keystoreProperties.getProperty("storePassword")
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
+            enableV1Signing = true
+            enableV2Signing = true
         }
     }
 
@@ -60,7 +58,7 @@ android {
             ndk {
                 debugSymbolLevel = "NONE"
             }
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -157,5 +155,16 @@ dependencies {
 tasks.configureEach {
     if (name.startsWith("compile") && name.endsWith("Kotlin")) {
         dependsOn("generateKretaSharedConfig")
+    }
+    if (name == "assembleRelease" || name == "packageRelease") {
+        doFirst {
+            val releaseSigning = android.signingConfigs.getByName("release")
+            val resolvedStore = releaseSigning.storeFile
+            if (!keystorePropertiesFile.exists() || resolvedStore == null || !resolvedStore.exists()) {
+                throw GradleException(
+                    "Wear OS release signing keystore missing: check android/key.properties and android/app/tinta-release.jks."
+                )
+            }
+        }
     }
 }

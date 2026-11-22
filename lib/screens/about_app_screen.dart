@@ -15,7 +15,7 @@ import '../widgets/privacy_legal_modal.dart';
 import '../widgets/tinta_toast.dart';
 
 /// Dedicated "Az alkalmazásról" (About App / Rendszer & Névjegy) screen with:
-/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v3.0.1'),
+/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v3.0.2'),
 ///   and developer credits.
 /// - Direct link to `https://github.com/mlnlbrt10/tinta-naplo`.
 /// - Manual "Frissítések keresése" button (GitHub Releases OTA updater).

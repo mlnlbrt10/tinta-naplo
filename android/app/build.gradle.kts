@@ -15,6 +15,15 @@ if (keystorePropertiesFile.exists()) {
     FileInputStream(keystorePropertiesFile).use { keystoreProperties.load(it) }
 }
 
+fun resolveReleaseStoreFile(rawPath: String?): File? {
+    if (rawPath.isNullOrBlank()) return null
+    return listOf(
+        file(rawPath),
+        rootProject.file("app/$rawPath"),
+        rootProject.file(rawPath),
+    ).firstOrNull { it.exists() && it.isFile }
+}
+
 android {
     namespace = "hu.mlnlbrt.tintanaplo"
     sourceSets.getByName("main").java.srcDir(layout.buildDirectory.dir("generated/kreta/kotlin").get().asFile)
@@ -39,9 +48,9 @@ android {
 
     signingConfigs {
         create("release") {
-            val storeFilePath = keystoreProperties.getProperty("storeFile")
-            if (!storeFilePath.isNullOrBlank()) {
-                storeFile = file(storeFilePath)
+            val resolvedStoreFile = resolveReleaseStoreFile(keystoreProperties.getProperty("storeFile"))
+            if (resolvedStoreFile != null) {
+                storeFile = resolvedStoreFile
             }
             storePassword = keystoreProperties.getProperty("storePassword")
             keyAlias = keystoreProperties.getProperty("keyAlias")
@@ -88,24 +97,45 @@ android {
 
     applicationVariants.all {
         val variant = this
-        val versionLabel = variant.versionName ?: "3.0.1"
+        val versionLabel = variant.versionName ?: "3.0.2"
         val customApkName = "tinta-naplo-v${versionLabel}.apk"
+        val androidCustomApkName = "tinta-naplo-android-v${versionLabel}.apk"
         val arm64CustomApkName = "tinta-naplo-v${versionLabel}-arm64-v8a.apk"
         variant.assembleProvider.configure {
+            doFirst {
+                if (variant.buildType.name == "release") {
+                    val releaseSigning = signingConfigs.getByName("release")
+                    val resolvedStore = releaseSigning.storeFile
+                    if (!keystorePropertiesFile.exists() || resolvedStore == null || !resolvedStore.exists()) {
+                        throw GradleException(
+                            "Release signing keystore missing: check android/key.properties and android/app/tinta-release.jks."
+                        )
+                    }
+                    if (releaseSigning.storePassword.isNullOrBlank() ||
+                        releaseSigning.keyAlias.isNullOrBlank() ||
+                        releaseSigning.keyPassword.isNullOrBlank()
+                    ) {
+                        throw GradleException("Release signing credentials incomplete in android/key.properties.")
+                    }
+                }
+            }
             doLast {
                 if (variant.buildType.name == "release") {
                     val flutterApkDir = rootProject.projectDir.resolve("../build/app/outputs/flutter-apk")
                     flutterApkDir.mkdirs()
-                    val releaseApkDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
-                    val sourceApk = listOf(
-                        releaseApkDir.resolve("app-arm64-v8a-release.apk"),
-                        releaseApkDir.resolve("app-release.apk"),
-                        flutterApkDir.resolve("app-arm64-v8a-release.apk"),
-                        flutterApkDir.resolve("app-release.apk"),
-                    ).filter { it.exists() }.maxByOrNull { it.lastModified() }
-                    if (sourceApk != null) {
-                        sourceApk.copyTo(flutterApkDir.resolve(arm64CustomApkName), overwrite = true)
-                        sourceApk.copyTo(flutterApkDir.resolve(customApkName), overwrite = true)
+                    val producedApks = variant.outputs
+                        .map { it.outputFile }
+                        .filter { it.exists() && it.extension == "apk" }
+                    for (apk in producedApks) {
+                        when {
+                            apk.name.contains("arm64-v8a") -> {
+                                apk.copyTo(flutterApkDir.resolve(arm64CustomApkName), overwrite = true)
+                            }
+                            apk.name == "app-release.apk" -> {
+                                apk.copyTo(flutterApkDir.resolve(androidCustomApkName), overwrite = true)
+                                apk.copyTo(flutterApkDir.resolve(customApkName), overwrite = true)
+                            }
+                        }
                     }
                 }
             }

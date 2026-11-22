@@ -5,17 +5,20 @@ import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ClipData
 import android.content.ComponentName
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.CalendarContract
 import android.provider.Settings
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
+import androidx.core.content.pm.PackageInfoCompat
 import java.io.File
 import java.net.URLConnection
 import java.util.TimeZone
@@ -487,8 +490,62 @@ open class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun readPackageArchiveInfo(apkPath: String): PackageInfo? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageArchiveInfo(
+                apkPath,
+                PackageManager.PackageInfoFlags.of(0L)
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageArchiveInfo(apkPath, 0)
+        }
+    }
+
+    private fun readInstalledPackageInfo(): PackageInfo {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageInfo(
+                packageName,
+                PackageManager.PackageInfoFlags.of(0L)
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, 0)
+        }
+    }
+
     private fun installApk(filePath: String, result: MethodChannel.Result) {
         try {
+            val shareFile = ensureFileInCacheDir(filePath)
+            val archiveInfo = readPackageArchiveInfo(shareFile.absolutePath)
+            if (archiveInfo == null) {
+                runCatching { shareFile.delete() }
+                result.error(
+                    "INVALID_APK",
+                    "A letöltött telepítőfájl sérült vagy nem érvényes Android APK.",
+                    null
+                )
+                return
+            }
+            if (archiveInfo.packageName != packageName) {
+                runCatching { shareFile.delete() }
+                result.error(
+                    "PACKAGE_MISMATCH",
+                    "A letöltött APK csomagneve (${archiveInfo.packageName}) nem egyezik az alkalmazáséval.",
+                    null
+                )
+                return
+            }
+            val incomingVersionCode = PackageInfoCompat.getLongVersionCode(archiveInfo)
+            val installedVersionCode = PackageInfoCompat.getLongVersionCode(readInstalledPackageInfo())
+            if (incomingVersionCode < installedVersionCode) {
+                result.error(
+                    "VERSION_DOWNGRADE",
+                    "A letöltött APK verziókódja ($incomingVersionCode) alacsonyabb a jelenleg telepítetténél ($installedVersionCode).",
+                    null
+                )
+                return
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                 !packageManager.canRequestPackageInstalls()
             ) {
@@ -500,7 +557,6 @@ open class MainActivity : FlutterActivity() {
                 result.success("permission_required")
                 return
             }
-            val shareFile = ensureFileInCacheDir(filePath)
             val uri = FileProvider.getUriForFile(
                 this,
                 "${applicationContext.packageName}.fileprovider",
@@ -508,7 +564,9 @@ open class MainActivity : FlutterActivity() {
             )
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/vnd.android.package-archive")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                clipData = ClipData.newRawUri("apk", uri)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             startActivity(intent)
             result.success("started")
@@ -519,6 +577,9 @@ open class MainActivity : FlutterActivity() {
 
     private fun ensureFileInCacheDir(filePath: String): File {
         val sourceFile = File(filePath)
+        if (!sourceFile.exists() || !sourceFile.isFile || sourceFile.length() <= 0L) {
+            throw IllegalStateException("A telepítő fájl hiányzik vagy üres: $filePath")
+        }
         val targetFile = File(cacheDir, sourceFile.name)
         return if (sourceFile.canonicalPath.startsWith(cacheDir.canonicalPath + File.separator)) {
             sourceFile

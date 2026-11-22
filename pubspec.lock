@@ -350,7 +350,7 @@ packages:
       path: kreta_api
       relative: true
     source: path
-    version: "3.0.1"
+    version: "3.0.2"
   leak_tracker:
     dependency: transitive
     description:

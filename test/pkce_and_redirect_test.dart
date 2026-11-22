@@ -405,18 +405,18 @@ void main() {
       GitHubUpdaterService.latestReleaseApiUrl,
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest',
     );
-    expect(GitHubUpdaterService.fallbackAppVersion, '3.0.1');
-    expect(GitHubUpdaterService.fallbackBuildNumber, '20');
+    expect(GitHubUpdaterService.fallbackAppVersion, '3.0.2');
+    expect(GitHubUpdaterService.fallbackBuildNumber, '5000');
     expect(
       GitHubUpdaterService.defaultApkFileName,
-      'tinta-naplo-v3.0.1-arm64-v8a.apk',
+      'tinta-naplo-android-v3.0.2.apk',
     );
     expect(
-      GitHubUpdaterService.apkFileNameForTag('v3.0.0'),
-      'tinta-naplo-v3.0.0-arm64-v8a.apk',
+      GitHubUpdaterService.apkFileNameForTag('v3.0.2'),
+      'tinta-naplo-android-v3.0.2.apk',
     );
     expect(
-      GitHubUpdaterService.isRemoteVersionNewer('3.0.0', 'v3.0.1'),
+      GitHubUpdaterService.isRemoteVersionNewer('3.0.1', 'v3.0.2'),
       isTrue,
     );
     expect(
@@ -527,6 +527,40 @@ void main() {
       fallbackApkRelease.htmlUrl,
       'https://github.com/mlnlbrt10/tinta-naplo/releases',
     );
+
+    final wearFirstRelease = GitHubReleaseInfo.fromJson({
+      'tag_name': 'v3.0.2',
+      'name': 'Tinta Napló v3.0.2',
+      'assets': [
+        {
+          'name': 'tinta-naplo-wearos-v3.0.2.apk',
+          'browser_download_url':
+              'https://example.com/tinta-naplo-wearos-v3.0.2.apk',
+        },
+        {
+          'name': 'tinta-naplo-android-v3.0.2.apk',
+          'browser_download_url':
+              'https://example.com/tinta-naplo-android-v3.0.2.apk',
+        },
+      ],
+    });
+    expect(
+      wearFirstRelease.apkDownloadUrl,
+      'https://example.com/tinta-naplo-android-v3.0.2.apk',
+    );
+
+    final wearOnlyRelease = GitHubReleaseInfo.fromJson({
+      'tag_name': 'v3.0.2',
+      'name': 'Tinta Napló v3.0.2',
+      'assets': [
+        {
+          'name': 'tinta-naplo-wearos-v3.0.2.apk',
+          'browser_download_url':
+              'https://example.com/tinta-naplo-wearos-v3.0.2.apk',
+        },
+      ],
+    });
+    expect(wearOnlyRelease.apkDownloadUrl, isNull);
   });
 
   test('MenetrendService builds evaluation from real trips only', () {

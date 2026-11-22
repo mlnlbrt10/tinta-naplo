@@ -43,34 +43,47 @@ class GitHubReleaseInfo {
     final assets = json['assets'];
     if (assets is List) {
       final cleanVer = GitHubUpdaterService._stripPrefix(tag).toLowerCase();
-      final expectedArm64Apk = cleanVer.isNotEmpty
-          ? 'tinta-naplo-v$cleanVer-arm64-v8a.apk'
+      final expectedAndroidApk = cleanVer.isNotEmpty
+          ? 'tinta-naplo-android-v$cleanVer.apk'
           : GitHubUpdaterService.defaultApkFileName.toLowerCase();
       final expectedVersionedApk = cleanVer.isNotEmpty
           ? 'tinta-naplo-v$cleanVer.apk'
           : 'tinta-naplo-v${GitHubUpdaterService.fallbackAppVersion}.apk';
-      String? tintaArm64ApkUrl;
+      final expectedArm64Apk = cleanVer.isNotEmpty
+          ? 'tinta-naplo-v$cleanVer-arm64-v8a.apk'
+          : 'tinta-naplo-v${GitHubUpdaterService.fallbackAppVersion}-arm64-v8a.apk';
       String? versionedUniversalApkUrl;
+      String? arm64ExactApkUrl;
+      String? tintaAndroidApkUrl;
+      String? tintaArm64ApkUrl;
+      String? appReleaseApkUrl;
       String? appArm64ReleaseApkUrl;
       String? anyArm64ApkUrl;
       String? brandedApkUrl;
-      String? appReleaseApkUrl;
       String? anyApkUrl;
       for (final item in assets) {
         if (item is Map<String, dynamic>) {
-          final assetName = (item['name'] ?? '').toString().toLowerCase();
+          final assetName = (item['name'] ?? '').toString().trim().toLowerCase();
           final downloadUrl =
               (item['browser_download_url'] ?? '').toString().trim();
           if (downloadUrl.isEmpty || !assetName.endsWith('.apk')) continue;
-          if (assetName == expectedArm64Apk) {
+          if (_isWearAssetName(assetName)) continue;
+          if (assetName == expectedAndroidApk) {
             apkUrl = downloadUrl;
             break;
           }
-          if (assetName.startsWith('tinta') &&
+          if (assetName == expectedVersionedApk) {
+            versionedUniversalApkUrl ??= downloadUrl;
+          } else if (assetName == expectedArm64Apk) {
+            arm64ExactApkUrl ??= downloadUrl;
+          } else if (assetName.startsWith('tinta') &&
+              assetName.contains('android')) {
+            tintaAndroidApkUrl ??= downloadUrl;
+          } else if (assetName.startsWith('tinta') &&
               assetName.contains('arm64-v8a')) {
             tintaArm64ApkUrl ??= downloadUrl;
-          } else if (assetName == expectedVersionedApk) {
-            versionedUniversalApkUrl ??= downloadUrl;
+          } else if (assetName == 'app-release.apk') {
+            appReleaseApkUrl ??= downloadUrl;
           } else if (assetName == 'app-arm64-v8a-release.apk') {
             appArm64ReleaseApkUrl ??= downloadUrl;
           } else if (assetName.contains('arm64-v8a')) {
@@ -79,19 +92,19 @@ class GitHubReleaseInfo {
               assetName.startsWith('tinta_naplo') ||
               assetName.startsWith('tinta')) {
             brandedApkUrl ??= downloadUrl;
-          } else if (assetName == 'app-release.apk') {
-            appReleaseApkUrl ??= downloadUrl;
           } else {
             anyApkUrl ??= downloadUrl;
           }
         }
       }
-      apkUrl ??= tintaArm64ApkUrl ??
-          versionedUniversalApkUrl ??
+      apkUrl ??= versionedUniversalApkUrl ??
+          arm64ExactApkUrl ??
+          tintaAndroidApkUrl ??
+          tintaArm64ApkUrl ??
+          appReleaseApkUrl ??
           appArm64ReleaseApkUrl ??
           anyArm64ApkUrl ??
           brandedApkUrl ??
-          appReleaseApkUrl ??
           anyApkUrl;
     }
 
@@ -105,6 +118,10 @@ class GitHubReleaseInfo {
       apkDownloadUrl: apkUrl,
     );
   }
+
+  static bool _isWearAssetName(String lowerName) {
+    return lowerName.contains('wear') || lowerName.contains('watch');
+  }
 }
 
 /// Service that checks GitHub Releases for `mlnlbrt10/tinta-naplo` and presents
@@ -113,20 +130,20 @@ class GitHubUpdaterService {
   static const String repoUrl = 'https://github.com/mlnlbrt10/tinta-naplo';
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest';
-  static const String fallbackAppVersion = '3.0.1';
-  static const String fallbackBuildNumber = '20';
-  static const String defaultApkFileName = 'tinta-naplo-v3.0.1-arm64-v8a.apk';
+  static const String fallbackAppVersion = '3.0.2';
+  static const String fallbackBuildNumber = '5000';
+  static const String defaultApkFileName = 'tinta-naplo-android-v3.0.2.apk';
 
   static bool _hasCheckedOnStartup = false;
 
-  /// Resolves the target APK file name for a given release tag (`tinta-naplo-v3.0.1-arm64-v8a.apk`).
+  /// Resolves the target APK file name for a given release tag (`tinta-naplo-android-v3.0.2.apk`).
   static String apkFileNameForTag(String tagName) {
     final clean = _stripPrefix(tagName);
     if (clean.isEmpty) return defaultApkFileName;
-    return 'tinta-naplo-v$clean-arm64-v8a.apk';
+    return 'tinta-naplo-android-v$clean.apk';
   }
 
-  /// Queries GitHub Releases API for the latest tag name, falling back to `v3.0.1`.
+  /// Queries GitHub Releases API for the latest tag name, falling back to `v3.0.2`.
   static Future<String> fetchLatestReleaseTag({http.Client? httpClient}) async {
     final ownedClient = httpClient == null;
     final client = httpClient ?? http.Client();
@@ -445,10 +462,64 @@ class _FrostedUpdateDialogContent extends StatefulWidget {
 
 class _FrostedUpdateDialogContentState
     extends State<_FrostedUpdateDialogContent> {
+  static const MethodChannel _updaterChannel =
+      MethodChannel('hu.mlnlbrt.tintanaplo/updater');
+
   bool _isDownloading = false;
   bool _downloadFailed = false;
   double? _downloadProgress;
   String? _statusMessage;
+  String? _verifiedCachedApkPath;
+
+  String _resolveTargetApkFileName(String apkUrl) {
+    final parsed = Uri.tryParse(apkUrl);
+    final rawLast =
+        parsed != null && parsed.pathSegments.isNotEmpty
+            ? parsed.pathSegments.last.trim()
+            : '';
+    if (rawLast.toLowerCase().endsWith('.apk')) {
+      final sanitized = rawLast.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+      if (sanitized.isNotEmpty) return sanitized;
+    }
+    return GitHubUpdaterService.apkFileNameForTag(widget.release.tagName);
+  }
+
+  Future<bool> _isValidApkFile(File file) async {
+    try {
+      if (!await file.exists()) return false;
+      final length = await file.length();
+      if (length < 1024) return false;
+      final raf = await file.open();
+      try {
+        final header = await raf.read(4);
+        return header.length == 4 &&
+            header[0] == 0x50 &&
+            header[1] == 0x4B &&
+            header[2] == 0x03 &&
+            header[3] == 0x04;
+      } finally {
+        await raf.close();
+      }
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _cleanupStaleApkFiles(
+    Directory cacheDir, {
+    required String keepFileName,
+  }) async {
+    try {
+      await for (final entity in cacheDir.list(followLinks: false)) {
+        if (entity is! File) continue;
+        final name = entity.path.split(Platform.pathSeparator).last;
+        if (name == keepFileName) continue;
+        if (name.endsWith('.apk') || name.endsWith('.apk.part')) {
+          await entity.delete();
+        }
+      }
+    } catch (_) {}
+  }
 
   Future<void> _startOtaUpdate() async {
     final apkUrl = widget.release.apkDownloadUrl;
@@ -457,8 +528,13 @@ class _FrostedUpdateDialogContentState
       return;
     }
 
-    final targetApkFileName =
-        GitHubUpdaterService.apkFileNameForTag(widget.release.tagName);
+    final cachedPath = _verifiedCachedApkPath;
+    if (cachedPath != null && await _isValidApkFile(File(cachedPath))) {
+      await _invokeAndroidInstaller(cachedPath, apkUrl);
+      return;
+    }
+
+    final targetApkFileName = _resolveTargetApkFileName(apkUrl);
 
     setState(() {
       _isDownloading = true;
@@ -469,6 +545,7 @@ class _FrostedUpdateDialogContentState
 
     HttpClient? client;
     IOSink? sink;
+    File? partFile;
     try {
       client = HttpClient();
       try {
@@ -491,9 +568,11 @@ class _FrostedUpdateDialogContentState
       } catch (_) {
         cacheDir = Directory.systemTemp;
       }
+      await _cleanupStaleApkFiles(cacheDir, keepFileName: targetApkFileName);
       final file = File('${cacheDir.path}/$targetApkFileName');
-      if (await file.exists()) await file.delete();
-      sink = file.openWrite();
+      partFile = File('${file.path}.part');
+      if (await partFile.exists()) await partFile.delete();
+      sink = partFile.openWrite();
       var received = 0;
       var lastPct = -1;
       var lastMbTick = -1;
@@ -530,13 +609,57 @@ class _FrostedUpdateDialogContentState
       sink = null;
       client.close(force: true);
       client = null;
+
+      if (received <= 0 || (total > 0 && received != total)) {
+        if (await partFile.exists()) await partFile.delete();
+        await _showInstallError(
+          'A letöltött APK fájl hiányos ($received / ${total > 0 ? total : "?"} bájt).',
+          apkUrl,
+        );
+        return;
+      }
+      if (!await _isValidApkFile(partFile)) {
+        if (await partFile.exists()) await partFile.delete();
+        await _showInstallError(
+          'A letöltött fájl nem érvényes Android APK csomag.',
+          apkUrl,
+        );
+        return;
+      }
+      if (await file.exists()) await file.delete();
+      await partFile.rename(file.path);
+      partFile = null;
+      _verifiedCachedApkPath = file.path;
       if (!mounted) return;
-      setState(() {
-        _downloadProgress = 1.0;
-        _statusMessage = uwu('Android csomagtelepítő indítása...');
-      });
-      final res = await const MethodChannel('hu.mlnlbrt.tintanaplo/updater')
-          .invokeMethod<String>('installApk', {'filePath': file.path});
+      await _invokeAndroidInstaller(file.path, apkUrl);
+    } catch (e) {
+      await _showInstallError('Hiba a frissítés közben: $e', apkUrl);
+    } finally {
+      try {
+        await sink?.close();
+      } catch (_) {}
+      try {
+        if (partFile != null && await partFile.exists()) {
+          await partFile.delete();
+        }
+      } catch (_) {}
+      client?.close(force: true);
+    }
+  }
+
+  Future<void> _invokeAndroidInstaller(String apkPath, String apkUrl) async {
+    if (!mounted) return;
+    setState(() {
+      _isDownloading = true;
+      _downloadFailed = false;
+      _downloadProgress = 1.0;
+      _statusMessage = uwu('Android csomagtelepítő indítása...');
+    });
+    try {
+      final res = await _updaterChannel.invokeMethod<String>(
+        'installApk',
+        {'filePath': apkPath},
+      );
       if (!mounted) return;
       setState(() {
         _isDownloading = false;
@@ -546,13 +669,12 @@ class _FrostedUpdateDialogContentState
             ? uwu('Engedélyezd az ismeretlen források telepítését, majd próbáld újra.')
             : null;
       });
-    } catch (e) {
-      await _showInstallError('Hiba a frissítés közben: $e', apkUrl);
-    } finally {
-      try {
-        await sink?.close();
-      } catch (_) {}
-      client?.close(force: true);
+    } on PlatformException catch (e) {
+      _verifiedCachedApkPath = null;
+      await _showInstallError(
+        e.message?.isNotEmpty == true ? e.message! : 'Telepítési hiba (${e.code}).',
+        apkUrl,
+      );
     }
   }
 
