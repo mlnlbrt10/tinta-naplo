@@ -1,14 +1,15 @@
 <div align="center">
-  <img src="assets/images/tinta_icon.png" alt="Tinta Napló ikon" width="116" height="116" />
+  <img src="assets/images/tinta_icon.png" alt="Tinta Napló" width="108" height="108" />
   <h1>Tinta Napló</h1>
-  <p><strong>Letisztult, minimalista, reklámmentes alternatív e-KRÉTA kliens Androidra</strong></p>
+  <p>Alternatív, nyílt forráskódú e-KRÉTA kliens Androidra és Wear OS-re.</p>
 
   <p>
+    <a href="https://tintanaplo.hu">
+      <img src="https://img.shields.io/badge/Web-tintanaplo.hu-000000?style=for-the-badge" alt="Weboldal" />
+    </a>
     <a href="https://github.com/mlnlbrt10/tinta-naplo/releases/latest">
       <img src="https://img.shields.io/github/v/release/mlnlbrt10/tinta-naplo?style=for-the-badge&color=ffffff&labelColor=000000&label=Let%C3%B6lt%C3%A9s" alt="Latest Release" />
     </a>
-    <img src="https://img.shields.io/badge/Platform-Android_arm64-000000?style=for-the-badge&logo=android&logoColor=white" alt="Android arm64" />
-    <img src="https://img.shields.io/badge/Flutter-Dart-000000?style=for-the-badge&logo=flutter&logoColor=white" alt="Flutter & Dart" />
   </p>
 </div>
 
@@ -20,47 +21,38 @@
 
 ---
 
-## Fő funkciók
+### Mit tud?
 
-- **Letisztult, minimalista OLED (`#000000`) dizájn** - valódi mélyfekete felület testreszabható háttéreffektekkel, opcionális soft blur megjelenéssel és 120 fps-es animációkkal.
-- **MenetrendGo integráció** - közvetlen helyi és helyközi menetrend-elérés közvetlenül az alkalmazásból.
-- **Ösztöndíj kalkulátor** - automatikus tanulmányi átlag- és várható ösztöndíjbecslés a jegyek alapján.
-- **Villámgyors offline gyorsítótár** - jegyek, órarend, hiányzások, házi feladatok és üzenetek azonnali megjelenítése internetkapcsolat nélkül is.
-- **Határidő szerint rendezett dolgozatok és házik** - a közelgő számonkérések és házi feladatok mindig a határidő szerint rendezve jelennek meg.
-- **Beépített OTA frissítő** - új kiadás megjelenésekor egyetlen érintéssel frissíthető közvetlenül a GitHub Releasesből.
-- **Zéró adatgyűjtés** - nincs köztes szerver vagy telemetria; minden adat kizárólag közvetlenül a hivatalos KRÉTA szerverekkel kommunikál.
+* **Napi nézet & élő órakövetés** – aktuális és következő óra visszaszámlálóval, otthoni widgetekkel és Android 16 / Samsung Now Bar élő értesítéssel.
+* **Wear OS társalkalmazás** – órarend, napi infók és jegyek közvetlenül az okosórádon, telefonos szinkronizálással.
+* **Jegyek & szellemjegyek** – átlagszámítás, féléves bontás, szellemjegyek hozzáadása, valamint szakképzési ösztöndíj-kalkulátor.
+* **Órarend, dolgozatok, házik** – napi és heti órarendbe integrált számonkérések és házi feladatok, plusz natív naptárszinkronizálás egyedi színekkel.
+* **Testreszabható értesítések** – azonnali értesítés új jegyről, dolgozatról, elmaradt óráról, helyettesítésről, késésről, hiányzásról és üzenetről, teljesen átírható szövegekkel.
+* **MenetrendGo & tanév rendje** – közvetlen utazástervező integráció és iskolai szünetek követése.
+* **Megjelenés & alkalmazáson belüli frissítő** – AMOLED fekete és Liquid Glass témák, valódi kompakt minimalista mód, offline gyorsítótár és beépített GitHub OTA frissítő.
+* **Közvetlen kommunikáció** – az app kizárólag a hivatalos KRÉTA szerverekkel kommunikál, nincs saját backend vagy adatgyűjtés.
 
 ---
 
-## Letöltés és telepítés
+### Telepítés
 
-A legfrissebb kiadás (`tinta-naplo-android-v3.0.2-arm64-v8a.apk`) elérhető a [GitHub Releases](https://github.com/mlnlbrt10/tinta-naplo/releases/latest) oldalon:
-
-1. Töltsd le a legfrissebb `tinta-naplo-android-v*-arm64-v8a.apk` fájlt a [Releases](https://github.com/mlnlbrt10/tinta-naplo/releases/latest) oldalról.
+1. Töltsd le a legfrissebb telefonos (`tinta-naplo-android-*.apk`) vagy órás (`tinta-naplo-wear-*.apk`) telepítőt a [GitHub Releases](https://github.com/mlnlbrt10/tinta-naplo/releases/latest) oldalról, vagy a [tintanaplo.hu](https://tintanaplo.hu) címről.
 2. Engedélyezd az ismeretlen forrásból származó alkalmazások telepítését.
-3. Telepítsd az APK-t, majd jelentkezz be a KRÉTA-fiókoddal.
-
-Az újabb kiadások ezt követően már közvetlenül az alkalmazáson belül, a **Beállítások / Névjegy** menüpontból is letölthetők és telepíthetők.
+3. Jelentkezz be a KRÉTA-fiókoddal (a későbbi frissítéseket az app már magától jelzi és telepíti).
 
 ---
 
-## Fordítás forráskódból
+### Fordítás forráskódból
 
-Előfeltételek: Flutter SDK, Android SDK / JDK.
+Szükséges hozzá a Flutter SDK és az Android SDK / JDK.
 
 ```bash
-git clone https://github.com/mlnlbrt10/tinta-naplo.git
+git clone [https://github.com/mlnlbrt10/tinta-naplo.git](https://github.com/mlnlbrt10/tinta-naplo.git)
 cd tinta-naplo
 flutter pub get
-flutter build apk --release --split-per-abi --target-platform android-arm64 --tree-shake-icons --obfuscate --split-debug-info=build/app/outputs/symbols
-```
 
-A lefordított APK helye: `build/app/outputs/flutter-apk/tinta-naplo-android-v3.0.2-arm64-v8a.apk`.
+# Telefonos APK
+flutter build apk --release
 
----
-
-## Jogi nyilatkozat & Köszönetnyilvánítás
-
-A **Tinta Napló** egy független, nyílt forráskódú kliensalkalmazás, és nem áll kapcsolatban az eKRÉTA Informatikai Zrt.-vel.
-
-- **Ikonok inspirációja:** Az alkalmazás ikonjait a [Firka (QwIT)](https://firka.app/) inspirálta.
+# Wear OS APK
+cd android && ./gradlew :wear:assembleRelease
