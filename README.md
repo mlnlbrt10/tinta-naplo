@@ -1,18 +1,17 @@
 <div align="center">
-  <img src="assets/images/tinta_icon.png" alt="Tinta Napló" width="112" height="112" />
+  <img src="assets/images/tinta_icon.png" alt="Tinta Napló" width="108" height="108" />
   <h1>Tinta Napló</h1>
   <p>Alternatív, független e-KRÉTA kliens Androidra és Wear OS-re.</p>
-
   <p>
-    <a href="https://tintanaplo.hu">
-      <img src="https://img.shields.io/badge/Weboldal-tintanaplo.hu-000000?style=for-the-badge" alt="Weboldal" />
-    </a>
     <a href="https://github.com/mlnlbrt10/tinta-naplo/releases/latest">
-      <img src="https://img.shields.io/github/v/release/mlnlbrt10/tinta-naplo?style=for-the-badge&color=ffffff&labelColor=000000&label=Let%C3%B6lt%C3%A9s" alt="Latest Release" />
+      <img src="https://img.shields.io/github/v/release/mlnlbrt10/tinta-naplo?style=flat&color=111111&labelColor=222222&label=verzi%C3%B3" alt="Legfrissebb verzió" />
     </a>
-    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">
-      <img src="https://img.shields.io/badge/Licenc-CC_BY--NC--SA_4.0-000000?style=for-the-badge" alt="CC BY-NC-SA 4.0" />
-    </a>
+    &nbsp;·&nbsp;
+    <a href="https://tintanaplo.hu">tintanaplo.hu</a>
+    &nbsp;·&nbsp;
+    <a href="https://github.com/mlnlbrt10/tinta-naplo/releases/latest">Letöltés</a>
+    &nbsp;·&nbsp;
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a>
   </p>
 </div>
 
