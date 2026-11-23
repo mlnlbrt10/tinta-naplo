@@ -115,7 +115,7 @@ android {
 
     applicationVariants.all {
         val variant = this
-        val versionLabel = variant.versionName ?: "3.1"
+        val versionLabel = variant.versionName ?: "3.2"
         val customApkName = "tinta-naplo-v${versionLabel}.apk"
         val androidCustomApkName = "tinta-naplo-android-v${versionLabel}.apk"
         val androidArm64CustomApkName = "tinta-naplo-android-v${versionLabel}-arm64-v8a.apk"
