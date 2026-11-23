@@ -126,7 +126,7 @@ void main() {
 
       // Slide 1 + editorial callout & typography (numbered kickers removed)
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_home.jpg'),
+        hasShowcaseImage('assets/images/showcase/showcase_home.webp'),
         isTrue,
       );
       expect(find.text('01 / ÉLŐ FŐOLDAL'), findsNothing);
@@ -149,7 +149,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_timetable.jpg'),
+        hasShowcaseImage('assets/images/showcase/showcase_timetable.webp'),
         isTrue,
       );
       expect(
@@ -167,7 +167,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_grades.jpg'),
+        hasShowcaseImage('assets/images/showcase/showcase_grades.webp'),
         isTrue,
       );
       expect(
@@ -185,7 +185,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_scholarship.jpg'),
+        hasShowcaseImage('assets/images/showcase/showcase_scholarship.webp'),
         isTrue,
       );
       expect(
@@ -203,7 +203,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_absences.jpg'),
+        hasShowcaseImage('assets/images/showcase/showcase_absences.webp'),
         isTrue,
       );
       expect(
@@ -221,7 +221,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_themes.jpg'),
+        hasShowcaseImage('assets/images/showcase/showcase_themes.webp'),
         isTrue,
       );
       expect(
@@ -280,7 +280,7 @@ void main() {
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
       await tester.pump(const Duration(milliseconds: 600));
       expect(
-        hasShowcaseImage('assets/images/showcase/showcase_home.jpg'),
+        hasShowcaseImage('assets/images/showcase/showcase_home.webp'),
         isTrue,
       );
       // Top-right pagination pill remains removed on LoginScreen

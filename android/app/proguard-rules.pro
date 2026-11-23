@@ -1,17 +1,71 @@
 # Tinta Naplo ProGuard / R8 keep rules
--keep class hu.mlnlbrt.tintanaplo.** { *; }
--keep class io.flutter.app.** { *; }
--keep class io.flutter.plugin.** { *; }
--keep class io.flutter.embedding.engine.plugins.** { *; }
--keep class * extends io.flutter.embedding.engine.plugins.FlutterPlugin { *; }
--keep class androidx.core.app.NotificationCompat$ProgressStyle** { *; }
--keep class android.app.Notification$ProgressStyle** { *; }
+-allowaccessmodification
+-repackageclasses 'o'
+
+# App Android entry points (activities, widgets, receivers, services, workers)
+-keep class hu.mlnlbrt.tintanaplo.MainActivity { *; }
+-keep class hu.mlnlbrt.tintanaplo.PhoneWearAuthListenerService { *; }
+-keep class hu.mlnlbrt.tintanaplo.KretaSyncWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
 -keep class * extends android.appwidget.AppWidgetProvider { *; }
 -keep class * extends android.content.BroadcastReceiver { *; }
--keep class * extends com.google.android.gms.wearable.WearableListenerService { *; }
--keep class org.json.** { *; }
 
--keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
+# Flutter engine, embedding, JNI bindings & plugin registrant
+-keep class io.flutter.embedding.engine.FlutterJNI { *; }
+-keep class io.flutter.embedding.engine.FlutterOverlaySurface { *; }
+-keep class io.flutter.embedding.engine.mutatorsstack.FlutterMutatorsStack { *; }
+-keep class io.flutter.embedding.engine.renderer.SurfaceTextureWrapper { *; }
+-keep class io.flutter.view.FlutterCallbackInformation { *; }
+-keep class io.flutter.view.TextureRegistry$ImageConsumer { *; }
+-keep interface io.flutter.embedding.engine.plugins.FlutterPlugin { *; }
+-keep class io.flutter.plugins.GeneratedPluginRegistrant { *; }
+-keepclassmembers class * implements io.flutter.embedding.engine.plugins.FlutterPlugin {
+    public <init>();
+}
+-keepclassmembers class io.flutter.embedding.engine.plugins.FlutterPlugin$FlutterPluginBinding {
+    public java.lang.String getEngineId();
+}
+
+# Reflection-based & platform plugins
+-keep class com.github.dart_lang.jni.** { *; }
+-keep class com.github.dart_lang.jni_flutter.** { *; }
+-keep class com.dexterous.flutterlocalnotifications.** { *; }
+-keep class com.builttoroam.devicecalendar.** { *; }
+-keep class org.chromium.support_lib_boundary.* { public *; }
+
+# WorkManager workers & parameters
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-keep class * extends androidx.work.Worker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-keep class * extends androidx.work.CoroutineWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-keep class androidx.work.WorkerParameters
+
+# Wearable DataClient / MessageClient listener services
+-keep class * extends com.google.android.gms.wearable.WearableListenerService { *; }
+
+# Kotlin coroutines, JNI interop & conditional kotlinx.serialization support
+-keepclassmembers class kotlinx.coroutines.** {
+    volatile <fields>;
+}
+-keepclassmembers class kotlin.coroutines.SafeContinuation {
+    volatile <fields>;
+}
+-if @kotlinx.serialization.Serializable class **
+-keepclassmembers class <1> { *; }
+
+# Android 16 / Samsung Now Bar ProgressStyle & Live Updates
+-keep class androidx.core.app.NotificationCompat$ProgressStyle** { *; }
+-keep class android.app.Notification$ProgressStyle** { *; }
+
+# JSON & WebView JS bridge
+-keep class org.json.** { *; }
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,RuntimeVisibleAnnotations,RuntimeVisibleParameterAnnotations,RuntimeVisibleTypeAnnotations
 -keepclassmembers class * {
     @androidx.annotation.Keep *;
 }
@@ -25,3 +79,4 @@
 -dontwarn javax.annotation.**
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn org.codehaus.mojo.animal_sniffer.**
+-dontwarn kotlinx.serialization.**

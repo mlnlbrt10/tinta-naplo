@@ -36,13 +36,12 @@ flutter:
     - assets/images/tinta_icon.png
     - assets/images/tinta_icon_classic.png
     - assets/images/fityma-icon.png
-    - assets/images/showcase/
-    - assets/images/showcase/showcase_home.jpg
-    - assets/images/showcase/showcase_timetable.jpg
-    - assets/images/showcase/showcase_grades.jpg
-    - assets/images/showcase/showcase_scholarship.jpg
-    - assets/images/showcase/showcase_absences.jpg
-    - assets/images/showcase/showcase_themes.jpg
+    - assets/images/showcase/showcase_home.webp
+    - assets/images/showcase/showcase_timetable.webp
+    - assets/images/showcase/showcase_grades.webp
+    - assets/images/showcase/showcase_scholarship.webp
+    - assets/images/showcase/showcase_absences.webp
+    - assets/images/showcase/showcase_themes.webp
   fonts:
     - family: Inter
       fonts:

@@ -97,7 +97,7 @@ class _LoginScreenState extends State<LoginScreen>
 
   static const List<_ShowcaseSlideSpec> _screenshotSlides = [
     _ShowcaseSlideSpec(
-      assetPath: 'assets/images/showcase/showcase_home.jpg',
+      assetPath: 'assets/images/showcase/showcase_home.webp',
       aspectRatio: _showcaseAspectRatio,
       statusBarTime: LoginScreen.fixedStatusBarTime,
       editorialTitleTop: 'Aktuális óra,',
@@ -109,7 +109,7 @@ class _LoginScreenState extends State<LoginScreen>
       cropZoom: 1.18,
     ),
     _ShowcaseSlideSpec(
-      assetPath: 'assets/images/showcase/showcase_timetable.jpg',
+      assetPath: 'assets/images/showcase/showcase_timetable.webp',
       aspectRatio: _showcaseAspectRatio,
       statusBarTime: LoginScreen.fixedStatusBarTime,
       editorialTitleTop: 'Tiszta napirend,',
@@ -121,7 +121,7 @@ class _LoginScreenState extends State<LoginScreen>
       cropZoom: 1.16,
     ),
     _ShowcaseSlideSpec(
-      assetPath: 'assets/images/showcase/showcase_grades.jpg',
+      assetPath: 'assets/images/showcase/showcase_grades.webp',
       aspectRatio: _showcaseAspectRatio,
       statusBarTime: LoginScreen.fixedStatusBarTime,
       editorialTitleTop: 'Átlaghatás,',
@@ -133,7 +133,7 @@ class _LoginScreenState extends State<LoginScreen>
       cropZoom: 1.18,
     ),
     _ShowcaseSlideSpec(
-      assetPath: 'assets/images/showcase/showcase_scholarship.jpg',
+      assetPath: 'assets/images/showcase/showcase_scholarship.webp',
       aspectRatio: _showcaseAspectRatio,
       statusBarTime: LoginScreen.fixedStatusBarTime,
       editorialTitleTop: 'Tűzd ki a célt,',
@@ -145,7 +145,7 @@ class _LoginScreenState extends State<LoginScreen>
       cropZoom: 1.15,
     ),
     _ShowcaseSlideSpec(
-      assetPath: 'assets/images/showcase/showcase_absences.jpg',
+      assetPath: 'assets/images/showcase/showcase_absences.webp',
       aspectRatio: _showcaseAspectRatio,
       statusBarTime: LoginScreen.fixedStatusBarTime,
       editorialTitleTop: 'Minden mulasztás',
@@ -157,7 +157,7 @@ class _LoginScreenState extends State<LoginScreen>
       cropZoom: 1.16,
     ),
     _ShowcaseSlideSpec(
-      assetPath: 'assets/images/showcase/showcase_themes.jpg',
+      assetPath: 'assets/images/showcase/showcase_themes.webp',
       aspectRatio: _showcaseAspectRatio,
       statusBarTime: LoginScreen.fixedStatusBarTime,
       editorialTitleTop: 'OLED fekete,',
