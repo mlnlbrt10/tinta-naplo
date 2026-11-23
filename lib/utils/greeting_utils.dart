@@ -1,7 +1,13 @@
+import 'dart:convert';
 import 'dart:math';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' show DateUtils, visibleForTesting;
+import 'package:flutter/services.dart' show AssetBundle, rootBundle;
+import 'package:kreta_api/kreta_api.dart';
 
+import '../services/token_storage_service.dart';
+import '../widgets/period_countdown_badge.dart'
+    show isInactivePlaceholderLesson, isLessonCancelled;
 import 'uwu_helper.dart';
 
 /// Time-based Hungarian greeting and student name resolution utilities.
@@ -189,6 +195,86 @@ class GreetingUtils {
   static String? _cachedTemplate;
   static String? _lastShownTemplate;
 
+  static const String funFactsAssetPath = 'assets/data/useless_fun_facts.json';
+  static List<String>? _cachedFunFacts;
+  static Future<List<String>>? _loadingFunFactsFuture;
+  static String? _currentFunFact;
+  static final List<String> _recentFunFacts = <String>[];
+
+  /// Lazily loads the offline Hungarian fun fact dataset from [funFactsAssetPath]
+  /// and initializes a session random pick if none is active yet.
+  static Future<List<String>> ensureFunFactsLoaded({
+    AssetBundle? bundle,
+  }) async {
+    if (_cachedFunFacts != null && _cachedFunFacts!.isNotEmpty) {
+      _currentFunFact ??= pickFunFact();
+      return _cachedFunFacts!;
+    }
+    if (_loadingFunFactsFuture != null && bundle == null) {
+      return _loadingFunFactsFuture!;
+    }
+    final loader = () async {
+      try {
+        final raw = await (bundle ?? rootBundle).loadString(funFactsAssetPath);
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          final parsed = decoded
+              .whereType<String>()
+              .map((s) => s.trim())
+              .where((s) => s.isNotEmpty)
+              .toList(growable: false);
+          if (parsed.isNotEmpty) {
+            _cachedFunFacts = parsed;
+            _currentFunFact ??= pickFunFact();
+            return parsed;
+          }
+        }
+      } catch (_) {}
+      return const <String>[];
+    }();
+    if (bundle == null) {
+      _loadingFunFactsFuture = loader.whenComplete(() {
+        _loadingFunFactsFuture = null;
+      });
+      return _loadingFunFactsFuture!;
+    }
+    return loader;
+  }
+
+  /// Returns whether the fun facts dataset is currently loaded in memory.
+  static bool get hasFunFactsLoaded =>
+      _cachedFunFacts != null && _cachedFunFacts!.isNotEmpty;
+
+  /// Returns the current session fun fact, or selects a fresh non-repeating
+  /// random fact when [forceRefresh] is `true`.
+  static String? pickFunFact({bool forceRefresh = false}) {
+    final facts = _cachedFunFacts;
+    if (facts == null || facts.isEmpty) return null;
+    if (!forceRefresh && _currentFunFact != null) {
+      return _currentFunFact;
+    }
+    if (facts.length == 1) {
+      _currentFunFact = facts.first;
+      return _currentFunFact;
+    }
+    final recentSet = _recentFunFacts.toSet();
+    var candidates = facts
+        .where((f) => f != _currentFunFact && !recentSet.contains(f))
+        .toList();
+    if (candidates.isEmpty) {
+      _recentFunFacts.clear();
+      candidates = facts.where((f) => f != _currentFunFact).toList();
+    }
+    final pool = candidates.isNotEmpty ? candidates : facts;
+    final picked = pool[_random.nextInt(pool.length)];
+    _currentFunFact = picked;
+    _recentFunFacts.add(picked);
+    if (_recentFunFacts.length > 30) {
+      _recentFunFacts.removeAt(0);
+    }
+    return picked;
+  }
+
   /// Clears the cached greeting for the current app session (called only when
   /// toggling Fun Greetings in Settings) while remembering the previous template
   /// so the next selection never repeats twice in a row.
@@ -198,10 +284,141 @@ class GreetingUtils {
 
   /// Resets in-memory session cache and optionally injects a deterministic [random].
   @visibleForTesting
-  static void resetForTesting({Random? random}) {
+  static void resetForTesting({
+    Random? random,
+    List<String>? funFacts,
+  }) {
     _random = random ?? Random();
     _cachedTemplate = null;
     _lastShownTemplate = null;
+    _currentFunFact = null;
+    _recentFunFacts.clear();
+    _loadingFunFactsFuture = null;
+    _cachedFunFacts = funFacts;
+  }
+
+  static const List<String> _monthsHuCapitalized = [
+    'Január',
+    'Február',
+    'Március',
+    'Április',
+    'Május',
+    'Június',
+    'Július',
+    'Augusztus',
+    'Szeptember',
+    'Október',
+    'November',
+    'December',
+  ];
+
+  static const List<String> _weekdaysHuLower = [
+    '',
+    'hétfő',
+    'kedd',
+    'szerda',
+    'csütörtök',
+    'péntek',
+    'szombat',
+    'vasárnap',
+  ];
+
+  /// Formats [now] in clean Hungarian date notation (e.g., `"November 23., hétfő"`).
+  static String formatHungarianDateSubtitle(DateTime now) {
+    final local = now.toLocal();
+    final month = _monthsHuCapitalized[(local.month - 1).clamp(0, 11)];
+    final weekday = _weekdaysHuLower[local.weekday.clamp(1, 7)];
+    return '$month ${local.day}., $weekday';
+  }
+
+  /// Builds the `"Mikor végzel ma"` subtitle from today's non-cancelled lessons.
+  static String buildFinishTimeSubtitle(
+    List<Lesson> lessons,
+    DateTime now, {
+    bool hasLoadedData = true,
+  }) {
+    final localNow = now.toLocal();
+    final todayDate = DateUtils.dateOnly(localNow);
+    final activeToday = lessons
+        .where(
+          (l) =>
+              DateUtils.dateOnly(l.start.toLocal()) == todayDate &&
+              !isLessonCancelled(l) &&
+              !isInactivePlaceholderLesson(l),
+        )
+        .toList();
+    if (activeToday.isEmpty) {
+      return hasLoadedData
+          ? 'Ma nincs tanítás'
+          : formatHungarianDateSubtitle(localNow);
+    }
+    var lastEnd = activeToday.first.end.toLocal();
+    for (final lesson in activeToday.skip(1)) {
+      final candidate = lesson.end.toLocal();
+      if (candidate.isAfter(lastEnd)) {
+        lastEnd = candidate;
+      }
+    }
+    if (!lastEnd.isAfter(localNow)) {
+      return 'Mára végeztél';
+    }
+    final hh = lastEnd.hour.toString().padLeft(2, '0');
+    final mm = lastEnd.minute.toString().padLeft(2, '0');
+    return 'Ma $hh:$mm-kor végzel';
+  }
+
+  /// Builds the `"Holnapi számonkérések"` subtitle from Kréta tests scheduled for tomorrow.
+  static String buildTomorrowExamsSubtitle(List<Test> tests, DateTime now) {
+    final tomorrowDate =
+        DateUtils.dateOnly(now.toLocal()).add(const Duration(days: 1));
+    final seenIds = <String>{};
+    var count = 0;
+    for (final test in tests) {
+      if (DateUtils.dateOnly(test.date.toLocal()) != tomorrowDate) continue;
+      final uid = test.uid.trim();
+      if (uid.isNotEmpty) {
+        if (!seenIds.add(uid)) continue;
+      }
+      count++;
+    }
+    if (count == 0) return 'Holnap nincs számonkérés';
+    return 'Holnap $count számonkérésed lesz';
+  }
+
+  /// Resolves the greeting subtitle text for the configured [mode], returning
+  /// `null` when hidden or empty.
+  static String? buildGreetingSubtitle({
+    required GreetingSubtitleMode mode,
+    required DateTime now,
+    List<Lesson> todaysLessons = const <Lesson>[],
+    List<Test> tests = const <Test>[],
+    bool hasLoadedData = true,
+    String? schoolName,
+    bool? uwuMode,
+  }) {
+    final isUwu = uwuMode ?? UwuHelper.isEnabled;
+    final String? raw;
+    switch (mode) {
+      case GreetingSubtitleMode.finishTime:
+        raw = buildFinishTimeSubtitle(
+          todaysLessons,
+          now,
+          hasLoadedData: hasLoadedData,
+        );
+      case GreetingSubtitleMode.date:
+        raw = formatHungarianDateSubtitle(now);
+      case GreetingSubtitleMode.tomorrowExams:
+        raw = buildTomorrowExamsSubtitle(tests, now);
+      case GreetingSubtitleMode.funFacts:
+        raw = pickFunFact() ?? formatHungarianDateSubtitle(now);
+      case GreetingSubtitleMode.schoolName:
+        final clean = schoolName?.trim() ?? '';
+        raw = clean.isEmpty ? null : clean;
+      case GreetingSubtitleMode.none:
+        raw = null;
+    }
+    if (raw == null || raw.isEmpty) return null;
+    return isUwu ? UwuHelper.transform(raw, enabled: true) : raw;
   }
 
   /// Resolves the display name for the greeting:

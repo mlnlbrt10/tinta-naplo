@@ -405,31 +405,49 @@ Future<T?> showSoftBlurDialog<T>({
           curve: Curves.easeOutBack,
           reverseCurve: Curves.easeInBack,
         );
-        return ScaleTransition(
-          scale: Tween<double>(begin: 0.90, end: 1.0).animate(scaleCurved),
-          child: Dialog(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            insetPadding: const EdgeInsets.symmetric(
-              horizontal: 20,
-              vertical: 24,
-            ),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: maxWidth),
-              child: LiquidGlassSurface(
-                prefs: prefs,
-                borderRadius: borderRadius,
-                padding: contentPadding,
-                highContrastExpanded: true,
-                contentOpacityAnimation: fadeCurved,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.32 : 0.14),
-                    blurRadius: 24,
-                    offset: const Offset(0, 10),
+        final bottomInset = MediaQuery.viewInsetsOf(dialogContext).bottom;
+        return AnimatedPadding(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          padding: EdgeInsets.only(bottom: bottomInset),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.94, end: 1.0).animate(scaleCurved),
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.03),
+                end: Offset.zero,
+              ).animate(fadeCurved),
+              child: Dialog(
+                backgroundColor: Colors.transparent,
+                elevation: 0,
+                insetPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 20,
+                ),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: maxWidth,
+                    maxHeight:
+                        (MediaQuery.sizeOf(dialogContext).height - bottomInset) *
+                            0.88,
                   ),
-                ],
-                child: builder(dialogContext),
+                  child: LiquidGlassSurface(
+                    prefs: prefs,
+                    borderRadius: borderRadius,
+                    padding: contentPadding,
+                    highContrastExpanded: true,
+                    contentOpacityAnimation: fadeCurved,
+                    boxShadow: [
+                      BoxShadow(
+                        color:
+                            Colors.black.withValues(alpha: isDark ? 0.34 : 0.14),
+                        blurRadius: 24,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                    child: builder(dialogContext),
+                  ),
+                ),
               ),
             ),
           ),
@@ -470,11 +488,14 @@ class SoftGlassCard extends StatelessWidget {
     final activePrefs =
         AppProvidersScope.maybeOf(context)?.settings.prefs ?? prefs;
     final skin = activePrefs.customSkinConfig;
-    final effectiveRadius = (skin.enabled &&
-            skin.cardRadius != null &&
-            borderRadius.topLeft.x >= 16.0)
-        ? BorderRadius.circular(skin.cardRadius!)
-        : borderRadius;
+    final BorderRadius effectiveRadius;
+    if (skin.enabled &&
+        skin.cardRadius != null &&
+        borderRadius.topLeft.x >= 16.0) {
+      effectiveRadius = BorderRadius.circular(skin.cardRadius!);
+    } else {
+      effectiveRadius = borderRadius;
+    }
     final effectiveBorderWidth = skin.enabled ? (skin.borderWidth ?? 1.0) : 1.0;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;

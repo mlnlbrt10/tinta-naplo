@@ -8,8 +8,10 @@ import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
 import '../providers/app_providers.dart';
+import '../screens/school_year_schedule_screen.dart';
 import '../services/demo_data_service.dart';
 import '../services/kreta_client.dart';
+import '../services/school_year_schedule_service.dart';
 import '../services/token_storage_service.dart';
 import '../services/wear_sync_service.dart';
 import '../theme/oled_theme.dart';
@@ -50,9 +52,11 @@ class ProfileTopBarAvatar extends StatelessWidget {
         : scheme.primary;
     final photoFile = _resolveValidPhotoFile();
     final isDemo = prefs.demoModeEnabled;
+    final isMinimalist = prefs.minimalistModeEnabled;
+    final avatarRadius = isMinimalist ? 14.0 : 19.0;
 
     return Padding(
-      padding: const EdgeInsets.only(right: 14),
+      padding: EdgeInsets.only(right: isMinimalist ? 10 : 14),
       child: TactileBounce(
         onTap: onTap,
         child: Stack(
@@ -65,21 +69,21 @@ class ProfileTopBarAvatar extends StatelessWidget {
               child: Material(
                 type: MaterialType.transparency,
                 child: Container(
-                  padding: const EdgeInsets.all(2),
+                  padding: EdgeInsets.all(isMinimalist ? 1.5 : 2),
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     border: Border.all(
                       color: avatarAccent.withValues(alpha: 0.9),
-                      width: 2,
+                      width: isMinimalist ? 1.5 : 2,
                     ),
                   ),
                   child: isDemo
                       ? DemoStudentAvatar(
-                          size: 38,
+                          size: avatarRadius * 2,
                           accentColor: avatarAccent,
                         )
                       : CircleAvatar(
-                          radius: 19,
+                          radius: avatarRadius,
                           backgroundColor: avatarAccent.withValues(alpha: 0.2),
                           backgroundImage:
                               photoFile != null ? FileImage(photoFile) : null,
@@ -87,7 +91,7 @@ class ProfileTopBarAvatar extends StatelessWidget {
                               ? Icon(
                                   Icons.person_rounded,
                                   color: avatarAccent,
-                                  size: 20,
+                                  size: isMinimalist ? 16 : 20,
                                 )
                               : null,
                         ),
@@ -191,9 +195,10 @@ class _StreamlinedProfileModalSheet extends StatefulWidget {
 class _StreamlinedProfileModalSheetState
     extends State<_StreamlinedProfileModalSheet> {
   late UserProfilePrefs _prefs;
-  late final TextEditingController _nicknameController;
   final ImagePicker _imagePicker = ImagePicker();
   WearConnectionStatus _wearStatus = WearConnectionStatus.disconnected;
+  SchoolYearSchedule? _schoolYearSchedule;
+  String? _pinnedCountdownEventId;
 
   WearSyncService get _wearService =>
       widget.wearSyncService ?? WearSyncService.instance;
@@ -202,20 +207,29 @@ class _StreamlinedProfileModalSheetState
   void initState() {
     super.initState();
     _prefs = widget.initialPrefs;
-    _nicknameController = TextEditingController(text: _prefs.nickname ?? '');
     unawaited(_loadWearStatus());
+    unawaited(_loadSchoolYearPreview());
+  }
+
+  Future<void> _loadSchoolYearPreview() async {
+    final schedule =
+        await SchoolYearScheduleService.instance.loadCachedOrFallback(
+      student: widget.student,
+      instituteCode: widget.session.instituteCode,
+    );
+    final pinnedId = await SchoolYearScheduleService.instance
+        .loadPinnedCountdownEventId(widget.session.instituteCode);
+    if (!mounted) return;
+    setState(() {
+      _schoolYearSchedule = schedule;
+      _pinnedCountdownEventId = pinnedId;
+    });
   }
 
   Future<void> _loadWearStatus() async {
     final status = await _wearService.getConnectionStatus();
     if (!mounted) return;
     setState(() => _wearStatus = status);
-  }
-
-  @override
-  void dispose() {
-    _nicknameController.dispose();
-    super.dispose();
   }
 
   void _applyPrefs(UserProfilePrefs next) {
@@ -230,15 +244,393 @@ class _StreamlinedProfileModalSheetState
     widget.onPrefsChanged(next);
   }
 
-  void _saveNickname() {
-    final trimmed = _nicknameController.text.trim();
-    _applyPrefs(
-      _prefs.copyWith(
-        nickname: trimmed.isEmpty ? null : trimmed,
-        clearNickname: trimmed.isEmpty,
-      ),
+  Future<void> _openNicknameEditorPopup(UserProfilePrefs activePrefs) async {
+    HapticFeedback.selectionClick();
+    final ctrl = TextEditingController(text: activePrefs.nickname ?? '');
+    await showFloatingGlassSheet<void>(
+      context: context,
+      prefs: activePrefs,
+      builder: (sheetCtx) {
+        return SheetDisposableScope(
+          disposables: [ctrl],
+          builder: (_) => StatefulBuilder(
+            builder: (innerCtx, setSheetState) {
+              final theme = Theme.of(innerCtx);
+              final scheme = theme.colorScheme;
+              final closeMode = activePrefs.modalCloseMode;
+              final bottomInset = MediaQuery.viewInsetsOf(innerCtx).bottom;
+              final hasSavedNickname =
+                  (activePrefs.nickname ?? '').trim().isNotEmpty;
+              final fullName = (widget.student?.name ?? '').trim();
+
+              void commitNickname([String? explicitValue]) {
+                final trimmed = (explicitValue ?? ctrl.text).trim();
+                _applyPrefs(
+                  activePrefs.copyWith(
+                    nickname: trimmed.isEmpty ? null : trimmed,
+                    clearNickname: trimmed.isEmpty,
+                  ),
+                );
+                FocusManager.instance.primaryFocus?.unfocus();
+                Navigator.of(sheetCtx).pop();
+              }
+
+              return AnimatedPadding(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                padding: EdgeInsets.only(bottom: bottomInset),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: 460,
+                    maxHeight:
+                        (MediaQuery.sizeOf(innerCtx).height - bottomInset) *
+                            0.84,
+                  ),
+                  child: FrostedBottomSheetSurface(
+                    key: const ValueKey<String>('profile-nickname-sheet'),
+                    prefs: activePrefs,
+                    showDragHandle: true,
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                    child: SingleChildScrollView(
+                      physics: const FloatingSheetScrollPhysics(
+                        parent: AlwaysScrollableScrollPhysics(),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                  color: scheme.primary.withValues(alpha: 0.14),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Icon(
+                                  Icons.badge_outlined,
+                                  size: 20,
+                                  color: scheme.primary,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      uwuLabel(
+                                        'Becenév',
+                                        enabled: activePrefs.uwuModeEnabled,
+                                      ),
+                                      style:
+                                          theme.textTheme.titleMedium?.copyWith(
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    if (fullName.isNotEmpty)
+                                      Text(
+                                        fullName,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style:
+                                            theme.textTheme.bodySmall?.copyWith(
+                                          color: scheme.onSurface
+                                              .withValues(alpha: 0.62),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              if (closeMode.showTopX) ...[
+                                const SizedBox(width: 8),
+                                PopupTopCloseButton(
+                                  onTap: () => Navigator.of(sheetCtx).pop(),
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            key: const ValueKey<String>(
+                              'profile-nickname-input',
+                            ),
+                            controller: ctrl,
+                            autofocus: true,
+                            textInputAction: TextInputAction.done,
+                            onChanged: (_) => setSheetState(() {}),
+                            onSubmitted: (_) => commitNickname(),
+                            decoration: InputDecoration(
+                              labelText: uwuLabel(
+                                'Megjelenített név / Becenév',
+                                enabled: activePrefs.uwuModeEnabled,
+                              ),
+                              hintText: uwuLabel(
+                                'Hagyd üresen a keresztnevedhez',
+                                enabled: activePrefs.uwuModeEnabled,
+                              ),
+                              prefixIcon:
+                                  const Icon(Icons.person_outline_rounded),
+                              suffixIcon: ctrl.text.isNotEmpty
+                                  ? IconButton(
+                                      tooltip: uwuLabel(
+                                        'Mező törlése',
+                                        enabled: activePrefs.uwuModeEnabled,
+                                      ),
+                                      onPressed: () {
+                                        ctrl.clear();
+                                        setSheetState(() {});
+                                      },
+                                      icon: const Icon(
+                                        Icons.clear_rounded,
+                                        size: 18,
+                                      ),
+                                    )
+                                  : null,
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          Row(
+                            children: [
+                              if (hasSavedNickname)
+                                TextButton.icon(
+                                  key: const ValueKey<String>(
+                                    'profile-nickname-clear-btn',
+                                  ),
+                                  onPressed: () => commitNickname(''),
+                                  icon: Icon(
+                                    Icons.delete_outline_rounded,
+                                    size: 17,
+                                    color: scheme.error,
+                                  ),
+                                  label: Text(
+                                    uwuLabel(
+                                      'Törlés',
+                                      enabled: activePrefs.uwuModeEnabled,
+                                    ),
+                                    style: TextStyle(color: scheme.error),
+                                  ),
+                                ),
+                              const Spacer(),
+                              TextButton(
+                                onPressed: () => Navigator.of(sheetCtx).pop(),
+                                child: Text(
+                                  uwuLabel(
+                                    'Mégse',
+                                    enabled: activePrefs.uwuModeEnabled,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              FilledButton(
+                                key: const ValueKey<String>(
+                                  'profile-nickname-save-btn',
+                                ),
+                                onPressed: () => commitNickname(),
+                                child: Text(
+                                  uwuLabel(
+                                    'Mentés',
+                                    enabled: activePrefs.uwuModeEnabled,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (closeMode.showBottomButton) ...[
+                            const SizedBox(height: 12),
+                            PopupBottomCloseButton(
+                              onTap: () => Navigator.of(sheetCtx).pop(),
+                              uwuEnabled: activePrefs.uwuModeEnabled,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
     );
-    FocusScope.of(context).unfocus();
+  }
+
+  Future<void> _openAvatarOptionsPopup(
+    UserProfilePrefs activePrefs,
+    File? currentPhotoFile,
+  ) async {
+    HapticFeedback.selectionClick();
+    final action = await showFloatingGlassSheet<String>(
+      context: context,
+      prefs: activePrefs,
+      builder: (sheetCtx) {
+        final theme = Theme.of(sheetCtx);
+        final scheme = theme.colorScheme;
+        final isDark = theme.brightness == Brightness.dark;
+        final closeMode = activePrefs.modalCloseMode;
+        final hasPhoto = currentPhotoFile != null;
+
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 440),
+          child: FrostedBottomSheetSurface(
+            key: const ValueKey<String>('profile-avatar-options-sheet'),
+            prefs: activePrefs,
+            showDragHandle: true,
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: scheme.primary.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.photo_camera_rounded,
+                        size: 20,
+                        color: scheme.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        uwuLabel(
+                          'Profilkép',
+                          enabled: activePrefs.uwuModeEnabled,
+                        ),
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    if (closeMode.showTopX) ...[
+                      const SizedBox(width: 8),
+                      PopupTopCloseButton(
+                        onTap: () => Navigator.of(sheetCtx).pop(),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 16),
+                TactileBounce(
+                  key: const ValueKey<String>('profile-avatar-pick-btn'),
+                  pressedScale: 0.98,
+                  onTap: () => Navigator.of(sheetCtx).pop('pick'),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 13,
+                    ),
+                    decoration: BoxDecoration(
+                      color: scheme.primary.withValues(
+                        alpha: isDark ? 0.14 : 0.10,
+                      ),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: scheme.primary.withValues(alpha: 0.30),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.add_photo_alternate_rounded,
+                          color: scheme.primary,
+                          size: 21,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            uwuLabel(
+                              'Új profilkép választása',
+                              enabled: activePrefs.uwuModeEnabled,
+                            ),
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              color: scheme.onSurface,
+                            ),
+                          ),
+                        ),
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          color: scheme.primary,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (hasPhoto) ...[
+                  const SizedBox(height: 10),
+                  TactileBounce(
+                    key: const ValueKey<String>('profile-avatar-delete-btn'),
+                    pressedScale: 0.98,
+                    onTap: () => Navigator.of(sheetCtx).pop('delete'),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 13,
+                      ),
+                      decoration: BoxDecoration(
+                        color: scheme.error.withValues(
+                          alpha: isDark ? 0.14 : 0.08,
+                        ),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: scheme.error.withValues(alpha: 0.30),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.delete_outline_rounded,
+                            color: scheme.error,
+                            size: 21,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              uwuLabel(
+                                'Jelenlegi kép törlése',
+                                enabled: activePrefs.uwuModeEnabled,
+                              ),
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: scheme.error,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                if (closeMode.showBottomButton) ...[
+                  const SizedBox(height: 14),
+                  PopupBottomCloseButton(
+                    onTap: () => Navigator.of(sheetCtx).pop(),
+                    label: 'Mégse',
+                    uwuEnabled: activePrefs.uwuModeEnabled,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (!mounted || action == null) return;
+    if (action == 'pick') {
+      await _pickCustomPhoto();
+    } else if (action == 'delete') {
+      _applyPrefs(activePrefs.copyWith(clearCustomPhoto: true));
+    }
   }
 
   Future<void> _pickCustomPhoto() async {
@@ -344,196 +736,153 @@ class _StreamlinedProfileModalSheetState
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Center(
+                      child: GestureDetector(
+                        key: const ValueKey<String>('profile-avatar-tap'),
+                        onTap: isDemo
+                            ? null
+                            : () => _openAvatarOptionsPopup(
+                                  activePrefs,
+                                  photoFile,
+                                ),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Hero(
+                              tag: 'profile_avatar_hero',
+                              createRectTween: createLinearHeroRectTween,
+                              flightShuttleBuilder:
+                                  buildBoomerangBadgeHeroShuttle,
+                              child: Material(
+                                type: MaterialType.transparency,
+                                child: Container(
+                                  padding: const EdgeInsets.all(3),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: avatarAccent,
+                                      width: 2.5,
+                                    ),
+                                  ),
+                                  child: isDemo
+                                      ? DemoStudentAvatar(
+                                          size: 80,
+                                          accentColor: avatarAccent,
+                                          showClassBadge: true,
+                                        )
+                                      : CircleAvatar(
+                                          radius: 40,
+                                          backgroundColor: avatarAccent
+                                              .withValues(alpha: 0.2),
+                                          backgroundImage: photoFile != null
+                                              ? FileImage(photoFile)
+                                              : null,
+                                          child: photoFile == null
+                                              ? Icon(
+                                                  Icons.person_rounded,
+                                                  color: avatarAccent,
+                                                  size: 40,
+                                                )
+                                              : null,
+                                        ),
+                                ),
+                              ),
+                            ),
+                            if (!isDemo)
+                              Positioned(
+                                bottom: -2,
+                                right: -2,
+                                child: _DeferredCameraBadge(
+                                  backgroundColor: scheme.primary,
+                                  iconColor: scheme.onPrimary,
+                                  borderColor: theme.scaffoldBackgroundColor,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (activePrefs.modalCloseMode.showTopX)
+                      Positioned(
+                        top: 0,
+                        right: 0,
+                        child: PopupTopCloseButton(
+                          onTap: () => Navigator.of(context).pop(),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
                 Center(
-                  child: GestureDetector(
-                    onTap: isDemo ? null : _pickCustomPhoto,
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        Hero(
-                          tag: 'profile_avatar_hero',
-                          createRectTween: createLinearHeroRectTween,
-                          flightShuttleBuilder: buildBoomerangBadgeHeroShuttle,
-                          child: Material(
-                          type: MaterialType.transparency,
-                          child: Container(
-                            padding: const EdgeInsets.all(3),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: avatarAccent,
-                                width: 2.5,
+                  child: TactileBounce(
+                    key: const ValueKey<String>('profile-name-tap'),
+                    pressedScale: 0.97,
+                    onTap: isDemo
+                        ? null
+                        : () => _openNicknameEditorPopup(activePrefs),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        color: isDemo
+                            ? Colors.transparent
+                            : scheme.onSurface.withValues(
+                                alpha: isDark ? 0.04 : 0.035,
+                              ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              uwuLabel(
+                                displayNick,
+                                enabled: activePrefs.uwuModeEnabled,
+                              ),
+                              textAlign: TextAlign.center,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.w900,
+                                color: scheme.onSurface,
                               ),
                             ),
-                            child: isDemo
-                                ? DemoStudentAvatar(
-                                    size: 80,
-                                    accentColor: avatarAccent,
-                                    showClassBadge: true,
-                                  )
-                                : CircleAvatar(
-                                    radius: 40,
-                                    backgroundColor:
-                                        avatarAccent.withValues(alpha: 0.2),
-                                    backgroundImage: photoFile != null
-                                        ? FileImage(photoFile)
-                                        : null,
-                                    child: photoFile == null
-                                        ? Icon(
-                                            Icons.person_rounded,
-                                            color: avatarAccent,
-                                            size: 40,
-                                          )
-                                        : null,
-                                  ),
                           ),
-                        ),
-                      ),
-                      if (!isDemo)
-                        Positioned(
-                          bottom: -2,
-                          right: -2,
-                          child: Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: BoxDecoration(
-                              color: scheme.primary,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: theme.scaffoldBackgroundColor,
-                                width: 2,
-                              ),
+                          if (!isDemo) ...[
+                            const SizedBox(width: 6),
+                            Icon(
+                              Icons.edit_rounded,
+                              size: 16,
+                              color: scheme.primary.withValues(alpha: 0.82),
                             ),
-                            child: Icon(
-                              Icons.photo_camera_rounded,
-                              size: 14,
-                              color: scheme.onPrimary,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                uwuLabel(
-                  displayNick,
-                  enabled: activePrefs.uwuModeEnabled,
-                ),
-                textAlign: TextAlign.center,
-                style: theme.textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w900,
-                  color: scheme.onSurface,
-                ),
-              ),
-              if (widget.student?.instituteName.isNotEmpty == true) ...[
-                const SizedBox(height: 4),
-                Text(
-                  uwuLabel(
-                    widget.student!.instituteName,
-                    enabled: activePrefs.uwuModeEnabled,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: scheme.onSurface.withValues(alpha: 0.65),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 12),
-              if (!isDemo) ...[
-                Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    FilledButton.tonalIcon(
-                      onPressed: _pickCustomPhoto,
-                      icon: const Icon(
-                        Icons.photo_library_rounded,
-                        size: 18,
-                      ),
-                      label: Text(
-                        uwuLabel(
-                          photoFile != null
-                              ? 'Új kép választása'
-                              : 'Kép galériából',
-                          enabled: activePrefs.uwuModeEnabled,
-                        ),
+                          ],
+                        ],
                       ),
                     ),
-                    if (photoFile != null)
-                      OutlinedButton.icon(
-                        onPressed: () => _applyPrefs(
-                          activePrefs.copyWith(clearCustomPhoto: true),
-                        ),
-                        icon: const Icon(
-                          Icons.delete_outline_rounded,
-                          size: 18,
-                        ),
-                        label: Text(
-                          uwuLabel(
-                            'Kép törlése',
-                            enabled: activePrefs.uwuModeEnabled,
-                          ),
-                        ),
-                      ),
-                  ],
+                  ),
                 ),
+                if (widget.student?.instituteName.isNotEmpty == true) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    uwuLabel(
+                      widget.student!.instituteName,
+                      enabled: activePrefs.uwuModeEnabled,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: scheme.onSurface.withValues(alpha: 0.65),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _nicknameController,
-                        decoration: InputDecoration(
-                          labelText: uwuLabel(
-                            'Becenév szerkesztése',
-                            enabled: activePrefs.uwuModeEnabled,
-                          ),
-                          prefixIcon: const Icon(Icons.person_outline_rounded),
-                          suffixIcon: _nicknameController.text.isNotEmpty
-                              ? IconButton(
-                                  tooltip: uwuLabel(
-                                    'Törlés',
-                                    enabled: activePrefs.uwuModeEnabled,
-                                  ),
-                                  onPressed: () {
-                                    _nicknameController.clear();
-                                    _saveNickname();
-                                  },
-                                  icon:
-                                      const Icon(Icons.clear_rounded, size: 18),
-                                )
-                              : null,
-                        ),
-                        onSubmitted: (_) => _saveNickname(),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: avatarAccent,
-                        foregroundColor: scheme.onPrimary,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 15,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(22),
-                        ),
-                      ),
-                      onPressed: _saveNickname,
-                      child: Text(
-                        uwu('Mentés'),
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-              ],
               if (_wearStatus.isConnected) ...[
                 Container(
                   key: const ValueKey<String>('profile-wear-sync-card'),
@@ -591,6 +940,15 @@ class _StreamlinedProfileModalSheetState
                 ),
                 const SizedBox(height: 10),
               ],
+              _buildSchoolYearTile(
+                context: context,
+                theme: theme,
+                scheme: scheme,
+                activePrefs: activePrefs,
+                menuTileBg: menuTileBg,
+                menuTileBorder: menuTileBorder,
+              ),
+              const SizedBox(height: 10),
               TactileBounce(
                 key: const ValueKey<String>('profile-bug-report-tile'),
                 pressedScale: 0.98,
@@ -706,11 +1064,182 @@ class _StreamlinedProfileModalSheetState
                   ),
                 ),
               ),
+              if (activePrefs.modalCloseMode.showBottomButton) ...[
+                const SizedBox(height: 14),
+                PopupBottomCloseButton(
+                  onTap: () => Navigator.of(context).pop(),
+                  uwuEnabled: activePrefs.uwuModeEnabled,
+                ),
+              ],
             ],
           ),
         ),
       ),
     ),
+    );
+  }
+
+  Widget _buildSchoolYearTile({
+    required BuildContext context,
+    required ThemeData theme,
+    required ColorScheme scheme,
+    required UserProfilePrefs activePrefs,
+    required Color menuTileBg,
+    required Color menuTileBorder,
+  }) {
+    final now = DateTime.now();
+    final schedule = _schoolYearSchedule;
+    final activeEv = schedule?.activeEventOn(now);
+    final countdownTarget = schedule != null
+        ? SchoolYearScheduleService.instance.resolveCountdownEvent(
+            schedule,
+            now,
+            pinnedEventId: _pinnedCountdownEventId,
+          )
+        : null;
+    final targetEv = activeEv ?? countdownTarget ?? schedule?.nextUpcomingEvent(now);
+    String subtitle = 'Szünetek, ünnepek és tanév naptár';
+    if (targetEv != null) {
+      if (targetEv.isOngoingOn(now)) {
+        subtitle = '${targetEv.title} • még ${targetEv.daysRemaining(now)} nap';
+      } else {
+        final days = targetEv.daysUntil(now);
+        subtitle = days == 0
+            ? '${targetEv.title} • Ma'
+            : '${targetEv.title} • $days nap múlva';
+      }
+    }
+
+    return TactileBounce(
+      key: const ValueKey<String>('profile-school-year-tile'),
+      pressedScale: 0.98,
+      onTap: () {
+        HapticFeedback.lightImpact();
+        Navigator.of(context)
+            .push(
+              SmoothSharedAxisRoute(
+                page: SchoolYearScheduleScreen(
+                  student: widget.student,
+                  instituteCode: widget.session.instituteCode,
+                  prefs: activePrefs,
+                ),
+              ),
+            )
+            .then((_) {
+          if (mounted) {
+            unawaited(_loadSchoolYearPreview());
+          }
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: menuTileBg,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: menuTileBorder, width: 1),
+        ),
+        child: Row(
+          children: [
+            _buildMenuIconBubble(
+              context: context,
+              icon: Icons.calendar_today_rounded,
+              tint: OledTheme.semanticForeground(
+                const Color(0xFF10B981),
+                theme.brightness,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    uwu('Tanév rendje', enabled: activePrefs.uwuModeEnabled),
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                  Text(
+                    uwuLabel(subtitle, enabled: activePrefs.uwuModeEnabled),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: scheme.onSurface.withValues(alpha: 0.65),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right_rounded,
+              color: scheme.onSurface.withValues(alpha: 0.55),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Fades/scales in the small camera icon badge only once the Hero profile
+/// avatar has landed, and hides it immediately on route reverse so it never
+/// glitches or overlaps during the Hero flight animation.
+class _DeferredCameraBadge extends StatelessWidget {
+  final Color backgroundColor;
+  final Color iconColor;
+  final Color borderColor;
+
+  const _DeferredCameraBadge({
+    required this.backgroundColor,
+    required this.iconColor,
+    required this.borderColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final routeAnim = ModalRoute.of(context)?.animation;
+    final badge = Container(
+      key: const ValueKey<String>('profile-avatar-camera-badge'),
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: borderColor,
+          width: 2,
+        ),
+      ),
+      child: Icon(
+        Icons.photo_camera_rounded,
+        size: 14,
+        color: iconColor,
+      ),
+    );
+    if (routeAnim == null) {
+      return badge;
+    }
+    return AnimatedBuilder(
+      animation: routeAnim,
+      builder: (context, child) {
+        if (routeAnim.status == AnimationStatus.reverse) {
+          return const SizedBox.shrink();
+        }
+        final raw = routeAnim.value.clamp(0.0, 1.0);
+        final progress = ((raw - 0.72) / 0.28).clamp(0.0, 1.0);
+        if (progress <= 0.0) {
+          return const SizedBox.shrink();
+        }
+        final scale = Curves.easeOutBack.transform(progress);
+        return Opacity(
+          opacity: Curves.easeOutCubic.transform(progress),
+          child: Transform.scale(
+            scale: scale,
+            child: child,
+          ),
+        );
+      },
+      child: badge,
     );
   }
 }

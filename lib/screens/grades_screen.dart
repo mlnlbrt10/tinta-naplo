@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../providers/app_providers.dart';
 import '../services/token_storage_service.dart';
+import '../theme/minimalist_tokens.dart';
 import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
@@ -250,18 +251,22 @@ class GradeImpactDelta {
   }
 }
 
-/// Shared clean translucent circular grade badge used across Home and Grades.
+/// Shared clean translucent circular/rounded grade badge used across Home and Grades.
 class TranslucentGradeBadge extends StatelessWidget {
   const TranslucentGradeBadge({
     super.key,
     required this.text,
     required this.color,
     this.size = 42,
+    this.fontSize,
+    this.borderRadius,
   });
 
   final String text;
   final Color color;
   final double size;
+  final double? fontSize;
+  final BorderRadius? borderRadius;
 
   @override
   Widget build(BuildContext context) {
@@ -269,14 +274,15 @@ class TranslucentGradeBadge extends StatelessWidget {
     final resolvedFg = OledTheme.semanticForeground(color, brightness);
     final resolvedBg = OledTheme.semanticBadgeBg(color, brightness);
     final resolvedBorder = OledTheme.semanticBadgeBorder(color, brightness);
-    final fontSize = text.length >= 3 ? 13.5 : 20.5;
+    final resolvedFontSize = fontSize ?? (text.length >= 3 ? 13.5 : 20.5);
     return Container(
       width: size,
       height: size,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: resolvedBg,
-        shape: BoxShape.circle,
+        shape: borderRadius != null ? BoxShape.rectangle : BoxShape.circle,
+        borderRadius: borderRadius,
         border: Border.all(
           color: resolvedBorder,
           width: 1.2,
@@ -287,7 +293,7 @@ class TranslucentGradeBadge extends StatelessWidget {
         maxLines: 1,
         style: TextStyle(
           color: resolvedFg,
-          fontSize: fontSize,
+          fontSize: resolvedFontSize,
           fontWeight: FontWeight.w700,
           height: 1.0,
           fontFeatures: const [FontFeature.tabularFigures()],
@@ -1400,16 +1406,18 @@ class _GradesScreenState extends State<GradesScreen>
             ));
     final numericGradeCount =
         widget.allGrades.where((g) => g.numericValue != null).length;
+    final min = MinimalistTokens.of(widget.prefs);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       floatingActionButton: Padding(
-        padding: const EdgeInsets.only(bottom: 84),
+        padding: EdgeInsets.only(bottom: min.enabled ? 68 : 84),
         child: TactileBounce(
           onTap: () =>
               setState(() => _showSimulatorPanel = !_showSimulatorPanel),
           child: FloatingActionButton(
             heroTag: null,
+            mini: min.enabled,
             tooltip: uwuLabel(
               'Szellemjegy számoló',
               enabled: widget.prefs.uwuModeEnabled,
@@ -1418,13 +1426,13 @@ class _GradesScreenState extends State<GradesScreen>
             backgroundColor: scheme.primary,
             foregroundColor: scheme.onPrimary,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(min.enabled ? 12 : 20),
             ),
             child: Icon(
               _showSimulatorPanel
                   ? Icons.expand_less_rounded
                   : Icons.auto_fix_high_rounded,
-              size: 24,
+              size: min.enabled ? 19 : 24,
             ),
           ),
         ),
@@ -1433,6 +1441,7 @@ class _GradesScreenState extends State<GradesScreen>
         displacement: 44,
         edgeOffset: 8,
         strokeWidth: 2.6,
+        notificationPredicate: nestedScrollRefreshNotificationPredicate,
         onRefresh: () async {
           if (_isRefreshing) return;
           if (mounted) {
@@ -1449,13 +1458,22 @@ class _GradesScreenState extends State<GradesScreen>
             }
           }
         },
-        child: CustomScrollView(
-          physics: const BouncingScrollPhysics(
-            parent: AlwaysScrollableScrollPhysics(),
-          ),
+        child: ElasticOverscrollStretchWrapper(
+          child: HorizontalSubTabSwipeDetector(
+            key: const ValueKey<String>('grades-subtab-swipe'),
+            currentIndex: SubjectSortMode.values.indexOf(_sortMode).clamp(
+              0,
+              SubjectSortMode.values.length - 1,
+            ),
+            itemCount: SubjectSortMode.values.length,
+            onIndexChanged: (idx) => _selectSortMode(SubjectSortMode.values[idx]),
+          child: CustomScrollView(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
           slivers: [
             SliverPadding(
-              padding: const EdgeInsets.only(top: 12),
+              padding: EdgeInsets.only(top: min.enabled ? 6 : 12),
               sliver: SliverToBoxAdapter(
                 child: Column(
                   key: _sortListHeaderKey,
@@ -1463,7 +1481,9 @@ class _GradesScreenState extends State<GradesScreen>
                   children: [
                     _enter(
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: min.horizontalPagePadding,
+                        ),
                         child: TactileBounce(
                           pressedScale: 0.98,
                           onTap: () => _openScholarshipAndBreakdownModal(
@@ -1486,7 +1506,9 @@ class _GradesScreenState extends State<GradesScreen>
                       const ValueKey('grades-top'),
                     ),
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: min.horizontalPagePadding,
+                      ),
                       child: AnimatedSize(
                         duration: const Duration(milliseconds: 240),
                         curve: Curves.easeOutCubic,
@@ -1494,7 +1516,9 @@ class _GradesScreenState extends State<GradesScreen>
                         child: (_showSimulatorPanel ||
                                 _overallGhostGrades.isNotEmpty)
                             ? Padding(
-                                padding: const EdgeInsets.only(top: 14),
+                                padding: EdgeInsets.only(
+                                  top: min.enabled ? 8 : 14,
+                                ),
                                 child: _buildOverallGhostSimulatorCard(
                                   theme,
                                   scheme,
@@ -1505,43 +1529,51 @@ class _GradesScreenState extends State<GradesScreen>
                             : const SizedBox.shrink(),
                       ),
                     ),
-                    const SizedBox(height: 22),
+                    SizedBox(height: min.enabled ? 10 : 22),
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: min.horizontalPagePadding,
+                      ),
                       child: Row(
                         children: [
                           Icon(
                             Icons.star_rounded,
-                            size: 20,
+                            size: min.enabled ? 15 : 20,
                             color: scheme.primary,
                           ),
-                          const SizedBox(width: 8),
+                          SizedBox(width: min.enabled ? 6 : 8),
                           Expanded(
                             child: Text(
                               uwuLabel(
                                 'Tantárgyak és kerekített átlagok',
                                 enabled: widget.prefs.uwuModeEnabled,
                               ),
-                              style: theme.textTheme.titleMedium?.copyWith(
+                              style: (min.enabled
+                                      ? theme.textTheme.labelLarge
+                                      : theme.textTheme.titleMedium)
+                                  ?.copyWith(
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
                           ),
                           Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 4,
+                            padding: EdgeInsets.symmetric(
+                              horizontal: min.enabled ? 8 : 12,
+                              vertical: min.enabled ? 2 : 4,
                             ),
                             decoration: BoxDecoration(
                               color: scheme.surfaceContainerHigh,
-                              borderRadius: BorderRadius.circular(22),
+                              borderRadius: BorderRadius.circular(
+                                min.enabled ? 8 : 22,
+                              ),
                             ),
                             child: Text(
                               uwuLabel(
                                 '${subjects.length} tantárgy',
                                 enabled: widget.prefs.uwuModeEnabled,
                               ),
-                              style: theme.textTheme.labelMedium?.copyWith(
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                fontSize: min.enabled ? 10.5 : null,
                                 color: scheme.onSurface.withValues(alpha: 0.72),
                               ),
                             ),
@@ -1549,23 +1581,33 @@ class _GradesScreenState extends State<GradesScreen>
                         ],
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    SizedBox(height: min.enabled ? 6 : 10),
                     _buildSortBar(theme, scheme),
-                    const SizedBox(height: 12),
+                    SizedBox(height: min.enabled ? 6 : 12),
                   ],
                 ),
               ),
             ),
             if (subjects.isEmpty)
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 160),
+                padding: EdgeInsets.fromLTRB(
+                  min.horizontalPagePadding,
+                  0,
+                  min.horizontalPagePadding,
+                  160,
+                ),
                 sliver: SliverToBoxAdapter(
                   child: _buildEmptyCard(theme, scheme),
                 ),
               )
             else
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 160),
+                padding: EdgeInsets.fromLTRB(
+                  min.horizontalPagePadding,
+                  0,
+                  min.horizontalPagePadding,
+                  160,
+                ),
                 sliver: SliverList(
                   delegate: SliverChildBuilderDelegate(
                     (context, idx) {
@@ -1629,6 +1671,8 @@ class _GradesScreenState extends State<GradesScreen>
               ),
           ],
         ),
+        ),
+        ),
       ),
     );
   }
@@ -1637,11 +1681,14 @@ class _GradesScreenState extends State<GradesScreen>
     final selectedIdx = SubjectSortMode.values.indexOf(_sortMode);
     final effectivePrefs =
         AppProvidersScope.maybeOf(context)?.settings.prefs ?? widget.prefs;
+    final min = MinimalistTokens.of(effectivePrefs);
     return LiquidBubbleTabBar(
-      height: 40,
-      fontSize: 12,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemPadding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+      height: min.enabled ? 31 : 40,
+      fontSize: min.enabled ? 10.5 : 12,
+      padding: EdgeInsets.symmetric(horizontal: min.horizontalPagePadding),
+      itemPadding: min.enabled
+          ? const EdgeInsets.symmetric(horizontal: 4, vertical: 3)
+          : const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
       liquidGlassEnabled: effectivePrefs.liquidGlassEnabled,
       selectedIndex: selectedIdx < 0 ? 0 : selectedIdx,
       items: [
@@ -1666,6 +1713,7 @@ class _GradesScreenState extends State<GradesScreen>
     required int subjectCount,
     required int gradeCount,
   }) {
+    final min = MinimalistTokens.of(widget.prefs);
     final activeAvg =
         _overallGhostGrades.isNotEmpty ? simulatedAverage : baseAverage;
     final avgColor = activeAvg != null
@@ -1685,41 +1733,49 @@ class _GradesScreenState extends State<GradesScreen>
       enabled: widget.prefs.christmasModeEnabled,
       child: SoftGlassCard(
         prefs: widget.prefs,
-        padding: const EdgeInsets.all(20),
-        borderRadius: OledTheme.largeRadius,
+        padding: min.enabled
+            ? const EdgeInsets.symmetric(horizontal: 12, vertical: 10)
+            : const EdgeInsets.all(20),
+        borderRadius: min.enabled ? min.largeRadius : OledTheme.largeRadius,
         border: Border.all(
-          color: avgColor.withValues(alpha: 0.6),
-          width: 1.5,
+          color: avgColor.withValues(alpha: min.enabled ? 0.45 : 0.6),
+          width: min.enabled ? 1.0 : 1.5,
         ),
         child: Row(
           children: [
             AnimatedContainer(
               duration: const Duration(milliseconds: 240),
-              width: 74,
-              height: 74,
+              width: min.enabled ? 50 : 74,
+              height: min.enabled ? 50 : 74,
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: avgColor,
-                borderRadius: OledTheme.badgeRadius,
+                borderRadius: min.enabled ? min.badgeRadius : OledTheme.badgeRadius,
               ),
               child: activeAvg != null
                   ? AnimatedNumberText(
                       value: activeAvg,
                       fractionDigits: 2,
-                      style: theme.textTheme.headlineSmall?.copyWith(
+                      style: (min.enabled
+                              ? theme.textTheme.titleMedium
+                              : theme.textTheme.headlineSmall)
+                          ?.copyWith(
                         color: Colors.white,
                         fontWeight: FontWeight.w900,
                       ),
                     )
                   : Text(
                       '-',
-                      style: theme.textTheme.headlineSmall?.copyWith(
+                      style: (min.enabled
+                              ? theme.textTheme.titleMedium
+                              : theme.textTheme.headlineSmall)
+                          ?.copyWith(
                         color: Colors.white,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
             ),
-            const SizedBox(width: 18),
+            SizedBox(width: min.enabled ? 11 : 18),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1734,37 +1790,44 @@ class _GradesScreenState extends State<GradesScreen>
                                 : 'Összesített súlyozott átlag',
                             enabled: widget.prefs.uwuModeEnabled,
                           ),
-                          style: theme.textTheme.titleMedium?.copyWith(
+                          style: (min.enabled
+                                  ? theme.textTheme.labelLarge
+                                  : theme.textTheme.titleMedium)
+                              ?.copyWith(
                             fontWeight: FontWeight.w800,
                             color: scheme.onSurface,
                           ),
                         ),
                       ),
-                      Icon(
-                        Icons.analytics_outlined,
-                        size: 18,
-                        color: scheme.primary,
-                      ),
+                      if (!min.enabled)
+                        Icon(
+                          Icons.analytics_outlined,
+                          size: 18,
+                          color: scheme.primary,
+                        ),
                     ],
                   ),
-                  const SizedBox(height: 6),
+                  SizedBox(height: min.enabled ? 3 : 6),
                   Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
+                    spacing: min.enabled ? 6 : 8,
+                    runSpacing: min.enabled ? 4 : 6,
                     children: [
                       if (roundedGrade != null)
                         Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 3,
+                          padding: EdgeInsets.symmetric(
+                            horizontal: min.enabled ? 7 : 10,
+                            vertical: min.enabled ? 1.5 : 3,
                           ),
                           decoration: BoxDecoration(
                             color: avgColor.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(22),
+                            borderRadius: BorderRadius.circular(
+                              min.enabled ? 6 : 22,
+                            ),
                           ),
                           child: Text(
                             '$roundedGrade',
                             style: theme.textTheme.labelSmall?.copyWith(
+                              fontSize: min.enabled ? 10.5 : null,
                               color: avgColor,
                               fontWeight: FontWeight.w800,
                             ),
@@ -1772,15 +1835,17 @@ class _GradesScreenState extends State<GradesScreen>
                         ),
                       if (delta != null)
                         Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 3,
+                          padding: EdgeInsets.symmetric(
+                            horizontal: min.enabled ? 7 : 10,
+                            vertical: min.enabled ? 1.5 : 3,
                           ),
                           decoration: BoxDecoration(
                             color: delta >= 0
                                 ? Colors.green.withValues(alpha: 0.2)
                                 : Colors.redAccent.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(22),
+                            borderRadius: BorderRadius.circular(
+                              min.enabled ? 6 : 22,
+                            ),
                           ),
                           child: AnimatedNumberText(
                             value: delta,
@@ -1791,6 +1856,7 @@ class _GradesScreenState extends State<GradesScreen>
                               enabled: widget.prefs.uwuModeEnabled,
                             ),
                             style: theme.textTheme.labelSmall?.copyWith(
+                              fontSize: min.enabled ? 10.5 : null,
                               color: delta >= 0
                                   ? Colors.greenAccent
                                   : Colors.redAccent,
@@ -1800,13 +1866,16 @@ class _GradesScreenState extends State<GradesScreen>
                         ),
                     ],
                   ),
-                  const SizedBox(height: 6),
+                  SizedBox(height: min.enabled ? 3 : 6),
                   Text(
                     uwu(
-                      '$gradeCount db érdemjegy • $subjectCount tantárgy • Koppints az ösztöndíj kalkulátorért!',
+                      min.enabled
+                          ? '$gradeCount jegy • $subjectCount tárgy • Ösztöndíj ›'
+                          : '$gradeCount db érdemjegy • $subjectCount tantárgy • Koppints az ösztöndíj kalkulátorért!',
                       enabled: widget.prefs.uwuModeEnabled,
                     ),
                     style: theme.textTheme.bodySmall?.copyWith(
+                      fontSize: min.enabled ? 11 : null,
                       color: scheme.onSurface.withValues(alpha: 0.65),
                     ),
                   ),
@@ -2052,6 +2121,7 @@ class _GradesScreenState extends State<GradesScreen>
 
     final subjectHeroTag = summary.uniqueHeroTag;
     final settings = AppProvidersScope.maybeOf(context)?.settings;
+    final min = MinimalistTokens.of(settings?.prefs ?? widget.prefs);
     final glowAccent = customColor ??
         (roundedStanding != null
             ? OledTheme.gradeColor(roundedStanding, widget.prefs)
@@ -2059,7 +2129,7 @@ class _GradesScreenState extends State<GradesScreen>
 
     Widget buildTile(bool isGlowing) {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 12),
+        padding: EdgeInsets.only(bottom: min.cardGap),
         child: TactileBounce(
           pressedScale: 0.97,
           onTap: () {
@@ -2083,121 +2153,175 @@ class _GradesScreenState extends State<GradesScreen>
                 child: GradeFirstSeenGlow(
                   isGlowing: isGlowing,
                   accentColor: glowAccent,
-                  borderRadius: OledTheme.cardRadius,
+                  borderRadius: min.enabled ? min.cardRadius : OledTheme.cardRadius,
                   child: SoftGlassCard(
                     prefs: widget.prefs,
-                    padding: const EdgeInsets.all(16),
-                    borderRadius: OledTheme.cardRadius,
+                    padding: min.enabled
+                        ? const EdgeInsets.symmetric(horizontal: 10, vertical: 7)
+                        : const EdgeInsets.all(16),
+                    borderRadius: min.enabled ? min.cardRadius : OledTheme.cardRadius,
                     border: Border.all(
                       color: customColor != null
                           ? customColor.withValues(alpha: 0.65)
                           : theme.dividerColor,
+                      width: min.borderWidth,
                     ),
                     child: SingleChildScrollView(
                       physics: const NeverScrollableScrollPhysics(),
                       child: Row(
                         children: [
                           Expanded(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  uwuLabel(
-                                    displaySubjectName,
-                                    enabled: widget.prefs.uwuModeEnabled,
-                                  ),
-                                  style: theme.textTheme.titleSmall?.copyWith(
-                                    fontWeight: FontWeight.w800,
-                                    color: scheme.onSurface,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 4,
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color:
-                                            standingColor.withValues(alpha: 0.2),
-                                        borderRadius: BorderRadius.circular(22),
-                                        border: Border.all(
-                                          color: standingColor.withValues(
-                                            alpha: 0.65,
+                            child: min.enabled
+                                ? Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          uwuLabel(
+                                            displaySubjectName,
+                                            enabled: widget.prefs.uwuModeEnabled,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: theme.textTheme.bodySmall
+                                              ?.copyWith(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w700,
+                                            color: scheme.onSurface,
                                           ),
                                         ),
                                       ),
-                                      child: avg != null
-                                          ? AnimatedNumberText(
-                                              value: avg,
-                                              fractionDigits: 2,
-                                              prefix: uwuLabel(
-                                                'Átlag: ',
-                                                enabled:
-                                                    widget.prefs.uwuModeEnabled,
-                                              ),
-                                              style: theme.textTheme.labelSmall
-                                                  ?.copyWith(
-                                                color: scheme.onSurface,
-                                                fontWeight: FontWeight.w700,
-                                                fontFeatures: const [
-                                                  FontFeature.tabularFigures(),
-                                                ],
-                                              ),
-                                            )
-                                          : Text(
-                                              uwuLabel(
-                                                'Átlag: $avgText',
-                                                enabled:
-                                                    widget.prefs.uwuModeEnabled,
-                                              ),
-                                              style: theme.textTheme.labelSmall
-                                                  ?.copyWith(
-                                                color: scheme.onSurface,
-                                                fontWeight: FontWeight.w700,
-                                                fontFeatures: const [
-                                                  FontFeature.tabularFigures(),
-                                                ],
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        '$avgText • ${summary.grades.length}j',
+                                        style: theme.textTheme.labelSmall
+                                            ?.copyWith(
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w700,
+                                          color: scheme.onSurface
+                                              .withValues(alpha: 0.7),
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        uwuLabel(
+                                          displaySubjectName,
+                                          enabled: widget.prefs.uwuModeEnabled,
+                                        ),
+                                        style: theme.textTheme.titleSmall
+                                            ?.copyWith(
+                                          fontWeight: FontWeight.w800,
+                                          color: scheme.onSurface,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 4,
+                                        crossAxisAlignment:
+                                            WrapCrossAlignment.center,
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 4,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: standingColor.withValues(
+                                                  alpha: 0.2),
+                                              borderRadius:
+                                                  BorderRadius.circular(22),
+                                              border: Border.all(
+                                                color: standingColor.withValues(
+                                                  alpha: 0.65,
+                                                ),
                                               ),
                                             ),
-                                    ),
-                                    Text(
-                                      uwuLabel(
-                                        '${summary.grades.length} db jegy',
-                                        enabled: widget.prefs.uwuModeEnabled,
-                                      ),
-                                      style:
-                                          theme.textTheme.labelSmall?.copyWith(
-                                        color: scheme.onSurface
-                                            .withValues(alpha: 0.6),
-                                        fontFeatures: const [
-                                          FontFeature.tabularFigures(),
+                                            child: avg != null
+                                                ? AnimatedNumberText(
+                                                    value: avg,
+                                                    fractionDigits: 2,
+                                                    prefix: uwuLabel(
+                                                      'Átlag: ',
+                                                      enabled: widget
+                                                          .prefs.uwuModeEnabled,
+                                                    ),
+                                                    style: theme
+                                                        .textTheme.labelSmall
+                                                        ?.copyWith(
+                                                      color: scheme.onSurface,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      fontFeatures: const [
+                                                        FontFeature
+                                                            .tabularFigures(),
+                                                      ],
+                                                    ),
+                                                  )
+                                                : Text(
+                                                    uwuLabel(
+                                                      'Átlag: $avgText',
+                                                      enabled: widget
+                                                          .prefs.uwuModeEnabled,
+                                                    ),
+                                                    style: theme
+                                                        .textTheme.labelSmall
+                                                        ?.copyWith(
+                                                      color: scheme.onSurface,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      fontFeatures: const [
+                                                        FontFeature
+                                                            .tabularFigures(),
+                                                      ],
+                                                    ),
+                                                  ),
+                                          ),
+                                          Text(
+                                            uwuLabel(
+                                              '${summary.grades.length} db jegy',
+                                              enabled:
+                                                  widget.prefs.uwuModeEnabled,
+                                            ),
+                                            style: theme.textTheme.labelSmall
+                                                ?.copyWith(
+                                              color: scheme.onSurface
+                                                  .withValues(alpha: 0.6),
+                                              fontFeatures: const [
+                                                FontFeature.tabularFigures(),
+                                              ],
+                                            ),
+                                          ),
                                         ],
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
+                                    ],
+                                  ),
                           ),
-                          const SizedBox(width: 12),
+                          SizedBox(width: min.enabled ? 8 : 12),
                           Container(
-                            width: 44,
-                            height: 44,
+                            width: min.enabled ? 28 : 44,
+                            height: min.enabled ? 28 : 44,
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
                               color: standingColor,
-                              borderRadius: OledTheme.badgeRadius,
+                              borderRadius: min.enabled
+                                  ? min.badgeRadius
+                                  : OledTheme.badgeRadius,
                             ),
                             child: Text(
                               standingText,
-                              style: theme.textTheme.titleLarge?.copyWith(
+                              style: (min.enabled
+                                      ? theme.textTheme.labelLarge
+                                      : theme.textTheme.titleLarge)
+                                  ?.copyWith(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w900,
                                 fontFeatures: const [
@@ -2206,9 +2330,10 @@ class _GradesScreenState extends State<GradesScreen>
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          SizedBox(width: min.enabled ? 4 : 8),
                           Icon(
                             Icons.chevron_right_rounded,
+                            size: min.enabled ? 18 : 24,
                             color: scheme.onSurface.withValues(alpha: 0.54),
                           ),
                         ],
@@ -2264,6 +2389,7 @@ class _ScholarshipAndBreakdownDialogState
   late bool _allow200Weight;
   late UserProfilePrefs _prefs;
   late bool _basic;
+  final ScrollController _scrollController = ScrollController();
 
   void _updateScholarshipPrefs(UserProfilePrefs next) {
     setState(() {
@@ -2425,6 +2551,12 @@ class _ScholarshipAndBreakdownDialogState
   }
 
   @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
@@ -2472,88 +2604,81 @@ class _ScholarshipAndBreakdownDialogState
     final currentAmountStr = '${ScholarshipTier.formatForint(currentForint)} Ft/hó';
     final goalAmountStr = '${ScholarshipTier.formatForint(goalForint)} Ft/hó';
 
-    return Align(
-      alignment: Alignment.bottomCenter,
-      heightFactor: 1.0,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final bottomInset =
-                math.max(12.0, MediaQuery.paddingOf(context).bottom);
-            final maxAvailable =
-                math.max(320.0, constraints.maxHeight - bottomInset - 8.0);
-            final sheetHeight =
-                (constraints.maxHeight * 0.85).clamp(320.0, maxAvailable);
-            return FrostedBottomSheetSurface(
-              prefs: _prefs,
-              topRadius: 26,
-              showDragHandle: false,
-              includeSafeAreaBottom: true,
-              child: SizedBox(
-                height: sheetHeight,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Center(
-                            child: Container(
-                              width: 36,
-                              height: 4,
-                              decoration: BoxDecoration(
-                                color: scheme.onSurface.withValues(alpha: 0.22),
-                                borderRadius: BorderRadius.circular(999),
+      final closeMode = _prefs.modalCloseMode;
+      return Align(
+        alignment: Alignment.bottomCenter,
+        heightFactor: 1.0,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final bottomInset =
+                  math.max(12.0, MediaQuery.paddingOf(context).bottom);
+              final maxAvailable =
+                  math.max(320.0, constraints.maxHeight - bottomInset - 8.0);
+              final sheetHeight =
+                  (constraints.maxHeight * 0.85).clamp(320.0, maxAvailable);
+              return FrostedBottomSheetSurface(
+                prefs: _prefs,
+                topRadius: 26,
+                showDragHandle: false,
+                includeSafeAreaBottom: true,
+                child: SizedBox(
+                  height: sheetHeight,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Center(
+                              child: Container(
+                                width: 36,
+                                height: 4,
+                                decoration: BoxDecoration(
+                                  color: scheme.onSurface.withValues(alpha: 0.22),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  uwuLabel(
-                                    'Ösztöndíj kalkulátor',
-                                    enabled: _prefs.uwuModeEnabled,
-                                  ),
-                                  style: theme.textTheme.titleMedium?.copyWith(
-                                    fontSize: 18.5,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: -0.3,
-                                  ),
-                                ),
-                              ),
-                              TactileBounce(
-                                onTap: () => Navigator.of(context).pop(),
-                                child: Container(
-                                  width: 32,
-                                  height: 32,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: scheme.onSurface.withValues(
-                                      alpha: isDark ? 0.08 : 0.06,
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    uwuLabel(
+                                      'Ösztöndíj kalkulátor',
+                                      enabled: _prefs.uwuModeEnabled,
+                                    ),
+                                    style: theme.textTheme.titleMedium?.copyWith(
+                                      fontSize: 18.5,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: -0.3,
                                     ),
                                   ),
-                                  child: Icon(
-                                    Icons.close_rounded,
-                                    size: 18,
-                                    color:
-                                        scheme.onSurface.withValues(alpha: 0.72),
-                                  ),
                                 ),
-                              ),
-                            ],
-                          ),
-                        ],
+                                if (closeMode.showTopX) ...[
+                                  const SizedBox(width: 8),
+                                  PopupTopCloseButton(
+                                    onTap: () => Navigator.of(context).pop(),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    Divider(height: 1, thickness: 1, color: hairline),
-                    Expanded(
-                      child: SingleChildScrollView(
+                      Divider(height: 1, thickness: 1, color: hairline),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          key: const ValueKey<String>('scholarship-scroll-view'),
+                          controller: _scrollController,
+                          physics: const FloatingSheetScrollPhysics(
+                            parent: AlwaysScrollableScrollPhysics(),
+                          ),
                         padding: const EdgeInsets.fromLTRB(0, 14, 0, 28),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2660,39 +2785,47 @@ class _ScholarshipAndBreakdownDialogState
                                       ],
                                     ),
                                   ),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                        uwuLabel(
-                                          'ÖSZTÖNDÍJ',
-                                          enabled: _prefs.uwuModeEnabled,
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      children: [
+                                        Text(
+                                          uwuLabel(
+                                            'ÖSZTÖNDÍJ',
+                                            enabled: _prefs.uwuModeEnabled,
+                                          ),
+                                          style: TextStyle(
+                                            fontSize: 10.5,
+                                            fontWeight: FontWeight.w700,
+                                            letterSpacing: 0.7,
+                                            color: scheme.onSurface
+                                                .withValues(alpha: 0.50),
+                                          ),
                                         ),
-                                        style: TextStyle(
-                                          fontSize: 10.5,
-                                          fontWeight: FontWeight.w700,
-                                          letterSpacing: 0.7,
-                                          color: scheme.onSurface
-                                              .withValues(alpha: 0.50),
+                                        const SizedBox(height: 3),
+                                        FittedBox(
+                                          fit: BoxFit.scaleDown,
+                                          alignment: Alignment.centerRight,
+                                          child: Text(
+                                            avgGap > 0 &&
+                                                    goalForint > currentForint
+                                                ? '$currentAmountStr -> $goalAmountStr'
+                                                : goalAmountStr,
+                                            style: TextStyle(
+                                              fontSize: 14.5,
+                                              fontWeight: FontWeight.w800,
+                                              color: avgGap <= 0
+                                                  ? achievedGreen
+                                                  : scheme.onSurface,
+                                              fontFeatures: const [
+                                                FontFeature.tabularFigures(),
+                                              ],
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                      const SizedBox(height: 3),
-                                      Text(
-                                        avgGap > 0 && goalForint > currentForint
-                                            ? '$currentAmountStr -> $goalAmountStr'
-                                            : goalAmountStr,
-                                        style: TextStyle(
-                                          fontSize: 14.5,
-                                          fontWeight: FontWeight.w800,
-                                          color: avgGap <= 0
-                                              ? achievedGreen
-                                              : scheme.onSurface,
-                                          fontFeatures: const [
-                                            FontFeature.tabularFigures(),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
                                 ],
                               ),
@@ -3299,6 +3432,14 @@ class _ScholarshipAndBreakdownDialogState
                         ),
                       ),
                     ),
+                    if (closeMode.showBottomButton)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+                        child: PopupBottomCloseButton(
+                          onTap: () => Navigator.of(context).pop(),
+                          uwuEnabled: _prefs.uwuModeEnabled,
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -3380,146 +3521,222 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
     var draftValue = current.value;
     var draftWeight = current.weightPercentage;
 
-    await showSoftBlurDialog<void>(
+    await showFloatingGlassSheet<void>(
       context: context,
+      prefs: _prefs,
       builder: (dialogCtx) {
+        final closeMode = _prefs.modalCloseMode;
         return StatefulBuilder(
           builder: (ctx, setDialogState) {
             final theme = Theme.of(ctx);
             final scheme = theme.colorScheme;
-            return AlertDialog(
-              title: Text(
-                uwuLabel('Szellemjegy szerkesztése', enabled: _prefs.uwuModeEnabled),
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    uwuLabel('Érdemjegy', enabled: _prefs.uwuModeEnabled),
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: scheme.onSurface.withValues(alpha: 0.7),
-                      fontWeight: FontWeight.w700,
+            final bottomInset = MediaQuery.viewInsetsOf(ctx).bottom;
+            return AnimatedPadding(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              padding: EdgeInsets.only(bottom: bottomInset),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: 460,
+                  maxHeight:
+                      (MediaQuery.sizeOf(ctx).height - bottomInset) * 0.86,
+                ),
+                child: FrostedBottomSheetSurface(
+                  prefs: _prefs,
+                  showDragHandle: true,
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                  child: SingleChildScrollView(
+                    physics: const FloatingSheetScrollPhysics(
+                      parent: AlwaysScrollableScrollPhysics(),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [1, 2, 3, 4, 5].map((v) {
-                      final selected = draftValue == v;
-                      final c = OledTheme.gradeColor(v, _prefs);
-                      return Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 2),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(999),
-                            onTap: () => setDialogState(() => draftValue = v),
-                            child: Container(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 36,
                               height: 36,
-                              alignment: Alignment.center,
                               decoration: BoxDecoration(
-                                color: selected
-                                    ? c
-                                    : c.withValues(alpha: 0.16),
-                                borderRadius: BorderRadius.circular(999),
-                                border: Border.all(
-                                  color: c.withValues(alpha: 0.75),
-                                ),
+                                color: scheme.primary.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(11),
                               ),
+                              child: Icon(
+                                Icons.auto_fix_high_rounded,
+                                size: 19,
+                                color: scheme.primary,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
                               child: Text(
-                                '$v',
-                                style: TextStyle(
-                                  color: selected ? Colors.white : c,
-                                  fontWeight: FontWeight.w800,
+                                uwuLabel(
+                                  'Szellemjegy szerkesztése',
+                                  enabled: _prefs.uwuModeEnabled,
+                                ),
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w900,
                                 ),
                               ),
                             ),
+                            if (closeMode.showTopX) ...[
+                              const SizedBox(width: 8),
+                              PopupTopCloseButton(
+                                onTap: () => Navigator.of(dialogCtx).pop(),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          uwuLabel('Érdemjegy', enabled: _prefs.uwuModeEnabled),
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: scheme.onSurface.withValues(alpha: 0.7),
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    uwuLabel('Súly', enabled: _prefs.uwuModeEnabled),
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: scheme.onSurface.withValues(alpha: 0.7),
-                      fontWeight: FontWeight.w700,
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [1, 2, 3, 4, 5].map((v) {
+                            final selected = draftValue == v;
+                            final c = OledTheme.gradeColor(v, _prefs);
+                            return Expanded(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 2),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(999),
+                                  onTap: () =>
+                                      setDialogState(() => draftValue = v),
+                                  child: Container(
+                                    height: 38,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color:
+                                          selected ? c : c.withValues(alpha: 0.16),
+                                      borderRadius: BorderRadius.circular(999),
+                                      border: Border.all(
+                                        color: c.withValues(alpha: 0.75),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      '$v',
+                                      style: TextStyle(
+                                        color: selected ? Colors.white : c,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          uwuLabel('Súly', enabled: _prefs.uwuModeEnabled),
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: scheme.onSurface.withValues(alpha: 0.7),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [50, 100, 200].map((w) {
+                            final selected = draftWeight == w;
+                            return Expanded(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 3),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(999),
+                                  onTap: () =>
+                                      setDialogState(() => draftWeight = w),
+                                  child: Container(
+                                    height: 36,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color: selected
+                                          ? scheme.primary
+                                          : scheme.surfaceContainerHigh,
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    child: Text(
+                                      '$w%',
+                                      style: TextStyle(
+                                        color: selected
+                                            ? scheme.onPrimary
+                                            : scheme.onSurface,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            TextButton.icon(
+                              onPressed: () {
+                                setState(() {
+                                  if (index < _ghostGrades.length) {
+                                    _ghostGrades.removeAt(index);
+                                  }
+                                });
+                                Navigator.of(dialogCtx).pop();
+                              },
+                              icon: Icon(
+                                Icons.delete_outline_rounded,
+                                size: 17,
+                                color: scheme.error,
+                              ),
+                              label: Text(
+                                uwuLabel('Törlés', enabled: _prefs.uwuModeEnabled),
+                                style: TextStyle(color: scheme.error),
+                              ),
+                            ),
+                            const Spacer(),
+                            TextButton(
+                              onPressed: () => Navigator.of(dialogCtx).pop(),
+                              child: Text(
+                                uwuLabel('Mégse', enabled: _prefs.uwuModeEnabled),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            FilledButton(
+                              onPressed: () {
+                                setState(() {
+                                  if (index < _ghostGrades.length) {
+                                    _ghostGrades[index] = GhostGrade(
+                                      value: draftValue,
+                                      weightPercentage: draftWeight,
+                                    );
+                                  }
+                                });
+                                Navigator.of(dialogCtx).pop();
+                              },
+                              child: Text(
+                                uwuLabel('Mentés', enabled: _prefs.uwuModeEnabled),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (closeMode.showBottomButton) ...[
+                          const SizedBox(height: 12),
+                          PopupBottomCloseButton(
+                            onTap: () => Navigator.of(dialogCtx).pop(),
+                            uwuEnabled: _prefs.uwuModeEnabled,
+                          ),
+                        ],
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [50, 100, 200].map((w) {
-                      final selected = draftWeight == w;
-                      return Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 3),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(999),
-                            onTap: () => setDialogState(() => draftWeight = w),
-                            child: Container(
-                              height: 34,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                color: selected
-                                    ? scheme.primary
-                                    : scheme.surfaceContainerHigh,
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text(
-                                '$w%',
-                                style: TextStyle(
-                                  color: selected
-                                      ? scheme.onPrimary
-                                      : scheme.onSurface,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ],
+                ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    setState(() {
-                      if (index < _ghostGrades.length) {
-                        _ghostGrades.removeAt(index);
-                      }
-                    });
-                    Navigator.of(dialogCtx).pop();
-                  },
-                  child: Text(
-                    uwuLabel('Törlés', enabled: _prefs.uwuModeEnabled),
-                    style: TextStyle(color: scheme.error),
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.of(dialogCtx).pop(),
-                  child: Text(
-                    uwuLabel('Mégse', enabled: _prefs.uwuModeEnabled),
-                  ),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    setState(() {
-                      if (index < _ghostGrades.length) {
-                        _ghostGrades[index] = GhostGrade(
-                          value: draftValue,
-                          weightPercentage: draftWeight,
-                        );
-                      }
-                    });
-                    Navigator.of(dialogCtx).pop();
-                  },
-                  child: Text(
-                    uwuLabel('Mentés', enabled: _prefs.uwuModeEnabled),
-                  ),
-                ),
-              ],
             );
           },
         );
@@ -3542,6 +3759,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
         final theme = Theme.of(sheetCtx);
         final scheme = theme.colorScheme;
         final isDark = theme.brightness == Brightness.dark;
+        final closeMode = _prefs.modalCloseMode;
         return Align(
           alignment: Alignment.bottomCenter,
           heightFactor: 1.0,
@@ -3576,24 +3794,12 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                           ),
                         ),
                       ),
-                      TactileBounce(
-                        onTap: () => Navigator.of(sheetCtx).pop(),
-                        child: Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: scheme.onSurface.withValues(
-                              alpha: isDark ? 0.08 : 0.06,
-                            ),
-                          ),
-                          child: Icon(
-                            Icons.close_rounded,
-                            size: 18,
-                            color: scheme.onSurface.withValues(alpha: 0.72),
-                          ),
+                      if (closeMode.showTopX) ...[
+                        const SizedBox(width: 8),
+                        PopupTopCloseButton(
+                          onTap: () => Navigator.of(sheetCtx).pop(),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -3679,6 +3885,13 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                         ),
                       );
                     }(),
+                  ],
+                  if (closeMode.showBottomButton) ...[
+                    const SizedBox(height: 14),
+                    PopupBottomCloseButton(
+                      onTap: () => Navigator.of(sheetCtx).pop(),
+                      uwuEnabled: _prefs.uwuModeEnabled,
+                    ),
                   ],
                 ],
               ),
@@ -3911,26 +4124,33 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
         ),
         slivers: [
           SliverPadding(
-            padding: const EdgeInsets.only(top: 12),
+            padding: EdgeInsets.only(top: _prefs.minimalistModeEnabled ? 6 : 12),
             sliver: SliverToBoxAdapter(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: EdgeInsets.symmetric(
+                      horizontal:
+                          MinimalistTokens.of(_prefs).horizontalPagePadding,
+                    ),
                     child: Hero(
                       tag: subjectHeroTag,
                       child: Material(
                         type: MaterialType.transparency,
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 240),
-                          padding: const EdgeInsets.all(18),
+                          padding: EdgeInsets.all(
+                            _prefs.minimalistModeEnabled ? 11 : 18,
+                          ),
                           decoration: BoxDecoration(
                             color: theme.cardTheme.color,
-                            borderRadius: OledTheme.largeRadius,
+                            borderRadius: _prefs.minimalistModeEnabled
+                                ? MinimalistTokens.of(_prefs).largeRadius
+                                : OledTheme.largeRadius,
                             border: Border.all(
                               color: avgColor.withValues(alpha: 0.6),
-                              width: 1.4,
+                              width: _prefs.minimalistModeEnabled ? 1.0 : 1.4,
                             ),
                           ),
                           child: SingleChildScrollView(
@@ -3939,18 +4159,22 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                               children: [
                                 AnimatedContainer(
                                   duration: const Duration(milliseconds: 240),
-                                  width: 66,
-                                  height: 66,
+                                  width: _prefs.minimalistModeEnabled ? 46 : 66,
+                                  height: _prefs.minimalistModeEnabled ? 46 : 66,
                                   alignment: Alignment.center,
                                   decoration: BoxDecoration(
                                     color: avgColor,
-                                    borderRadius: OledTheme.badgeRadius,
+                                    borderRadius: _prefs.minimalistModeEnabled
+                                        ? MinimalistTokens.of(_prefs).badgeRadius
+                                        : OledTheme.badgeRadius,
                                   ),
                                   child: activeAvg != null
                                       ? AnimatedNumberText(
                                           value: activeAvg,
                                           fractionDigits: 2,
-                                          style: theme.textTheme.titleLarge
+                                          style: (_prefs.minimalistModeEnabled
+                                                  ? theme.textTheme.titleMedium
+                                                  : theme.textTheme.titleLarge)
                                               ?.copyWith(
                                             color: Colors.white,
                                             fontWeight: FontWeight.w900,
@@ -3958,14 +4182,18 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                         )
                                       : Text(
                                           '-',
-                                          style: theme.textTheme.titleLarge
+                                          style: (_prefs.minimalistModeEnabled
+                                                  ? theme.textTheme.titleMedium
+                                                  : theme.textTheme.titleLarge)
                                               ?.copyWith(
                                             color: Colors.white,
                                             fontWeight: FontWeight.w900,
                                           ),
                                         ),
                                 ),
-                                const SizedBox(width: 16),
+                                SizedBox(
+                                  width: _prefs.minimalistModeEnabled ? 10 : 16,
+                                ),
                                 Expanded(
                                   child: Column(
                                     mainAxisSize: MainAxisSize.min,
@@ -3977,12 +4205,14 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                           displaySubjectName,
                                           enabled: _prefs.uwuModeEnabled,
                                         ),
-                                        style: theme.textTheme.titleMedium
+                                        style: (_prefs.minimalistModeEnabled
+                                                ? theme.textTheme.titleSmall
+                                                : theme.textTheme.titleMedium)
                                             ?.copyWith(
                                           fontWeight: FontWeight.w800,
                                         ),
                                       ),
-                                      const SizedBox(height: 4),
+                                      const SizedBox(height: 2),
                                       Text(
                                         uwuLabel(
                                           roundedStanding != null
@@ -3992,13 +4222,16 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                         ),
                                         style: theme.textTheme.bodySmall
                                             ?.copyWith(
+                                          fontSize: _prefs.minimalistModeEnabled
+                                              ? 11.5
+                                              : null,
                                           color: scheme.onSurface
                                               .withValues(alpha: 0.72),
                                         ),
                                       ),
                                       if (_ghostGrades.isNotEmpty &&
                                           baseAvg != null) ...[
-                                        const SizedBox(height: 4),
+                                        const SizedBox(height: 3),
                                         Text(
                                           uwuLabel(
                                             'Eredeti átlag: ${baseAvg.toStringAsFixed(2)} • +${_ghostGrades.length} szellemjegy',
@@ -4021,7 +4254,7 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: _prefs.minimalistModeEnabled ? 8 : 16),
                   _buildSubjectSimulatorCard(
                     theme,
                     scheme,
@@ -4036,9 +4269,12 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                     targetThreshold: targetThreshold,
                     neededPlan100: neededPlan100,
                   ).staggeredEntrance(0),
-                  const SizedBox(height: 20),
+                  SizedBox(height: _prefs.minimalistModeEnabled ? 10 : 20),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: EdgeInsets.symmetric(
+                      horizontal:
+                          MinimalistTokens.of(_prefs).horizontalPagePadding,
+                    ),
                     child: Text(
                       uwuLabel(
                         'Rögzített jegyek',
@@ -4047,17 +4283,23 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.titleSmall?.copyWith(
+                        fontSize: _prefs.minimalistModeEnabled ? 12 : null,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  SizedBox(height: _prefs.minimalistModeEnabled ? 5 : 10),
                 ],
               ),
             ),
           ),
           SliverPadding(
-            padding: EdgeInsets.fromLTRB(16, 0, 16, bottomSafePadding),
+            padding: EdgeInsets.fromLTRB(
+              MinimalistTokens.of(_prefs).horizontalPagePadding,
+              0,
+              MinimalistTokens.of(_prefs).horizontalPagePadding,
+              bottomSafePadding,
+            ),
             sliver: SliverList(
               delegate: SliverChildBuilderDelegate(
                 (context, idx) {
@@ -4890,8 +5132,9 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
     ].join(' • ');
 
     Widget buildCard(bool isGlowing) {
+      final min = MinimalistTokens(isMinimalist);
       return Padding(
-        padding: const EdgeInsets.only(bottom: 12),
+        padding: EdgeInsets.only(bottom: min.enabled ? 4 : 12),
         child: TactileBounce(
           pressedScale: 0.97,
           onTap: () {
@@ -4909,11 +5152,13 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
           child: GradeFirstSeenGlow(
             isGlowing: isGlowing,
             accentColor: badgeColor,
-            borderRadius: OledTheme.cardRadius,
+            borderRadius: min.enabled ? min.cardRadius : OledTheme.cardRadius,
             child: SoftGlassCard(
               prefs: _prefs,
-              padding: const EdgeInsets.all(16),
-              borderRadius: OledTheme.cardRadius,
+              padding: min.enabled
+                  ? const EdgeInsets.symmetric(horizontal: 10, vertical: 7)
+                  : const EdgeInsets.all(16),
+              borderRadius: min.enabled ? min.cardRadius : OledTheme.cardRadius,
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
@@ -4926,10 +5171,12 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                       child: TranslucentGradeBadge(
                         text: badgeText,
                         color: badgeColor,
+                        size: min.enabled ? 30 : 42,
+                        fontSize: min.enabled ? 14 : null,
                       ),
                     ),
                   ),
-                  const SizedBox(width: 14),
+                  SizedBox(width: min.enabled ? 9 : 14),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -4942,22 +5189,23 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.titleSmall?.copyWith(
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  fontSize: 12.5,
                                   fontWeight: FontWeight.w700,
                                   color: scheme.onSurface,
                                 ),
                               ),
-                              const SizedBox(height: 5),
+                              const SizedBox(height: 2),
                               Row(
                                 children: [
                                   Icon(
                                     Icons.person_outline_rounded,
-                                    size: 14,
+                                    size: 12,
                                     color: scheme.onSurface.withValues(
                                       alpha: 0.54,
                                     ),
                                   ),
-                                  const SizedBox(width: 4),
+                                  const SizedBox(width: 3),
                                   Expanded(
                                     child: Text(
                                       uwuLabel(
@@ -4968,8 +5216,9 @@ class _SubjectGradesDetailScreenState extends State<SubjectGradesDetailScreen> {
                                       overflow: TextOverflow.ellipsis,
                                       style:
                                           theme.textTheme.labelSmall?.copyWith(
+                                        fontSize: 10.5,
                                         color: scheme.onSurface
-                                            .withValues(alpha: 0.7),
+                                            .withValues(alpha: 0.66),
                                         fontFeatures: const [
                                           FontFeature.tabularFigures(),
                                         ],
@@ -5241,10 +5490,13 @@ class _SubjectCustomizationSheetState
           child: FrostedBottomSheetSurface(
           prefs: widget.prefs,
           topRadius: 26,
-          showDragHandle: false,
+          showDragHandle: true,
           includeSafeAreaBottom: true,
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(0, 14, 0, 22),
+            physics: const FloatingSheetScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
+            padding: const EdgeInsets.fromLTRB(0, 6, 0, 22),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -5255,25 +5507,45 @@ class _SubjectCustomizationSheetState
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Center(
-                        child: Container(
-                          width: 42,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: scheme.onSurface.withValues(alpha: 0.24),
-                            borderRadius: BorderRadius.circular(4),
+                      Row(
+                        children: [
+                          Container(
+                            width: 38,
+                            height: 38,
+                            decoration: BoxDecoration(
+                              color: (_selectedColor != null
+                                      ? Color(_selectedColor!)
+                                      : scheme.primary)
+                                  .withValues(alpha: 0.16),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              Icons.tune_rounded,
+                              size: 20,
+                              color: _selectedColor != null
+                                  ? Color(_selectedColor!)
+                                  : scheme.primary,
+                            ),
                           ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        uwuLabel(
-                          'Tantárgy testreszabása',
-                          enabled: widget.prefs.uwuModeEnabled,
-                        ),
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w900,
-                        ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              uwuLabel(
+                                'Tantárgy testreszabása',
+                                enabled: widget.prefs.uwuModeEnabled,
+                              ),
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                          if (widget.prefs.modalCloseMode.showTopX) ...[
+                            const SizedBox(width: 8),
+                            PopupTopCloseButton(
+                              onTap: () => Navigator.of(context).pop(),
+                            ),
+                          ],
+                        ],
                       ),
                       const SizedBox(height: 14),
                       TextField(
@@ -5461,6 +5733,13 @@ class _SubjectCustomizationSheetState
                           ),
                         ),
                       ),
+                      if (widget.prefs.modalCloseMode.showBottomButton) ...[
+                        const SizedBox(height: 10),
+                        PopupBottomCloseButton(
+                          onTap: () => Navigator.of(context).pop(),
+                          uwuEnabled: widget.prefs.uwuModeEnabled,
+                        ),
+                      ],
                     ],
                   ),
                 ),

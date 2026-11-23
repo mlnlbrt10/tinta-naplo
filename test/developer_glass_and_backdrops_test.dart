@@ -85,8 +85,8 @@ void main() {
 
         expect(find.text('Fejlesztői beállítások'), findsNothing);
 
-        // Tap version badge ('v3.0.2') 5 times to unlock Developer Options
-        final versionFinder = find.text('v3.0.2');
+        // Tap version badge ('v3.1') 5 times to unlock Developer Options
+        final versionFinder = find.text('v3.1');
         for (int i = 0; i < 5; i++) {
           await tester.tap(versionFinder);
           await tester.pump();
@@ -164,12 +164,24 @@ void main() {
         expect(find.text('Kártyák & Elrendezés'), findsOneWidget);
         expect(find.text('Ikon & Betűtípus'), findsOneWidget);
 
-        // Select each of the 5 modes and verify immediate synchronous updates
+        expect(find.text('Élő megjelenési előnézet'), findsNothing);
+        final modeRow = find.byKey(
+          const ValueKey<String>('appearance-liquid-glass-mode-row'),
+        );
+        await tester.ensureVisible(modeRow);
+        await tester.pump(const Duration(milliseconds: 300));
+
+        // Select each of the 5 modes via floating popup and verify immediate synchronous updates
         for (final mode in LiquidGlassMode.values) {
-          final chip = find.text(mode.label);
-          await tester.ensureVisible(chip);
-          await tester.tap(chip);
+          await tester.tap(modeRow);
           await tester.pump();
+          await tester.pump(const Duration(milliseconds: 420));
+
+          final option = find.text('${mode.label} (${mode.subtitle})');
+          await tester.ensureVisible(option);
+          await tester.tap(option);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 420));
 
           expect(settings.prefs.liquidGlassMode, mode);
           expect(theme.liquidGlassMode, mode);

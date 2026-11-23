@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 
 import '../providers/app_providers.dart';
+import '../services/kreta_client.dart';
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
@@ -28,7 +29,7 @@ double computeSheetUpwardRubberBand(
 }) {
   if (rawNegativeDrag >= 0.0) return 0.0;
   final absUp = -rawNegativeDrag;
-  return -(maxUpwardPull * (absUp / (absUp + 85.0)));
+  return -(maxUpwardPull * (absUp / (absUp + 95.0)));
 }
 
 /// Computes subtle vertical stretch scale (`1.0 -> 1.03`) anchored at the
@@ -43,12 +44,76 @@ double computeSheetUpwardStretchScale(
   return 1.0 + progress * maxExtraScale;
 }
 
+/// Computes smoothly damped downward offset when dragging a floating sheet
+/// downward so it exhibits natural resistance instead of flying 1:1 or hitting
+/// a hard clamp wall.
+double computeSheetDownwardDampedOffset(double rawPositiveDrag) {
+  if (rawPositiveDrag <= 0.0) return 0.0;
+  const double maxPull = 540.0;
+  return maxPull * (rawPositiveDrag / (rawPositiveDrag + 640.0));
+}
+
+/// Scroll physics for floating bottom sheets/popups:
+/// - On scrollable popups (`maxScrollExtent > 0.5`, e.g. Ösztöndíj kalkulátor),
+///   enables symmetrical top AND bottom [BouncingScrollPhysics] elastic
+///   overscroll bounce/stretch so scrolling feels equally fluid at both ends.
+/// - On non-scrollable sheets (`maxScrollExtent <= 0.5`), clamps at both top
+///   and bottom so dragging anywhere on the card drives whole-sheet swipe/stretch.
+class FloatingSheetScrollPhysics extends BouncingScrollPhysics {
+  const FloatingSheetScrollPhysics({super.parent});
+
+  @override
+  FloatingSheetScrollPhysics applyTo(ScrollPhysics? ancestor) {
+    return FloatingSheetScrollPhysics(parent: buildParent(ancestor));
+  }
+
+  @override
+  double applyBoundaryConditions(ScrollMetrics position, double value) {
+    final isScrollable = position.maxScrollExtent > position.minScrollExtent + 0.5;
+    if (isScrollable) {
+      return super.applyBoundaryConditions(position, value);
+    }
+    if (value < position.pixels &&
+        position.pixels <= position.minScrollExtent) {
+      return value - position.pixels;
+    }
+    if (value < position.minScrollExtent &&
+        position.minScrollExtent < position.pixels) {
+      return value - position.minScrollExtent;
+    }
+    if (position.maxScrollExtent <= position.pixels &&
+        position.pixels < value) {
+      return value - position.pixels;
+    }
+    if (position.pixels < position.maxScrollExtent &&
+        position.maxScrollExtent < value) {
+      return value - position.maxScrollExtent;
+    }
+    return 0.0;
+  }
+
+  @override
+  Simulation? createBallisticSimulation(
+    ScrollMetrics position,
+    double velocity,
+  ) {
+    final isScrollable = position.maxScrollExtent > position.minScrollExtent + 0.5;
+    if (isScrollable) {
+      return super.createBallisticSimulation(position, velocity);
+    }
+    if (velocity.abs() > 0.0) {
+      return null;
+    }
+    return super.createBallisticSimulation(position, velocity);
+  }
+}
+
 class _FloatingSheetScrollBehavior extends ScrollBehavior {
   const _FloatingSheetScrollBehavior();
 
   @override
   ScrollPhysics getScrollPhysics(BuildContext context) {
-    return const ClampingScrollPhysics(
+    return const FloatingSheetScrollPhysics(
       parent: AlwaysScrollableScrollPhysics(),
     );
   }
@@ -116,10 +181,11 @@ class FloatingGlassSheetRoute<T> extends PageRoute<T> {
     Animation<double> secondaryAnimation,
   ) {
     final Widget inner = _FloatingSheetDragDismissWrapper(
-      onDismiss: () {
-        if (isCurrent) {
-          navigator?.maybePop();
+      onDismiss: () async {
+        if (isCurrent && navigator != null) {
+          return navigator!.maybePop();
         }
+        return false;
       },
       child: Material(
         type: MaterialType.transparency,
@@ -183,7 +249,7 @@ class FloatingGlassSheetRoute<T> extends PageRoute<T> {
 
 class _FloatingSheetDragDismissWrapper extends StatefulWidget {
   final Widget child;
-  final VoidCallback onDismiss;
+  final Future<bool> Function() onDismiss;
 
   const _FloatingSheetDragDismissWrapper({
     required this.child,
@@ -198,16 +264,22 @@ class _FloatingSheetDragDismissWrapper extends StatefulWidget {
 class _FloatingSheetDragDismissWrapperState
     extends State<_FloatingSheetDragDismissWrapper>
     with SingleTickerProviderStateMixin {
-  static const double _dismissDistanceThreshold = 100.0;
-  static const double _dismissVelocityThreshold = 500.0;
+  static const double _dismissDistanceThreshold = 92.0;
+  static const double _dismissVelocityThreshold = 520.0;
+  static const double _deliberateTopDismissOverscrollPx = 36.0;
 
   late final AnimationController _springBackCtrl;
   double _rawDragOffset = 0.0;
   double _visualOffset = 0.0;
+  double _topScrollOverscrollPx = 0.0;
+  double _bottomScrollOverscrollPx = 0.0;
+  bool _scrollStartedAtTop = false;
+  bool _scrollableDismissUnlocked = false;
   bool _dismissTriggered = false;
   bool _gestureDetectorOwnsDrag = false;
   bool _scrollDragActive = false;
-  int? _activePointer;
+  final Set<int> _activePointers = <int>{};
+  int? _trackingPointer;
   VelocityTracker? _velocityTracker;
 
   @override
@@ -217,14 +289,14 @@ class _FloatingSheetDragDismissWrapperState
       ..addListener(() {
         if (mounted) {
           setState(() {
-            _visualOffset = _springBackCtrl.value.clamp(-28.0, 600.0);
+            _visualOffset = _springBackCtrl.value.clamp(-36.0, 620.0);
           });
         }
       })
       ..addStatusListener((status) {
         if (status == AnimationStatus.completed ||
             status == AnimationStatus.dismissed) {
-          if (mounted && _visualOffset.abs() < 0.05) {
+          if (mounted && _visualOffset.abs() < 0.15) {
             setState(() {
               _visualOffset = 0.0;
               _rawDragOffset = 0.0;
@@ -240,31 +312,46 @@ class _FloatingSheetDragDismissWrapperState
     super.dispose();
   }
 
-  void _applyDragDelta(double deltaDy) {
+  void _applyDragDelta(
+    double deltaDy, {
+    bool allowUpwardFromScroll = false,
+  }) {
     if (_dismissTriggered || deltaDy == 0.0) return;
     if (_springBackCtrl.isAnimating) {
       _springBackCtrl.stop();
     }
-    _rawDragOffset = (_rawDragOffset + deltaDy).clamp(-450.0, 480.0);
+    final nextRaw = (_rawDragOffset + deltaDy).clamp(-600.0, 2400.0);
+    // If releasing a pull-down inside a mid-scrolled sheet, clamp at 0 so the
+    // inner list scrolls first unless we're explicitly at the bottom/card edge.
+    if (_scrollDragActive &&
+        _rawDragOffset > 0.0 &&
+        nextRaw < 0.0 &&
+        !allowUpwardFromScroll) {
+      _rawDragOffset = 0.0;
+    } else {
+      _rawDragOffset = nextRaw;
+    }
     final nextVisual = _rawDragOffset >= 0.0
-        ? _rawDragOffset.clamp(0.0, 480.0)
+        ? computeSheetDownwardDampedOffset(_rawDragOffset)
         : computeSheetUpwardRubberBand(_rawDragOffset);
-    if ((nextVisual - _visualOffset).abs() > 0.1) {
-      setState(() => _visualOffset = nextVisual);
+    if ((nextVisual - _visualOffset).abs() > 0.05 ||
+        (_rawDragOffset == 0.0 && _visualOffset != 0.0)) {
+      setState(() => _visualOffset = _rawDragOffset == 0.0 ? 0.0 : nextVisual);
+    }
+    if (_scrollDragActive && _rawDragOffset == 0.0) {
+      _scrollDragActive = false;
     }
   }
 
-  void _finishDrag(double velocityY) {
-    if (_dismissTriggered) return;
-    if (_rawDragOffset >= 0.0 &&
-        (_visualOffset > _dismissDistanceThreshold ||
-            (velocityY > _dismissVelocityThreshold && _visualOffset > 0.0))) {
-      _dismissTriggered = true;
-      HapticFeedback.selectionClick();
-      widget.onDismiss();
-      return;
-    }
+  void _springBackToRest(double velocityY) {
     _rawDragOffset = 0.0;
+    _scrollDragActive = false;
+    _gestureDetectorOwnsDrag = false;
+    _scrollStartedAtTop = false;
+    _scrollableDismissUnlocked = false;
+    _topScrollOverscrollPx = 0.0;
+    _bottomScrollOverscrollPx = 0.0;
+    if (!mounted) return;
     if (_visualOffset.abs() > 0.1) {
       const spring = SpringDescription(
         mass: 1.0,
@@ -279,9 +366,33 @@ class _FloatingSheetDragDismissWrapperState
           (velocityY / 1000.0).clamp(-3.0, 3.0),
         ),
       );
-    } else if (_visualOffset != 0.0) {
-      setState(() => _visualOffset = 0.0);
+    } else if (_visualOffset != 0.0 ||
+        _topScrollOverscrollPx != 0.0 ||
+        _bottomScrollOverscrollPx != 0.0) {
+      setState(() {
+        _visualOffset = 0.0;
+        _topScrollOverscrollPx = 0.0;
+        _bottomScrollOverscrollPx = 0.0;
+      });
     }
+  }
+
+  void _finishDrag(double velocityY) {
+    if (_dismissTriggered) return;
+    if (_rawDragOffset >= 0.0 &&
+        (_visualOffset > _dismissDistanceThreshold ||
+            (velocityY > _dismissVelocityThreshold && _visualOffset > 20.0))) {
+      _dismissTriggered = true;
+      HapticFeedback.selectionClick();
+      widget.onDismiss().then((didDismiss) {
+        if (!didDismiss && mounted) {
+          _dismissTriggered = false;
+          _springBackToRest(0.0);
+        }
+      });
+      return;
+    }
+    _springBackToRest(velocityY);
   }
 
   void _onGestureDragStart(DragStartDetails details) {
@@ -311,24 +422,35 @@ class _FloatingSheetDragDismissWrapperState
 
   void _onPointerDown(PointerDownEvent event) {
     if (_dismissTriggered) return;
-    if (_activePointer == null) {
-      _activePointer = event.pointer;
+    _activePointers.add(event.pointer);
+    if (_activePointers.length == 1 || _trackingPointer == null) {
+      _trackingPointer = event.pointer;
       _velocityTracker = VelocityTracker.withKind(event.kind);
       _scrollDragActive = false;
+    }
+    if (event.pointer == _trackingPointer) {
       _velocityTracker?.addPosition(event.timeStamp, event.position);
     }
   }
 
   void _onPointerMove(PointerMoveEvent event) {
-    if (event.pointer == _activePointer) {
+    if (event.pointer == _trackingPointer) {
       _velocityTracker?.addPosition(event.timeStamp, event.position);
     }
   }
 
   void _onPointerUpOrCancel(PointerEvent event) {
-    if (event.pointer != _activePointer) return;
-    final velocityY = _velocityTracker?.getVelocity().pixelsPerSecond.dy ?? 0.0;
-    _activePointer = null;
+    _activePointers.remove(event.pointer);
+    final velocityY = event.pointer == _trackingPointer
+        ? (_velocityTracker?.getVelocity().pixelsPerSecond.dy ?? 0.0)
+        : 0.0;
+    if (_activePointers.isNotEmpty) {
+      if (event.pointer == _trackingPointer) {
+        _trackingPointer = _activePointers.first;
+      }
+      return;
+    }
+    _trackingPointer = null;
     _velocityTracker = null;
     if (!_gestureDetectorOwnsDrag &&
         (_scrollDragActive || _visualOffset.abs() > 0.1)) {
@@ -336,6 +458,21 @@ class _FloatingSheetDragDismissWrapperState
       _finishDrag(velocityY);
     } else {
       _scrollDragActive = false;
+      // Failsafe: if the GestureDetector claimed drag start but lost arena or
+      // failed to fire onEnd/onCancel, ensure the sheet never stays stuck.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted ||
+            _dismissTriggered ||
+            _activePointers.isNotEmpty ||
+            _springBackCtrl.isAnimating) {
+          return;
+        }
+        if (_visualOffset.abs() > 0.1) {
+          _gestureDetectorOwnsDrag = false;
+          _scrollDragActive = false;
+          _finishDrag(velocityY);
+        }
+      });
     }
   }
 
@@ -346,45 +483,118 @@ class _FloatingSheetDragDismissWrapperState
       return false;
     }
 
+    final metrics = notification.metrics;
+    final isScrollable = metrics.maxScrollExtent > metrics.minScrollExtent + 0.5;
+
+    if (notification is ScrollStartNotification) {
+      _scrollStartedAtTop = notification.dragDetails != null &&
+          metrics.pixels <= metrics.minScrollExtent + 1.0;
+      _scrollableDismissUnlocked = false;
+      return false;
+    }
+
     if (notification is OverscrollNotification &&
         notification.dragDetails != null) {
-      if (notification.overscroll != 0.0) {
-        _scrollDragActive = true;
-        _applyDragDelta(-notification.overscroll);
+      if (!isScrollable) {
+        if (notification.overscroll < 0.0 && metrics.pixels <= 0.5) {
+          // Non-scrollable popup: pulling downward drives swipe-to-dismiss.
+          _scrollDragActive = true;
+          _applyDragDelta(-notification.overscroll);
+        } else if (notification.overscroll > 0.0 &&
+            metrics.pixels >= metrics.maxScrollExtent - 0.5) {
+          _scrollDragActive = true;
+          _applyDragDelta(
+            -notification.overscroll,
+            allowUpwardFromScroll: true,
+          );
+        }
       }
       return false;
     }
 
-    if (notification is ScrollUpdateNotification &&
-        notification.dragDetails != null) {
+    if (notification is ScrollUpdateNotification) {
       final delta = notification.scrollDelta ?? 0.0;
-      if (_scrollDragActive) {
-        if (_rawDragOffset > 0.0 && delta > 0.0) {
-          _applyDragDelta(-delta);
-        } else if (_rawDragOffset < 0.0 && delta < 0.0) {
-          _applyDragDelta(-delta);
+      if (isScrollable) {
+        final topOver =
+            (metrics.minScrollExtent - metrics.pixels).clamp(0.0, 220.0);
+        final bottomOver =
+            (metrics.pixels - metrics.maxScrollExtent).clamp(0.0, 220.0);
+
+        if ((topOver - _topScrollOverscrollPx).abs() > 0.4 ||
+            (bottomOver - _bottomScrollOverscrollPx).abs() > 0.4 ||
+            (topOver == 0.0 && _topScrollOverscrollPx != 0.0) ||
+            (bottomOver == 0.0 && _bottomScrollOverscrollPx != 0.0)) {
+          setState(() {
+            _topScrollOverscrollPx = topOver;
+            _bottomScrollOverscrollPx = bottomOver;
+          });
         }
-      } else {
-        // Fallback when an inner scrollable uses BouncingScrollPhysics.
-        if (notification.metrics.pixels < 0.0 && delta < 0.0) {
+
+        // Bottom overscroll subtle upward rubber-band stretch
+        if (bottomOver > 0.5 && notification.dragDetails != null && delta > 0.0) {
+          _scrollDragActive = true;
+          _applyDragDelta(-delta * 0.4, allowUpwardFromScroll: true);
+        } else if (_scrollableDismissUnlocked &&
+            notification.dragDetails != null &&
+            delta != 0.0) {
           _scrollDragActive = true;
           _applyDragDelta(-delta);
-        } else if (notification.metrics.pixels >
-                notification.metrics.maxScrollExtent &&
-            delta > 0.0) {
+        } else if (_scrollStartedAtTop &&
+            notification.dragDetails != null &&
+            topOver >= _deliberateTopDismissOverscrollPx &&
+            delta < 0.0) {
+          // User started at offset 0 and deliberately pulled down past threshold
+          _scrollableDismissUnlocked = true;
           _scrollDragActive = true;
           _applyDragDelta(-delta);
+        } else if (bottomOver <= 0.5 && _rawDragOffset < 0.0) {
+          _applyDragDelta(-delta, allowUpwardFromScroll: true);
+        }
+        return false;
+      }
+
+      final atBottomOverscroll =
+          metrics.pixels > metrics.maxScrollExtent + 0.5;
+      if (notification.dragDetails != null) {
+        if (_scrollDragActive) {
+          if ((_rawDragOffset != 0.0 || atBottomOverscroll) && delta != 0.0) {
+            _applyDragDelta(
+              atBottomOverscroll ? -delta * 0.4 : -delta,
+              allowUpwardFromScroll: atBottomOverscroll || _rawDragOffset <= 0.0,
+            );
+          }
+        } else if (metrics.pixels < -0.5 && delta < 0.0) {
+          _scrollDragActive = true;
+          _applyDragDelta(-delta);
+        } else if (atBottomOverscroll && delta > 0.0) {
+          _scrollDragActive = true;
+          _applyDragDelta(-delta * 0.4, allowUpwardFromScroll: true);
         }
       }
       return false;
     }
 
-    if (notification is ScrollEndNotification &&
-        _scrollDragActive &&
-        _activePointer == null) {
+    if (notification is ScrollEndNotification) {
+      final hadActive = _scrollDragActive || _visualOffset.abs() > 0.1;
+      final canDismiss = !isScrollable || _scrollableDismissUnlocked;
       _scrollDragActive = false;
-      if (_visualOffset.abs() > 0.1) {
-        _finishDrag(0.0);
+      _scrollStartedAtTop = false;
+      _scrollableDismissUnlocked = false;
+      if (_topScrollOverscrollPx != 0.0 || _bottomScrollOverscrollPx != 0.0) {
+        setState(() {
+          _topScrollOverscrollPx = 0.0;
+          _bottomScrollOverscrollPx = 0.0;
+        });
+      }
+      if (hadActive && !_gestureDetectorOwnsDrag) {
+        if (canDismiss) {
+          final endVelocity = notification.dragDetails?.primaryVelocity ??
+              _velocityTracker?.getVelocity().pixelsPerSecond.dy ??
+              0.0;
+          _finishDrag(endVelocity);
+        } else {
+          _springBackToRest(0.0);
+        }
       }
     }
     return false;
@@ -396,34 +606,52 @@ class _FloatingSheetDragDismissWrapperState
     final double translateY;
     final double scaleX;
     final double scaleY;
+    final Alignment stretchAlignment;
 
-    if (effectiveOffset >= 0.0) {
+    if (effectiveOffset > 0.0) {
       translateY = effectiveOffset;
       final uniformScale =
           (1.0 - (effectiveOffset / 1800.0)).clamp(0.92, 1.0);
       scaleX = uniformScale;
       scaleY = uniformScale;
-    } else {
+      stretchAlignment = Alignment.bottomCenter;
+    } else if (effectiveOffset < 0.0) {
       translateY = effectiveOffset * 0.45;
       scaleX = 1.0;
       scaleY = computeSheetUpwardStretchScale(effectiveOffset);
+      stretchAlignment = Alignment.bottomCenter;
+    } else if (_topScrollOverscrollPx > 0.5) {
+      final clamped = _topScrollOverscrollPx.clamp(0.0, 140.0);
+      translateY = clamped * 0.14;
+      scaleX = 1.0;
+      scaleY = 1.0 + ((clamped / (clamped + 180.0)) * 0.045);
+      stretchAlignment = Alignment.topCenter;
+    } else if (_bottomScrollOverscrollPx > 0.5) {
+      final clamped = _bottomScrollOverscrollPx.clamp(0.0, 140.0);
+      translateY = -clamped * 0.14;
+      scaleX = 1.0;
+      scaleY = 1.0 + ((clamped / (clamped + 180.0)) * 0.045);
+      stretchAlignment = Alignment.bottomCenter;
+    } else {
+      translateY = 0.0;
+      scaleX = 1.0;
+      scaleY = 1.0;
+      stretchAlignment = Alignment.bottomCenter;
     }
 
-    Widget content = ScrollConfiguration(
-      behavior: const _FloatingSheetScrollBehavior(),
-      child: widget.child,
-    );
-
-    if (translateY != 0.0 || scaleX != 1.0 || scaleY != 1.0) {
-      content = Transform.translate(
-        offset: Offset(0, translateY),
-        child: Transform(
-          alignment: Alignment.bottomCenter,
-          transform: Matrix4.diagonal3Values(scaleX, scaleY, 1.0),
-          child: content,
+    // Keep Transform nodes unconditionally mounted in the tree so transitioning
+    // between 0 and non-zero drag offsets never unmounts/resets inner Scrollables.
+    final Widget content = Transform.translate(
+      offset: Offset(0, translateY),
+      child: Transform(
+        alignment: stretchAlignment,
+        transform: Matrix4.diagonal3Values(scaleX, scaleY, 1.0),
+        child: ScrollConfiguration(
+          behavior: const _FloatingSheetScrollBehavior(),
+          child: widget.child,
         ),
-      );
-    }
+      ),
+    );
 
     return Listener(
       behavior: HitTestBehavior.translucent,
@@ -706,6 +934,89 @@ class FrostedBottomSheetSurface extends StatelessWidget {
   }
 }
 
+/// Shared top-right circular close (`X`) button for all popups and modals.
+/// Uses an exact centered glyph inside a `SizedBox` so there is zero offset.
+class PopupTopCloseButton extends StatelessWidget {
+  final VoidCallback onTap;
+  final double size;
+  final double iconSize;
+
+  const PopupTopCloseButton({
+    super.key,
+    required this.onTap,
+    this.size = 32,
+    this.iconSize = 18,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    return TactileBounce(
+      onTap: onTap,
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: scheme.onSurface.withValues(alpha: isDark ? 0.09 : 0.07),
+          ),
+          child: Center(
+            child: Icon(
+              Icons.close_rounded,
+              size: iconSize,
+              color: scheme.onSurface.withValues(alpha: 0.78),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shared bottom close action button for popups and modals when
+/// [ModalCloseButtonMode.showBottomButton] is enabled.
+class PopupBottomCloseButton extends StatelessWidget {
+  final VoidCallback onTap;
+  final Color? accentColor;
+  final String label;
+  final bool? uwuEnabled;
+
+  const PopupBottomCloseButton({
+    super.key,
+    required this.onTap,
+    this.accentColor,
+    this.label = 'Bezárás',
+    this.uwuEnabled,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final fill = accentColor ?? scheme.primary;
+    return TactileBounce(
+      onTap: onTap,
+      child: Container(
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(vertical: 13),
+        decoration: BoxDecoration(
+          color: fill,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Text(
+          uwuLabel(label, enabled: uwuEnabled),
+          style: TextStyle(
+            color: OledTheme.contrastTextFor(fill),
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Displays a sleek bottom-anchored frosted glass (or solid Material 3)
 /// inspection modal sheet with a unified circular translucent header badge,
 /// single-column hairline-divided key-value rows, clean readable body text,
@@ -731,8 +1042,10 @@ Future<void> showFrostedModal({
   UserProfilePrefs? prefs,
 }) {
   HapticFeedback.lightImpact();
-  final effectiveCloseMode =
-      closeMode ?? UserProfilePrefs.activeModalCloseMode;
+  final effectiveCloseMode = closeMode ??
+      prefs?.modalCloseMode ??
+      AppProvidersScope.maybeOf(context)?.settings.prefs.modalCloseMode ??
+      UserProfilePrefs.activeModalCloseMode;
   final resolvedSubtitle = (subtitle != null && subtitle.trim().isNotEmpty)
       ? subtitle.trim()
       : ((subtitleTimeSpan != null && subtitleTimeSpan.trim().isNotEmpty)
@@ -903,23 +1216,8 @@ Future<void> showFrostedModal({
                       ),
                       if (effectiveCloseMode.showTopX) ...[
                         const SizedBox(width: 8),
-                        TactileBounce(
+                        PopupTopCloseButton(
                           onTap: () => Navigator.of(sheetContext).pop(),
-                          child: Container(
-                            width: 32,
-                            height: 32,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: scheme.onSurface.withValues(
-                                alpha: isDark ? 0.08 : 0.06,
-                              ),
-                            ),
-                            child: Icon(
-                              Icons.close_rounded,
-                              size: 18,
-                              color: scheme.onSurface.withValues(alpha: 0.72),
-                            ),
-                          ),
                         ),
                       ],
                     ],
@@ -980,25 +1278,10 @@ Future<void> showFrostedModal({
                   ],
                   if (effectiveCloseMode.showBottomButton) ...[
                     const SizedBox(height: 18),
-                    TactileBounce(
+                    PopupBottomCloseButton(
                       onTap: () => Navigator.of(sheetContext).pop(),
-                      child: Container(
-                        alignment: Alignment.center,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        decoration: BoxDecoration(
-                          color: accentColor,
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Text(
-                          uwuLabel('Bezárás', enabled: uwuEnabled),
-                          style: TextStyle(
-                            color: OledTheme.contrastTextFor(
-                              accentColor,
-                            ),
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
+                      accentColor: accentColor,
+                      uwuEnabled: uwuEnabled,
                     ),
                   ],
                 ],
@@ -1320,6 +1603,7 @@ Future<void> showLessonInspectionModal(
   UserProfilePrefs? prefs,
   Homework? homework,
   bool? isHomeworkCompleted,
+  Omission? omission,
 }) {
   final scopeSettings =
       context.getInheritedWidgetOfExactType<AppProvidersScope>()?.settings;
@@ -1345,12 +1629,36 @@ Future<void> showLessonInspectionModal(
   final hasSub = lesson.substituteTeacher != null &&
       lesson.substituteTeacher!.trim().isNotEmpty;
 
+  final brightness = Theme.of(context).brightness;
   final scheme = Theme.of(context).colorScheme;
   final accent = isCancelled
       ? const Color(0xFFEF5350)
       : hasSub
           ? const Color(0xFFF59E0B)
           : scheme.primary;
+
+  final omissionIsLate = omission != null && OmissionsSummary.isTardiness(omission);
+  final omissionStatusLabel = omission == null
+      ? ''
+      : switch (omission.state) {
+          OmissionState.excused => 'Igazolt',
+          OmissionState.unexcused => 'Igazolatlan',
+          OmissionState.pending || OmissionState.unknown => 'Igazolandó',
+        };
+  final omissionStatusColor = omission == null
+      ? scheme.primary
+      : switch (omission.state) {
+          OmissionState.excused => OledTheme.omissionExcusedColor(brightness),
+          OmissionState.unexcused => OledTheme.omissionUnexcusedRedColor(brightness),
+          OmissionState.pending ||
+          OmissionState.unknown =>
+            OledTheme.omissionPendingOrangeColor(brightness),
+        };
+  final omissionRowValue = omission == null
+      ? ''
+      : (omissionIsLate
+          ? '${omission.lateForMin ?? 0} perc • $omissionStatusLabel'
+          : omissionStatusLabel);
 
   final rawSubject = lesson.subject?.name ?? lesson.name;
   final subjectDisplay = effectivePrefs != null
@@ -1497,6 +1805,12 @@ Future<void> showLessonInspectionModal(
                 label: 'Tanár',
                 value: effectiveTeacher,
               ),
+            if (omission != null)
+              FrostedDetailRow(
+                label: omissionIsLate ? 'Késés' : 'Hiányzás',
+                value: omissionRowValue,
+                valueColor: omissionStatusColor,
+              ),
           ]
         : [
             if (themeClean.isNotEmpty)
@@ -1530,7 +1844,513 @@ Future<void> showLessonInspectionModal(
                 valueColor:
                     isCancelled ? const Color(0xFFEF5350) : const Color(0xFFF59E0B),
               ),
+            if (omission != null)
+              FrostedDetailRow(
+                label: omissionIsLate ? 'Késés' : 'Hiányzás',
+                value: omissionRowValue,
+                valueColor: omissionStatusColor,
+              ),
           ],
     extraBottomSection: isMinimalist ? null : homeworkSection,
   );
+}
+
+/// Shared modern floating Liquid Glass calendar date picker popup.
+Future<DateTime?> showTintaDatePickerSheet({
+  required BuildContext context,
+  UserProfilePrefs? prefs,
+  required DateTime initialDate,
+  DateTime? today,
+  required DateTime firstDate,
+  required DateTime lastDate,
+}) {
+  final effectivePrefs = prefs ??
+      AppProvidersScope.maybeOf(context)?.settings.prefs ??
+      const UserProfilePrefs();
+  final effectiveToday = today ?? DateUtils.dateOnly(DateTime.now());
+  return showFloatingGlassSheet<DateTime>(
+    context: context,
+    prefs: effectivePrefs,
+    builder: (sheetCtx) {
+      final bottomInset = MediaQuery.viewInsetsOf(sheetCtx).bottom;
+      return AnimatedPadding(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+        padding: EdgeInsets.only(bottom: bottomInset),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 440,
+            maxHeight: (MediaQuery.sizeOf(sheetCtx).height - bottomInset) * 0.86,
+          ),
+          child: FrostedBottomSheetSurface(
+            prefs: effectivePrefs,
+            showDragHandle: true,
+            padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+            child: SingleChildScrollView(
+              physics: const FloatingSheetScrollPhysics(
+                parent: AlwaysScrollableScrollPhysics(),
+              ),
+              child: _TintaDatePickerContent(
+                initialDate: initialDate,
+                today: effectiveToday,
+                firstDate: firstDate,
+                lastDate: lastDate,
+                prefs: effectivePrefs,
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _TintaDatePickerContent extends StatefulWidget {
+  final DateTime initialDate;
+  final DateTime today;
+  final DateTime firstDate;
+  final DateTime lastDate;
+  final UserProfilePrefs prefs;
+
+  const _TintaDatePickerContent({
+    required this.initialDate,
+    required this.today,
+    required this.firstDate,
+    required this.lastDate,
+    required this.prefs,
+  });
+
+  @override
+  State<_TintaDatePickerContent> createState() =>
+      _TintaDatePickerContentState();
+}
+
+class _TintaDatePickerContentState extends State<_TintaDatePickerContent> {
+  static const List<String> _monthNames = [
+    'január',
+    'február',
+    'március',
+    'április',
+    'május',
+    'június',
+    'július',
+    'augusztus',
+    'szeptember',
+    'október',
+    'november',
+    'december',
+  ];
+
+  static const List<String> _weekdays = [
+    'H',
+    'K',
+    'Sze',
+    'Cs',
+    'P',
+    'Szo',
+    'V',
+  ];
+
+  late DateTime _visibleMonth;
+  int _monthDirection = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _visibleMonth = DateTime(widget.initialDate.year, widget.initialDate.month);
+  }
+
+  bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  bool get _canGoPrev {
+    final prev = DateTime(_visibleMonth.year, _visibleMonth.month - 1);
+    final minMonth = DateTime(widget.firstDate.year, widget.firstDate.month);
+    return !prev.isBefore(minMonth);
+  }
+
+  bool get _canGoNext {
+    final next = DateTime(_visibleMonth.year, _visibleMonth.month + 1);
+    final maxMonth = DateTime(widget.lastDate.year, widget.lastDate.month);
+    return !next.isAfter(maxMonth);
+  }
+
+  void _stepMonth(int delta) {
+    final target = DateTime(_visibleMonth.year, _visibleMonth.month + delta);
+    final minMonth = DateTime(widget.firstDate.year, widget.firstDate.month);
+    final maxMonth = DateTime(widget.lastDate.year, widget.lastDate.month);
+    if (target.isBefore(minMonth) || target.isAfter(maxMonth)) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _monthDirection = delta;
+      _visibleMonth = target;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final closeMode = widget.prefs.modalCloseMode;
+    final selected = DateTime(
+      widget.initialDate.year,
+      widget.initialDate.month,
+      widget.initialDate.day,
+    );
+    final selectedMonday = DateTime(
+      selected.year,
+      selected.month,
+      selected.day - (selected.weekday - 1),
+    );
+    final selectedSunday = DateTime(
+      selectedMonday.year,
+      selectedMonday.month,
+      selectedMonday.day + 6,
+    );
+
+    final firstOfMonth = DateTime(_visibleMonth.year, _visibleMonth.month, 1);
+    final leadingDays = firstOfMonth.weekday - 1;
+    final daysInMonth =
+        DateUtils.getDaysInMonth(_visibleMonth.year, _visibleMonth.month);
+    final rowCount = ((leadingDays + daysInMonth + 6) ~/ 7);
+    final gridStart = DateTime(
+      firstOfMonth.year,
+      firstOfMonth.month,
+      1 - leadingDays,
+    );
+
+    final monthLabel =
+        '${_visibleMonth.year}. ${_monthNames[_visibleMonth.month - 1]}';
+    final isViewingToday = _sameDay(selected, widget.today);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            _buildNavBtn(
+              scheme: scheme,
+              isDark: isDark,
+              icon: Icons.chevron_left_rounded,
+              tooltip: 'Előző hónap',
+              enabled: _canGoPrev,
+              onTap: () => _stepMonth(-1),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 210),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  transitionBuilder: (child, anim) {
+                    final offset = Tween<Offset>(
+                      begin: Offset(_monthDirection >= 0 ? 0.12 : -0.12, 0),
+                      end: Offset.zero,
+                    ).animate(anim);
+                    return FadeTransition(
+                      opacity: anim,
+                      child: SlideTransition(position: offset, child: child),
+                    );
+                  },
+                  child: FittedBox(
+                    key: ValueKey<String>(monthLabel),
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      uwu(monthLabel, enabled: widget.prefs.uwuModeEnabled),
+                      maxLines: 1,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w900,
+                        color: scheme.onSurface,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            _buildNavBtn(
+              scheme: scheme,
+              isDark: isDark,
+              icon: Icons.chevron_right_rounded,
+              tooltip: 'Következő hónap',
+              enabled: _canGoNext,
+              onTap: () => _stepMonth(1),
+            ),
+            const SizedBox(width: 6),
+            TactileBounce(
+              pressedScale: 0.94,
+              onTap: () {
+                HapticFeedback.lightImpact();
+                Navigator.of(context).pop(widget.today);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(
+                    alpha: isViewingToday ? 0.10 : 0.18,
+                  ),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: scheme.primary.withValues(
+                      alpha: isViewingToday ? 0.35 : 0.65,
+                    ),
+                  ),
+                ),
+                child: Text(
+                  'Ma',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    color: scheme.primary,
+                  ),
+                ),
+              ),
+            ),
+            if (closeMode.showTopX) ...[
+              const SizedBox(width: 6),
+              PopupTopCloseButton(
+                onTap: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 14),
+        Row(
+          children: List.generate(7, (col) {
+            final isWeekend = col >= 5;
+            return Expanded(
+              child: Center(
+                child: Text(
+                  _weekdays[col],
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: scheme.onSurface.withValues(
+                      alpha: isWeekend ? 0.42 : 0.66,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 6),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          child: Column(
+            key: ValueKey<String>(
+              'grid-${_visibleMonth.year}-${_visibleMonth.month}',
+            ),
+            mainAxisSize: MainAxisSize.min,
+            children: List.generate(rowCount, (row) {
+              final rowStart = DateTime(
+                gridStart.year,
+                gridStart.month,
+                gridStart.day + (row * 7),
+              );
+              final rowEnd = DateTime(
+                rowStart.year,
+                rowStart.month,
+                rowStart.day + 6,
+              );
+              final isSelectedWeekRow = !rowEnd.isBefore(selectedMonday) &&
+                  !rowStart.isAfter(selectedSunday);
+
+              final weekRow = Row(
+                children: List.generate(7, (col) {
+                  final day = DateTime(
+                    rowStart.year,
+                    rowStart.month,
+                    rowStart.day + col,
+                  );
+                  final inMonth = day.month == _visibleMonth.month &&
+                      day.year == _visibleMonth.year;
+                  final inBounds = !day.isBefore(widget.firstDate) &&
+                      !day.isAfter(widget.lastDate);
+                  final isSelected = _sameDay(day, selected);
+                  final isToday = _sameDay(day, widget.today);
+                  final isWeekend = col >= 5;
+
+                  return Expanded(
+                    child: _buildDayCell(
+                      scheme: scheme,
+                      isDark: isDark,
+                      day: day,
+                      inMonth: inMonth,
+                      inBounds: inBounds,
+                      isSelected: isSelected,
+                      isToday: isToday,
+                      isWeekend: isWeekend,
+                    ),
+                  );
+                }),
+              );
+
+              return Container(
+                margin: const EdgeInsets.symmetric(vertical: 1.5),
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                decoration: isSelectedWeekRow
+                    ? BoxDecoration(
+                        color: scheme.primary.withValues(
+                          alpha: isDark ? 0.14 : 0.10,
+                        ),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: scheme.primary.withValues(alpha: 0.25),
+                          width: 1.0,
+                        ),
+                      )
+                    : null,
+                child: weekRow,
+              );
+            }),
+          ),
+        ),
+        if (closeMode.showBottomButton) ...[
+          const SizedBox(height: 14),
+          PopupBottomCloseButton(
+            onTap: () => Navigator.of(context).pop(),
+            label: 'Mégse',
+            uwuEnabled: widget.prefs.uwuModeEnabled,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildNavBtn({
+    required ColorScheme scheme,
+    required bool isDark,
+    required IconData icon,
+    required String tooltip,
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: TactileBounce(
+        pressedScale: 0.92,
+        onTap: enabled ? onTap : null,
+        child: Container(
+          width: 34,
+          height: 34,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: scheme.onSurface.withValues(alpha: isDark ? 0.08 : 0.05),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: scheme.outlineVariant.withValues(alpha: 0.45),
+            ),
+          ),
+          child: Icon(
+            icon,
+            size: 20,
+            color: enabled
+                ? scheme.onSurface
+                : scheme.onSurface.withValues(alpha: 0.25),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDayCell({
+    required ColorScheme scheme,
+    required bool isDark,
+    required DateTime day,
+    required bool inMonth,
+    required bool inBounds,
+    required bool isSelected,
+    required bool isToday,
+    required bool isWeekend,
+  }) {
+    final textColor = !inBounds
+        ? scheme.onSurface.withValues(alpha: 0.18)
+        : isSelected
+            ? scheme.onPrimary
+            : isToday
+                ? scheme.primary
+                : inMonth
+                    ? scheme.onSurface.withValues(alpha: isWeekend ? 0.65 : 1.0)
+                    : scheme.onSurface.withValues(alpha: 0.28);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: inBounds
+          ? () {
+              HapticFeedback.selectionClick();
+              Navigator.of(context).pop(day);
+            }
+          : null,
+      child: SizedBox(
+        height: 36,
+        child: Center(
+          child: Container(
+            width: 32,
+            height: 32,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isSelected
+                  ? scheme.primary
+                  : (isToday
+                      ? scheme.primary.withValues(alpha: isDark ? 0.14 : 0.10)
+                      : Colors.transparent),
+              border: !isSelected && isToday
+                  ? Border.all(color: scheme.primary, width: 1.5)
+                  : null,
+            ),
+            child: Text(
+              '${day.day}',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: isSelected || isToday
+                    ? FontWeight.w900
+                    : (inMonth ? FontWeight.w700 : FontWeight.w500),
+                color: textColor,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Owns local modal disposables ([TextEditingController], [ValueNotifier],
+/// etc.) so they are only disposed after the enclosing route's exit animation
+/// finishes and unmounts the sheet widget tree.
+class SheetDisposableScope extends StatefulWidget {
+  final List<ChangeNotifier> disposables;
+  final WidgetBuilder builder;
+
+  const SheetDisposableScope({
+    super.key,
+    required this.disposables,
+    required this.builder,
+  });
+
+  @override
+  State<SheetDisposableScope> createState() => _SheetDisposableScopeState();
+}
+
+class _SheetDisposableScopeState extends State<SheetDisposableScope> {
+  @override
+  void dispose() {
+    for (final d in widget.disposables) {
+      d.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context);
 }

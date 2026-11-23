@@ -107,8 +107,12 @@ void main() {
       );
       expect(find.text('Áttetszőség'), findsNothing);
       expect(find.text('Elmosás erőssége'), findsNothing);
-      expect(find.text('Háttér effektus / atmoszféra:'), findsNothing);
+      expect(
+        find.byKey(const ValueKey<String>('appearance-backdrop-effect-row')),
+        findsNothing,
+      );
       expect(find.text('Liquid Glass Mód (Fizikai optika)'), findsNothing);
+      expect(find.text('Élő megjelenési előnézet'), findsNothing);
       expect(theme.liquidGlassEnabled, isFalse);
 
       await tester.tap(find.text('Liquid Glass'));
@@ -118,8 +122,12 @@ void main() {
       expect(theme.liquidGlassEnabled, isTrue);
       expect(find.text('Áttetszőség'), findsOneWidget);
       expect(find.text('Elmosás erőssége'), findsOneWidget);
-      expect(find.text('Háttér effektus / atmoszféra:'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('appearance-backdrop-effect-row')),
+        findsOneWidget,
+      );
       expect(find.text('Liquid Glass Mód (Fizikai optika)'), findsOneWidget);
+      expect(find.text('Élő megjelenési előnézet'), findsNothing);
     });
 
     testWidgets('SoftGlassCard, LiquidGlassSurface, and ChristmasAndBackgroundOverlay render opaque M3 surfaces when Liquid Glass is OFF', (tester) async {
@@ -629,7 +637,10 @@ void main() {
 
         expect(find.text('Áttetszőség'), findsOneWidget);
         expect(find.text('Elmosás erőssége'), findsOneWidget);
-        expect(find.text('Háttér effektus / atmoszféra:'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey<String>('appearance-backdrop-effect-row')),
+          findsOneWidget,
+        );
 
         // Select studio preset 'Nordic Slate' while Liquid Glass sub-options are expanded
         final outerScroll = find
@@ -637,16 +648,23 @@ void main() {
               (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
             )
             .last;
-        final slateChip = find.text('Nordic Slate');
+        final effectRow = find.byKey(
+          const ValueKey<String>('appearance-backdrop-effect-row'),
+        );
         await tester.scrollUntilVisible(
-          slateChip,
+          effectRow,
           160,
           scrollable: outerScroll,
         );
-        await tester.ensureVisible(slateChip);
+        await tester.ensureVisible(effectRow);
         await tester.pumpAndSettle();
-        await tester.tap(slateChip);
-        await tester.pump();
+        await tester.tap(effectRow);
+        await tester.pumpAndSettle();
+
+        final slateOption = find.text('Nordic Slate');
+        await tester.ensureVisible(slateOption);
+        await tester.tap(slateOption);
+        await tester.pumpAndSettle();
 
         expect(settings.prefs.backgroundPreset, 'nordic_slate');
         expect(theme.backgroundPreset, 'nordic_slate');
@@ -674,7 +692,10 @@ void main() {
         expect(theme.liquidGlassEnabled, isFalse);
         expect(find.text('Áttetszőség'), findsNothing);
         expect(find.text('Elmosás erőssége'), findsNothing);
-        expect(find.text('Háttér effektus / atmoszféra:'), findsNothing);
+        expect(
+          find.byKey(const ValueKey<String>('appearance-backdrop-effect-row')),
+          findsNothing,
+        );
         expect(find.text('Liquid Glass Mód (Fizikai optika)'), findsNothing);
       },
     );

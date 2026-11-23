@@ -15,7 +15,7 @@ import 'glass_card.dart';
 import 'tinta_toast.dart';
 
 /// Opens the privacy-masked in-app bug report bottom sheet targeting
-/// `https://ticket.mlnlbrt.hu/api/tickets`.
+/// `https://ticket.tintanaplo.hu/api/tickets`.
 Future<void> showBugReportSheet(
   BuildContext context, {
   Student? student,
@@ -72,8 +72,7 @@ class _BugReportModalSheetState extends State<_BugReportModalSheet> {
   final ImagePicker _picker = ImagePicker();
 
   String _selectedCategory = BugReportService.categories.first;
-  String _appVersion =
-      '${GitHubUpdaterService.fallbackAppVersion}+${GitHubUpdaterService.fallbackBuildNumber}';
+  String _appVersion = GitHubUpdaterService.fallbackAppVersion;
   BugAttachment? _attachment;
   String? _attachmentError;
   String? _validationError;
@@ -93,7 +92,10 @@ class _BugReportModalSheetState extends State<_BugReportModalSheet> {
           ? await widget.appVersionLoader!()
           : (await GitHubUpdaterService.getAppVersionInfo()).$1;
       if (mounted && loaded.trim().isNotEmpty) {
-        setState(() => _appVersion = loaded.trim());
+        setState(
+          () => _appVersion =
+              GitHubUpdaterService.formatDisplayVersion(loaded.trim()),
+        );
       }
     } catch (_) {}
   }
@@ -298,13 +300,14 @@ class _BugReportModalSheetState extends State<_BugReportModalSheet> {
                         ],
                       ),
                     ),
-                    IconButton(
-                      tooltip: 'Bezárás',
-                      onPressed: _isSubmitting
-                          ? null
-                          : () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
+                    if (widget.prefs.modalCloseMode.showTopX) ...[
+                      const SizedBox(width: 8),
+                      PopupTopCloseButton(
+                        onTap: _isSubmitting
+                            ? () {}
+                            : () => Navigator.of(context).pop(),
+                      ),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -548,6 +551,15 @@ class _BugReportModalSheetState extends State<_BugReportModalSheet> {
                     style: const TextStyle(fontWeight: FontWeight.w900),
                   ),
                 ),
+                if (widget.prefs.modalCloseMode.showBottomButton) ...[
+                  const SizedBox(height: 10),
+                  PopupBottomCloseButton(
+                    onTap: _isSubmitting
+                        ? () {}
+                        : () => Navigator.of(context).pop(),
+                    uwuEnabled: widget.prefs.uwuModeEnabled,
+                  ),
+                ],
               ],
             ),
           ),

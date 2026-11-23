@@ -232,17 +232,20 @@ void main() {
         await tester.tap(find.byType(ProfileTopBarAvatar));
         await tester.pumpAndSettle();
 
-        // Hint 'Alexa' must be completely removed
-        expect(find.text('Alexa'), findsNothing);
-        final nickField = tester.widget<TextField>(find.byType(TextField));
-        expect(nickField.decoration?.hintText, isNull);
-        expect(nickField.decoration?.labelText, 'Becenév szerkesztése');
-
-        // Floating detached card with 12px outer horizontal margins & 26px topRadius
+        // Profile modal uses clean tap-to-edit interactions (no inline nickname TextField clutter)
         final surfaceFinder = find.byKey(
           const ValueKey<String>('profile-floating-sheet-surface'),
         );
         expect(surfaceFinder, findsOneWidget);
+        expect(
+          find.descendant(
+            of: surfaceFinder,
+            matching: find.byType(TextField),
+          ),
+          findsNothing,
+        );
+        expect(find.text('Alexa'), findsNothing);
+
         final surfaceWidget =
             tester.widget<FrostedBottomSheetSurface>(surfaceFinder);
         expect(surfaceWidget.topRadius, 26.0);
@@ -277,7 +280,27 @@ void main() {
         );
         expect(sheetHero.createRectTween, createLinearHeroRectTween);
 
-        // Dismiss via top scrim tap
+        // Tapping profile avatar opens modern photo action popup (without Delete when no photo set)
+        await tester.tap(find.byKey(const ValueKey<String>('profile-avatar-tap')));
+        await tester.pumpAndSettle();
+        expect(find.text('Új profilkép választása'), findsOneWidget);
+        expect(find.text('Jelenlegi kép törlése'), findsNothing);
+        await tester.tapAt(const Offset(20, 80));
+        await tester.pumpAndSettle();
+
+        // Tapping user name opens modern nickname popup (and no Alexa hint exists)
+        await tester.tap(find.byKey(const ValueKey<String>('profile-name-tap')));
+        await tester.pumpAndSettle();
+        expect(find.text('Alexa'), findsNothing);
+        final nickField = tester.widget<TextField>(
+          find.byKey(const ValueKey<String>('profile-nickname-input')),
+        );
+        expect(nickField.decoration?.labelText, 'Megjelenített név / Becenév');
+        expect(nickField.decoration?.hintText, isNot(contains('Alexa')));
+        await tester.tapAt(const Offset(20, 80));
+        await tester.pumpAndSettle();
+
+        // Dismiss main profile sheet via top scrim tap
         await tester.tapAt(const Offset(20, 80));
         await tester.pumpAndSettle();
         expect(surfaceFinder, findsNothing);

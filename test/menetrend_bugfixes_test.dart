@@ -311,8 +311,7 @@ void main() {
         expect(find.textContaining('08:02'), findsNothing);
         expect(find.textContaining('14:02'), findsNothing);
 
-        await tester.ensureVisible(find.text('Bezárás'));
-        await tester.tap(find.text('Bezárás'));
+        await tester.tap(find.byIcon(Icons.close_rounded));
         await tester.pumpAndSettle();
       }
     });
@@ -639,10 +638,9 @@ void main() {
         expect(tester.takeException(), isNull);
       }
       await tester.pumpAndSettle();
-      expect(find.text('Bezárás'), findsOneWidget);
+      expect(find.byIcon(Icons.close_rounded), findsOneWidget);
 
-      await tester.ensureVisible(find.text('Bezárás'));
-      await tester.tap(find.text('Bezárás'));
+      await tester.tap(find.byIcon(Icons.close_rounded));
       // Pump frame-by-frame through the Hero pop flight to catch any transient overflow
       for (var i = 0; i < 30; i++) {
         await tester.pump(const Duration(milliseconds: 16));
@@ -1598,8 +1596,7 @@ void main() {
       await tester.tap(find.byType(MenetrendHeroCard));
       await tester.pumpAndSettle();
       expect(find.textContaining('S152'), findsNothing);
-      await tester.ensureVisible(find.text('Bezárás'));
-      await tester.tap(find.text('Bezárás'));
+      await tester.tap(find.byIcon(Icons.close_rounded));
       await tester.pumpAndSettle();
 
       // At firstLessonStart (08:00) or on a day with no lessons -> MenetrendHeroCard hidden (SizedBox.shrink)

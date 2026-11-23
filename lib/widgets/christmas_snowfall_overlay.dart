@@ -1071,7 +1071,7 @@ class ChristmasSnowCap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!enabled) return child;
+    if (!enabled || UserProfilePrefs.activeMinimalistModeEnabled) return child;
     return Stack(
       clipBehavior: Clip.none,
       children: [

@@ -332,6 +332,24 @@ class OledTheme {
           ? base.withValues(alpha: 0.28)
           : semanticForeground(base, brightness).withValues(alpha: 0.26);
 
+  /// Green foreground for excused (`Igazolt`) absences & late arrivals.
+  static Color omissionExcusedColor(Brightness brightness) =>
+      brightness == Brightness.dark
+          ? const Color(0xFF10B981)
+          : const Color(0xFF047857);
+
+  /// Distinct orange foreground for unexcused / pending-excuse (`Igazolandó`) items.
+  static Color omissionPendingOrangeColor(Brightness brightness) =>
+      brightness == Brightness.dark
+          ? const Color(0xFFF97316)
+          : const Color(0xFFEA580C);
+
+  /// Red foreground for finalized unexcused (`Igazolatlan`) items.
+  static Color omissionUnexcusedRedColor(Brightness brightness) =>
+      brightness == Brightness.dark
+          ? const Color(0xFFEF4444)
+          : const Color(0xFFDC2626);
+
   /// System status bar and navigation bar icon brightness matching [brightness].
   static SystemUiOverlayStyle systemOverlayStyleForBrightness(
     Brightness brightness,
@@ -576,6 +594,7 @@ class OledTheme {
         skin.enabled ? (skin.surface ?? elevatedBg) : elevatedBg;
     final Color resolvedBorderColor =
         skin.enabled ? (skin.borderColor ?? borderColor) : borderColor;
+    final bool isMinimalist = prefs.minimalistModeEnabled;
     final BorderRadius effectiveCardRadius =
         skin.enabled && skin.cardRadius != null
             ? BorderRadius.circular(skin.cardRadius!)
@@ -604,6 +623,8 @@ class OledTheme {
 
     final rawTheme = ThemeData(
       useMaterial3: true,
+      visualDensity:
+          isMinimalist ? VisualDensity.compact : VisualDensity.standard,
       brightness: brightness,
       fontFamily: defaultFontFamily,
       colorScheme: baseScheme,

@@ -403,7 +403,7 @@ void main() {
       expect(bigVideo.errorMessage, contains('Maximum 25 MB'));
     });
 
-    test('submitTicket posts multipart payload to ticket.mlnlbrt.hu/api/tickets',
+    test('submitTicket posts multipart payload to ticket.tintanaplo.hu/api/tickets and retries transient 502/503',
         () async {
       late http.BaseRequest capturedRequest;
       late String capturedBody;
@@ -444,8 +444,9 @@ void main() {
       expect(res.success, isTrue, reason: res.errorMessage);
       expect(
         capturedRequest.url.toString(),
-        'https://ticket.mlnlbrt.hu/api/tickets',
+        'https://ticket.tintanaplo.hu/api/tickets',
       );
+      expect(capturedRequest.headers['Accept'], 'application/json');
       expect(capturedRequest.method, 'POST');
       expect(capturedBody, contains('name="reporter"'));
       expect(capturedBody, contains('A. Milán'));
@@ -453,6 +454,36 @@ void main() {
       expect(capturedBody, contains('UI / Megjelenés'));
       expect(capturedBody, contains('Gomb igazítás hiba az órarendben'));
       expect(capturedBody, contains('name="attachment"; filename="screen.png"'));
+
+      // Also verify transient 502/503 gateway errors retry up to 3 attempts
+      var attempts = 0;
+      final retryClient = MockClient.streaming((request, bodyStream) async {
+        attempts++;
+        await bodyStream.drain<void>();
+        if (attempts == 1) {
+          return http.StreamedResponse(const Stream.empty(), 502);
+        }
+        if (attempts == 2) {
+          return http.StreamedResponse(const Stream.empty(), 503);
+        }
+        return http.StreamedResponse(
+          Stream.value(utf8.encode('{"ok":true}')),
+          201,
+        );
+      });
+      final retryRes = await BugReportService.submitTicket(
+        reporter: 'A. Milán',
+        category: 'Hiba / Bug',
+        description: 'Transient gateway retry test',
+        appVersion: '3.0.2+21',
+        osVersion: 'Android (14)',
+        themeMode: 'OLED Fekete',
+        retryDelay: Duration.zero,
+        client: retryClient,
+      );
+      expect(retryRes.success, isTrue, reason: retryRes.errorMessage);
+      expect(retryRes.statusCode, 201);
+      expect(attempts, 3);
 
       // Also verify progress-tracked multipart stream forwards chunks & reaches 1.0
       double maxProgress = 0.0;
@@ -577,9 +608,9 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
 
         expect(find.text('Hibajelentés küldése'), findsOneWidget);
-        expect(find.textContaining('ticket.mlnlbrt.hu'), findsNothing);
+        expect(find.textContaining('ticket.tintanaplo.hu'), findsNothing);
         expect(find.text('Beküldő: N. Anna Eszter'), findsOneWidget);
-        expect(find.text('Verzió: 3.0.0+19'), findsOneWidget);
+        expect(find.text('Verzió: 3.0'), findsOneWidget);
 
         await tester.tap(find.text('Képernyőkép csatolása'));
         await tester.runAsync(
@@ -605,7 +636,7 @@ void main() {
         expect(requestDone.isCompleted, isTrue);
         await tester.pump(const Duration(milliseconds: 350));
 
-        expect(sentReq.url.toString(), 'https://ticket.mlnlbrt.hu/api/tickets');
+        expect(sentReq.url.toString(), 'https://ticket.tintanaplo.hu/api/tickets');
         expect(
           find.text('Köszönjük! A hibajelentés sikeresen elküldve.'),
           findsOneWidget,
@@ -1274,18 +1305,25 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(find.text('Adatvédelmi tájékoztató'), findsOneWidget);
+        expect(find.text('Licenc: CC BY-NC-SA 4.0'), findsOneWidget);
         expect(find.text('Nyílt forráskódú licencek'), findsOneWidget);
 
+        await tester.ensureVisible(find.text('Adatvédelmi tájékoztató'));
         await tester.tap(find.text('Adatvédelmi tájékoztató'));
         await tester.pumpAndSettle();
         expect(find.text('Adatvédelem és jogi nyilatkozat'), findsNWidgets(2));
         expect(find.text('Nem hivatalos kliens'), findsOneWidget);
+        expect(find.text('Licenc (CC BY-NC-SA 4.0)'), findsOneWidget);
         expect(find.text('Adatkezelés & Biztonság'), findsOneWidget);
         expect(find.text('Hibajelentések'), findsOneWidget);
-        await tester.tap(find.text('Rendben'));
+        expect(find.text('Opcionális integrációk'), findsOneWidget);
+        expect(find.text('Felhasználói kontroll és adattörlés'), findsOneWidget);
+        expect(find.textContaining('ticket.tintanaplo.hu'), findsOneWidget);
+        await tester.tap(find.byIcon(Icons.close_rounded));
         await tester.pumpAndSettle();
         expect(find.text('Adatvédelem és jogi nyilatkozat'), findsOneWidget);
 
+        await tester.ensureVisible(find.text('Nyílt forráskódú licencek'));
         await tester.tap(find.text('Nyílt forráskódú licencek'));
         await tester.pumpAndSettle();
         expect(find.byType(LicensePage), findsOneWidget);
@@ -1818,7 +1856,7 @@ void main() {
         expect(find.text('Dátum'), findsOneWidget);
         expect(find.text('2026. 11. 20. 09:36'), findsOneWidget);
 
-        await tester.tap(find.text('Bezárás'));
+        await tester.tap(find.byIcon(Icons.close_rounded));
         await tester.pumpAndSettle();
 
         // 2. Homework modal: empty Tanár auto-hidden, readable body text without Feladat leírása box

@@ -405,15 +405,45 @@ void main() {
       GitHubUpdaterService.latestReleaseApiUrl,
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest',
     );
-    expect(GitHubUpdaterService.fallbackAppVersion, '3.0.2');
-    expect(GitHubUpdaterService.fallbackBuildNumber, '5000');
+    expect(GitHubUpdaterService.fallbackAppVersion, '3.1');
+    expect(GitHubUpdaterService.fallbackBuildNumber, '7002');
     expect(
       GitHubUpdaterService.defaultApkFileName,
-      'tinta-naplo-android-v3.0.2-arm64-v8a.apk',
+      'tinta-naplo-android-v3.1-arm64-v8a.apk',
     );
     expect(
-      GitHubUpdaterService.apkFileNameForTag('v3.0.2'),
-      'tinta-naplo-android-v3.0.2-arm64-v8a.apk',
+      GitHubUpdaterService.apkFileNameForTag('v3.1'),
+      'tinta-naplo-android-v3.1-arm64-v8a.apk',
+    );
+    expect(GitHubUpdaterService.formatDisplayVersion('3.1.0'), '3.1');
+    expect(GitHubUpdaterService.formatDisplayVersion('3.1'), '3.1');
+    expect(GitHubUpdaterService.formatDisplayVersion('3.1.1'), '3.1.1');
+    expect(GitHubUpdaterService.formatDisplayTag('v3.1.0'), 'v3.1');
+    expect(GitHubUpdaterService.formatDisplayTag('3.1.0'), 'v3.1');
+    expect(GitHubUpdaterService.formatDisplayTag('v3.1.2'), 'v3.1.2');
+    expect(
+      GitHubUpdaterService.isRemoteVersionNewer('3.0.2', 'v3.1'),
+      isTrue,
+    );
+    expect(
+      GitHubUpdaterService.isRemoteVersionNewer('3.1', 'v3.1.0'),
+      isFalse,
+    );
+    expect(
+      GitHubUpdaterService.isRemoteVersionNewer('3.1.0', 'v3.1'),
+      isFalse,
+    );
+    expect(
+      GitHubUpdaterService.isRemoteVersionNewer('3.1', 'v3.1.1'),
+      isTrue,
+    );
+    expect(
+      GitHubUpdaterService.isRemoteVersionNewer('3.1', 'v3.2'),
+      isTrue,
+    );
+    expect(
+      GitHubUpdaterService.isRemoteVersionNewer('3.1', 'v3.0.9'),
+      isFalse,
     );
     expect(
       GitHubUpdaterService.isRemoteVersionNewer('3.0.1', 'v3.0.2'),

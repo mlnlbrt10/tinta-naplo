@@ -43,8 +43,10 @@ open class MainActivity : FlutterActivity() {
         private const val CALENDAR_CHANNEL_NAME = "tinta_naplo/calendar_sync"
         private const val WEAR_SYNC_CHANNEL_NAME = "hu.mlnlbrt.tintanaplo/wear_sync"
         private const val HOME_WIDGET_CHANNEL_NAME = "hu.mlnlbrt.tintanaplo/home_widget"
+        private const val NOTIFICATIONS_CHANNEL_NAME = "hu.mlnlbrt.tintanaplo/notifications"
         private const val CALENDAR_PERMISSION_REQUEST_CODE = 4208
         private const val LIVE_ACTIVITY_PERMISSION_REQUEST_CODE = 4209
+        private const val KRETA_NOTIFICATIONS_PERMISSION_REQUEST_CODE = 4210
 
         const val EXTRA_WEAR_AUTH_REQUEST = "extra_wear_auth_request"
 
@@ -231,6 +233,7 @@ open class MainActivity : FlutterActivity() {
     private var wearSyncChannel: MethodChannel? = null
     private var homeWidgetChannel: MethodChannel? = null
     private var pendingLiveActivityPermissionResult: MethodChannel.Result? = null
+    private var pendingKretaNotificationPermissionResult: MethodChannel.Result? = null
     private var pendingOpenTimetableTab: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -281,6 +284,7 @@ open class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         ensureNotificationChannel(applicationContext)
+        KretaNotificationDispatcher.ensureChannel(applicationContext)
         TintaLiveActivityManager.ensureChannel(applicationContext)
 
         val iconHandler = MethodChannel.MethodCallHandler { call, result ->
@@ -350,6 +354,73 @@ open class MainActivity : FlutterActivity() {
         homeWidgetChannel = widgetChannel
         widgetChannel.setMethodCallHandler { call, result ->
             handleHomeWidgetMethodCall(call, result)
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            NOTIFICATIONS_CHANNEL_NAME,
+        ).setMethodCallHandler { call, result ->
+            handleNotificationsMethodCall(call, result)
+        }
+    }
+
+    private fun handleNotificationsMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "hasNotificationPermissions" -> {
+                result.success(KretaNotificationDispatcher.hasNotificationPermission(this))
+            }
+            "requestNotificationPermissions" -> {
+                if (KretaNotificationDispatcher.hasNotificationPermission(this)) {
+                    result.success(true)
+                    return
+                }
+                if (pendingKretaNotificationPermissionResult != null) {
+                    result.success(false)
+                    return
+                }
+                pendingKretaNotificationPermissionResult = result
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    ActivityCompat.requestPermissions(
+                        this,
+                        arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                        KRETA_NOTIFICATIONS_PERMISSION_REQUEST_CODE,
+                    )
+                } else {
+                    pendingKretaNotificationPermissionResult = null
+                    result.success(true)
+                }
+            }
+            "showNotification" -> {
+                val args = call.arguments as? Map<*, *>
+                val notificationId = (args?.get("notificationId") as? Number)?.toInt() ?: 8100
+                val category = args?.get("category")?.toString().orEmpty()
+                val title = args?.get("title")?.toString() ?: "Tinta Napló"
+                val body = args?.get("body")?.toString().orEmpty()
+                KretaNotificationDispatcher.showNotification(
+                    applicationContext,
+                    notificationId,
+                    category,
+                    title,
+                    body,
+                )
+                result.success(true)
+            }
+            "configureBackgroundSync" -> {
+                val args = call.arguments as? Map<*, *>
+                val enabled = args?.get("enabled") as? Boolean ?: true
+                val intervalMinutes = (args?.get("intervalMinutes") as? Number)?.toInt() ?: 15
+                KretaNotificationDispatcher.schedulePeriodicSync(
+                    applicationContext,
+                    enabled,
+                    intervalMinutes,
+                )
+                result.success(true)
+            }
+            "triggerImmediateSync" -> {
+                KretaNotificationDispatcher.enqueueImmediateSync(applicationContext)
+                result.success(true)
+            }
+            else -> result.notImplemented()
         }
     }
 
@@ -871,6 +942,7 @@ open class MainActivity : FlutterActivity() {
         homeWidgetChannel = null
         pendingCalendarPermissionResult = null
         pendingLiveActivityPermissionResult = null
+        pendingKretaNotificationPermissionResult = null
         calendarExecutor.shutdownNow()
         super.onDestroy()
     }
@@ -903,6 +975,10 @@ open class MainActivity : FlutterActivity() {
                 TintaLiveActivityManager.dismiss(applicationContext)
             }
             pending?.success(granted)
+        } else if (requestCode == KRETA_NOTIFICATIONS_PERMISSION_REQUEST_CODE) {
+            val pending = pendingKretaNotificationPermissionResult
+            pendingKretaNotificationPermissionResult = null
+            pending?.success(KretaNotificationDispatcher.hasNotificationPermission(this))
         }
     }
 
@@ -955,6 +1031,48 @@ open class MainActivity : FlutterActivity() {
                     }
                 }
             }
+            "getCalendarEventColors" -> {
+                if (!hasCalendarPermissions()) {
+                    result.success(emptyList<Map<String, Any?>>())
+                    return
+                }
+                val calendarId = call.argument<Any>("calendarId")?.toString()?.toLongOrNull()
+                if (calendarId == null) {
+                    result.success(emptyList<Map<String, Any?>>())
+                    return
+                }
+                calendarExecutor.execute {
+                    try {
+                        val colors = queryCalendarEventColors(calendarId)
+                        runOnUiThread { result.success(colors) }
+                    } catch (_: Exception) {
+                        runOnUiThread { result.success(emptyList<Map<String, Any?>>()) }
+                    }
+                }
+            }
+            "findExistingEvents" -> {
+                if (!hasCalendarPermissions()) {
+                    result.success(emptyList<Map<String, Any?>>())
+                    return
+                }
+                val calendarId = call.argument<Any>("calendarId")?.toString()?.toLongOrNull()
+                val fromMillis = (call.argument<Number>("fromMillis"))?.toLong() ?: 0L
+                val toMillis = (call.argument<Number>("toMillis"))?.toLong() ?: Long.MAX_VALUE
+                if (calendarId == null) {
+                    result.success(emptyList<Map<String, Any?>>())
+                    return
+                }
+                calendarExecutor.execute {
+                    try {
+                        val events = queryCalendarEvents(calendarId, fromMillis, toMillis)
+                        runOnUiThread { result.success(events) }
+                    } catch (e: Exception) {
+                        runOnUiThread {
+                            result.error("CALENDAR_FIND_FAILED", e.message, null)
+                        }
+                    }
+                }
+            }
             "upsertEvent" -> {
                 if (!hasCalendarPermissions()) {
                     result.error(
@@ -976,6 +1094,9 @@ open class MainActivity : FlutterActivity() {
                 val endMillis = (call.argument<Number>("endMillis"))?.toLong()
                 val reminderMinutes = (call.argument<Number>("reminderMinutes"))?.toInt() ?: 60
                 val allDay = call.argument<Boolean>("allDay") ?: false
+                val syncTag = call.argument<String>("syncTag")?.trim()?.takeIf { it.isNotEmpty() }
+                val eventColor = (call.argument<Number>("eventColor"))?.toInt()
+                val eventColorKey = call.argument<String>("eventColorKey")?.trim()?.takeIf { it.isNotEmpty() }
                 if (title.isEmpty() || startMillis == null || endMillis == null) {
                     result.error("INVALID_ARGS", "Hiányzó esemény adatok.", null)
                     return
@@ -990,7 +1111,10 @@ open class MainActivity : FlutterActivity() {
                             startMillis = startMillis,
                             endMillis = endMillis,
                             reminderMinutes = reminderMinutes,
-                            allDay = allDay
+                            allDay = allDay,
+                            syncTag = syncTag,
+                            eventColor = eventColor,
+                            eventColorKey = eventColorKey
                         )
                         runOnUiThread { result.success(savedEventId) }
                     } catch (e: Exception) {
@@ -1132,6 +1256,173 @@ open class MainActivity : FlutterActivity() {
         return items
     }
 
+    private fun queryCalendarAccount(calendarId: Long): Pair<String, String>? {
+        contentResolver.query(
+            CalendarContract.Calendars.CONTENT_URI,
+            arrayOf(
+                CalendarContract.Calendars.ACCOUNT_NAME,
+                CalendarContract.Calendars.ACCOUNT_TYPE
+            ),
+            "${CalendarContract.Calendars._ID} = ?",
+            arrayOf(calendarId.toString()),
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val accName = cursor.getString(0) ?: ""
+                val accType = cursor.getString(1) ?: ""
+                return accName to accType
+            }
+        }
+        return null
+    }
+
+    private fun queryCalendarEventColors(calendarId: Long): List<Map<String, Any?>> {
+        val account = queryCalendarAccount(calendarId) ?: return emptyList()
+        val (accName, accType) = account
+        if (accName.isEmpty() || accType.isEmpty()) return emptyList()
+        val results = mutableListOf<Map<String, Any?>>()
+        contentResolver.query(
+            CalendarContract.Colors.CONTENT_URI,
+            arrayOf(
+                CalendarContract.Colors.COLOR_KEY,
+                CalendarContract.Colors.COLOR
+            ),
+            "${CalendarContract.Colors.ACCOUNT_NAME} = ? AND ${CalendarContract.Colors.ACCOUNT_TYPE} = ? AND ${CalendarContract.Colors.COLOR_TYPE} = ?",
+            arrayOf(
+                accName,
+                accType,
+                CalendarContract.Colors.TYPE_EVENT.toString()
+            ),
+            null
+        )?.use { cursor ->
+            val keyIdx = cursor.getColumnIndex(CalendarContract.Colors.COLOR_KEY)
+            val colorIdx = cursor.getColumnIndex(CalendarContract.Colors.COLOR)
+            if (keyIdx < 0 || colorIdx < 0) return emptyList()
+            while (cursor.moveToNext()) {
+                val colorKey = cursor.getString(keyIdx) ?: continue
+                val color = cursor.getInt(colorIdx)
+                results.add(
+                    mapOf(
+                        "colorKey" to colorKey,
+                        "color" to color
+                    )
+                )
+            }
+        }
+        return results
+    }
+
+    private fun resolveNearestEventColorKey(calendarId: Long, targetArgb: Int): String? {
+        val colors = runCatching { queryCalendarEventColors(calendarId) }.getOrNull() ?: return null
+        if (colors.isEmpty()) return null
+        val tr = (targetArgb shr 16) and 0xFF
+        val tg = (targetArgb shr 8) and 0xFF
+        val tb = targetArgb and 0xFF
+        var bestKey: String? = null
+        var bestDist = Int.MAX_VALUE
+        for (entry in colors) {
+            val key = entry["colorKey"] as? String ?: continue
+            val c = (entry["color"] as? Number)?.toInt() ?: continue
+            val r = (c shr 16) and 0xFF
+            val g = (c shr 8) and 0xFF
+            val b = c and 0xFF
+            val dist = (r - tr) * (r - tr) + (g - tg) * (g - tg) + (b - tb) * (b - tb)
+            if (dist < bestDist) {
+                bestDist = dist
+                bestKey = key
+            }
+        }
+        return bestKey
+    }
+
+    private fun queryCalendarEvents(
+        calendarId: Long,
+        fromMillis: Long,
+        toMillis: Long
+    ): List<Map<String, Any?>> {
+        val projection = arrayOf(
+            CalendarContract.Events._ID,
+            CalendarContract.Events.TITLE,
+            CalendarContract.Events.DESCRIPTION,
+            CalendarContract.Events.DTSTART,
+            CalendarContract.Events.DTEND,
+            CalendarContract.Events.EVENT_COLOR,
+            CalendarContract.Events.EVENT_COLOR_KEY
+        )
+        val selection =
+            "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.DELETED} != 1 AND ${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} <= ?"
+        val selectionArgs = arrayOf(
+            calendarId.toString(),
+            fromMillis.toString(),
+            toMillis.toString()
+        )
+        val items = mutableListOf<Map<String, Any?>>()
+        contentResolver.query(
+            CalendarContract.Events.CONTENT_URI,
+            projection,
+            selection,
+            selectionArgs,
+            "${CalendarContract.Events.DTSTART} ASC"
+        )?.use { cursor ->
+            val idIdx = cursor.getColumnIndex(CalendarContract.Events._ID)
+            val titleIdx = cursor.getColumnIndex(CalendarContract.Events.TITLE)
+            val descIdx = cursor.getColumnIndex(CalendarContract.Events.DESCRIPTION)
+            val startIdx = cursor.getColumnIndex(CalendarContract.Events.DTSTART)
+            val endIdx = cursor.getColumnIndex(CalendarContract.Events.DTEND)
+            val colorIdx = cursor.getColumnIndex(CalendarContract.Events.EVENT_COLOR)
+            val colorKeyIdx = cursor.getColumnIndex(CalendarContract.Events.EVENT_COLOR_KEY)
+            while (cursor.moveToNext()) {
+                val id = if (idIdx >= 0) cursor.getLong(idIdx) else continue
+                items.add(
+                    mapOf(
+                        "eventId" to id.toString(),
+                        "title" to (if (titleIdx >= 0) cursor.getString(titleIdx) ?: "" else ""),
+                        "description" to (if (descIdx >= 0) cursor.getString(descIdx) ?: "" else ""),
+                        "startMillis" to (if (startIdx >= 0) cursor.getLong(startIdx) else 0L),
+                        "endMillis" to (if (endIdx >= 0) cursor.getLong(endIdx) else 0L),
+                        "eventColor" to (if (colorIdx >= 0 && !cursor.isNull(colorIdx)) cursor.getInt(colorIdx) else null),
+                        "eventColorKey" to (if (colorKeyIdx >= 0) cursor.getString(colorKeyIdx) else null)
+                    )
+                )
+            }
+        }
+        return items
+    }
+
+    private fun findMatchingNativeEventId(
+        calendarId: Long,
+        title: String,
+        startMillis: Long,
+        endMillis: Long,
+        syncTag: String?
+    ): Long? {
+        if (!syncTag.isNullOrBlank()) {
+            contentResolver.query(
+                CalendarContract.Events.CONTENT_URI,
+                arrayOf(CalendarContract.Events._ID, CalendarContract.Events.DESCRIPTION),
+                "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.DELETED} != 1 AND ${CalendarContract.Events.DESCRIPTION} LIKE ?",
+                arrayOf(calendarId.toString(), "%$syncTag%"),
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    return cursor.getLong(0)
+                }
+            }
+        }
+        contentResolver.query(
+            CalendarContract.Events.CONTENT_URI,
+            arrayOf(CalendarContract.Events._ID),
+            "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.DELETED} != 1 AND ${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} = ? AND ${CalendarContract.Events.DTEND} = ?",
+            arrayOf(calendarId.toString(), title, startMillis.toString(), endMillis.toString()),
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                return cursor.getLong(0)
+            }
+        }
+        return null
+    }
+
     private fun upsertCalendarEvent(
         calendarId: Long,
         existingEventId: Long?,
@@ -1140,7 +1431,10 @@ open class MainActivity : FlutterActivity() {
         startMillis: Long,
         endMillis: Long,
         reminderMinutes: Int,
-        allDay: Boolean
+        allDay: Boolean,
+        syncTag: String? = null,
+        eventColor: Int? = null,
+        eventColorKey: String? = null
     ): String {
         val safeEndMillis = if (endMillis > startMillis) endMillis else startMillis + 60_000L
         val values = ContentValues().apply {
@@ -1156,27 +1450,62 @@ open class MainActivity : FlutterActivity() {
             )
             put(CalendarContract.Events.HAS_ALARM, if (reminderMinutes > 0) 1 else 0)
             put(CalendarContract.Events.AVAILABILITY, CalendarContract.Events.AVAILABILITY_BUSY)
-        }
-
-        if (existingEventId != null) {
-            val updateUri = ContentUris.withAppendedId(
-                CalendarContract.Events.CONTENT_URI,
-                existingEventId
-            )
-            val updated = contentResolver.update(
-                updateUri,
-                values,
-                "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.DELETED} != 1",
-                arrayOf(calendarId.toString())
-            )
-            if (updated > 0) {
-                syncEventReminder(existingEventId, reminderMinutes)
-                return existingEventId.toString()
+            if (!eventColorKey.isNullOrBlank()) {
+                put(CalendarContract.Events.EVENT_COLOR_KEY, eventColorKey)
+            } else if (eventColor != null) {
+                val matchedKey = resolveNearestEventColorKey(calendarId, eventColor)
+                if (!matchedKey.isNullOrBlank()) {
+                    put(CalendarContract.Events.EVENT_COLOR_KEY, matchedKey)
+                } else {
+                    put(CalendarContract.Events.EVENT_COLOR, eventColor)
+                }
             }
         }
 
-        val insertedUri = contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
-            ?: throw IllegalStateException("Nem sikerült létrehozni a naptár eseményt.")
+        val resolvedExistingId = existingEventId ?: findMatchingNativeEventId(
+            calendarId = calendarId,
+            title = title,
+            startMillis = startMillis,
+            endMillis = safeEndMillis,
+            syncTag = syncTag
+        )
+
+        if (resolvedExistingId != null) {
+            val updateUri = ContentUris.withAppendedId(
+                CalendarContract.Events.CONTENT_URI,
+                resolvedExistingId
+            )
+            val updated = runCatching {
+                contentResolver.update(
+                    updateUri,
+                    values,
+                    "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.DELETED} != 1",
+                    arrayOf(calendarId.toString())
+                )
+            }.getOrElse {
+                // Retry without color columns if provider rejects custom eventColor on this calendar
+                values.remove(CalendarContract.Events.EVENT_COLOR)
+                values.remove(CalendarContract.Events.EVENT_COLOR_KEY)
+                contentResolver.update(
+                    updateUri,
+                    values,
+                    "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.DELETED} != 1",
+                    arrayOf(calendarId.toString())
+                )
+            }
+            if (updated > 0) {
+                syncEventReminder(resolvedExistingId, reminderMinutes)
+                return resolvedExistingId.toString()
+            }
+        }
+
+        val insertedUri = runCatching {
+            contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
+        }.getOrElse {
+            values.remove(CalendarContract.Events.EVENT_COLOR)
+            values.remove(CalendarContract.Events.EVENT_COLOR_KEY)
+            contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
+        } ?: throw IllegalStateException("Nem sikerült létrehozni a naptár eseményt.")
         val newId = ContentUris.parseId(insertedUri)
         if (newId < 0) {
             throw IllegalStateException("Érvénytelen naptár esemény azonosító.")

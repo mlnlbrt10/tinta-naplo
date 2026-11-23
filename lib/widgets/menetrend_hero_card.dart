@@ -855,26 +855,9 @@ class _MenetrendDetailsModalSheetState
                                     ),
                                     if (closeMode.showTopX) ...[
                                       const SizedBox(width: 8),
-                                      TactileBounce(
+                                      PopupTopCloseButton(
                                         onTap: () =>
                                             Navigator.of(context).pop(),
-                                        child: Container(
-                                          width: 32,
-                                          height: 32,
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            color: onSurface.withValues(
-                                              alpha: isDark ? 0.08 : 0.06,
-                                            ),
-                                          ),
-                                          child: Icon(
-                                            Icons.close_rounded,
-                                            size: 18,
-                                            color: onSurface.withValues(
-                                              alpha: 0.72,
-                                            ),
-                                          ),
-                                        ),
                                       ),
                                     ],
                                   ],

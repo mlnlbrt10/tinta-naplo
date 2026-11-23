@@ -23,6 +23,7 @@ import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
+import '../widgets/frosted_inspection_modal.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/tinta_toast.dart';
 
@@ -63,6 +64,42 @@ class DeveloperIconBubble extends StatelessWidget {
   }
 }
 
+class _DevSectionHeader extends StatelessWidget {
+  final String title;
+  final IconData? icon;
+
+  const _DevSectionHeader(this.title, {this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
+      child: Row(
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 13.5, color: scheme.primary),
+            const SizedBox(width: 6),
+          ],
+          Expanded(
+            child: Text(
+              uwuLabel(title.toUpperCase()),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.9,
+                color: scheme.primary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Reusable 5-item menu launcher list shared between the standalone
 /// [DeveloperOptionsHubScreen] and the unlocked section in [AboutAppScreen].
 class DeveloperOptionsMenuList extends StatelessWidget {
@@ -95,21 +132,21 @@ class DeveloperOptionsMenuList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final appearanceActive = prefs.minimalistModeEnabled ||
-        prefs.uwuModeEnabled ||
+    final appearanceActive = prefs.uwuModeEnabled ||
         prefs.customSkinEnabled ||
         prefs.fitymaModeEnabled;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const _DevSectionHeader('Felület és Testreszabás', icon: Icons.palette_outlined),
         _DeveloperCategoryCard(
           key: const ValueKey<String>('dev-hub-tile-appearance'),
           prefs: prefs,
           icon: Icons.palette_outlined,
           accent: scheme.primary,
           title: uwu('Megjelenés és UI'),
-          subtitle: uwu('Minimalista mód, saját háttérkép és egyéni CSS skin'),
+          subtitle: uwu('Saját háttérkép, egyéni CSS skin és kísérleti módok'),
           statusBadge: appearanceActive ? 'Aktív' : null,
           onTap: () => _pushSubPage(
             context,
@@ -121,7 +158,8 @@ class DeveloperOptionsMenuList extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 16),
+        const _DevSectionHeader('Tesztelés és Adatkészlet', icon: Icons.science_outlined),
         _DeveloperCategoryCard(
           key: const ValueKey<String>('dev-hub-tile-demo'),
           prefs: prefs,
@@ -138,7 +176,8 @@ class DeveloperOptionsMenuList extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 16),
+        const _DevSectionHeader('Hálózat, Hitelesítés és Eszközök', icon: Icons.hub_outlined),
         _DeveloperCategoryCard(
           key: const ValueKey<String>('dev-hub-tile-auth'),
           prefs: prefs,
@@ -175,7 +214,8 @@ class DeveloperOptionsMenuList extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 16),
+        const _DevSectionHeader('Rendszer és Karbantartás', icon: Icons.memory_rounded),
         _DeveloperCategoryCard(
           key: const ValueKey<String>('dev-hub-tile-system'),
           prefs: prefs,
@@ -367,7 +407,6 @@ class DeveloperOptionsHubScreen extends StatelessWidget {
                 HapticFeedback.lightImpact();
                 final next = activePrefs
                     .withDemoMode(false)
-                    .withMinimalistMode(false)
                     .copyWith(
                       developerModeUnlocked: false,
                       uwuModeEnabled: false,
@@ -557,87 +596,7 @@ class _DeveloperAppearanceSubPageState
             36,
           ),
           children: [
-            SoftGlassCard(
-              prefs: activePrefs,
-              padding: const EdgeInsets.all(18),
-              borderRadius: OledTheme.largeRadius,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SwitchListTile.adaptive(
-                    contentPadding: EdgeInsets.zero,
-                    activeThumbColor: scheme.primary,
-                    title: Text(
-                      uwuLabel(
-                        'Minimalista mód',
-                        enabled: activePrefs.uwuModeEnabled,
-                      ),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 15,
-                      ),
-                    ),
-                    subtitle: Text(
-                      uwuLabel(
-                        'Kizárólag a 3 legfontosabb standard adatmezőt mutatja a kártyák megnyitásakor, változatlan mezőnevekkel és Hero animációval.',
-                        enabled: activePrefs.uwuModeEnabled,
-                      ),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: scheme.onSurface.withValues(alpha: 0.72),
-                      ),
-                    ),
-                    value: activePrefs.minimalistModeEnabled,
-                    onChanged: (val) {
-                      HapticFeedback.mediumImpact();
-                      _update(activePrefs.withMinimalistMode(val));
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: scheme.primary.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: scheme.primary.withValues(alpha: 0.25),
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          uwuLabel(
-                            activePrefs.minimalistModeEnabled
-                                ? 'Aktív szűrt kártyanézet:'
-                                : 'Bekapcsoláskor szűrt kártyák:',
-                            enabled: activePrefs.uwuModeEnabled,
-                          ),
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            fontWeight: FontWeight.w800,
-                            color: scheme.primary,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          uwuLabel(
-                            '• Órarend: csak Idősáv, Tanterem és Tanár sorok\n'
-                            '• Jegyek: csak Rögzítés ideje, Értékelő tanár és Értékelés módja\n'
-                            '• Számonkérések: csak Számonkérés napja, témája és módja',
-                            enabled: activePrefs.uwuModeEnabled,
-                          ),
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.onSurface.withValues(alpha: 0.78),
-                            height: 1.45,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
+            const _DevSectionHeader('Háttér és Atmoszféra', icon: Icons.wallpaper_rounded),
             SoftGlassCard(
               prefs: activePrefs,
               padding: const EdgeInsets.all(18),
@@ -716,7 +675,8 @@ class _DeveloperAppearanceSubPageState
                 ],
               ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
+            const _DevSectionHeader('Kísérleti Stílusok és Easter Eggek', icon: Icons.auto_fix_high_rounded),
             Material(
               color: OledTheme.uwuPastelPink.withValues(alpha: 0.14),
               shape: RoundedRectangleBorder(
@@ -813,7 +773,8 @@ class _DeveloperAppearanceSubPageState
                 ),
               ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
+            const _DevSectionHeader('Haladó CSS Skin Szerkesztő', icon: Icons.code_rounded),
             SoftGlassCard(
               prefs: activePrefs,
               padding: const EdgeInsets.all(18),
@@ -1056,6 +1017,7 @@ class _DeveloperDemoModeSubPageState extends State<DeveloperDemoModeSubPage> {
             36,
           ),
           children: [
+            const _DevSectionHeader('Demó Adatkészlet Vezérlés', icon: Icons.toggle_on_outlined),
             SoftGlassCard(
               prefs: activePrefs,
               padding: const EdgeInsets.all(18),
@@ -1126,7 +1088,8 @@ class _DeveloperDemoModeSubPageState extends State<DeveloperDemoModeSubPage> {
                 ],
               ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
+            const _DevSectionHeader('Aktív Demó Adatkészlet', icon: Icons.dataset_rounded),
             SoftGlassCard(
               prefs: activePrefs,
               padding: const EdgeInsets.all(18),
@@ -1402,6 +1365,7 @@ class _DeveloperAuthNetworkSubPageState
           36,
         ),
         children: [
+          const _DevSectionHeader('Hitelesítés és API Kapcsolat', icon: Icons.vpn_key_outlined),
           SoftGlassCard(
             prefs: activePrefs,
             padding: const EdgeInsets.all(18),
@@ -1487,7 +1451,8 @@ class _DeveloperAuthNetworkSubPageState
               ],
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
+          const _DevSectionHeader('Esemény- és Hibanaplók', icon: Icons.history_rounded),
           SoftGlassCard(
             prefs: activePrefs,
             padding: const EdgeInsets.all(18),
@@ -1587,7 +1552,8 @@ class _DeveloperAuthNetworkSubPageState
               ],
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
+          const _DevSectionHeader('Hitelesítési Eseménynapló', icon: Icons.timeline_rounded),
           SoftGlassCard(
             key: const ValueKey<String>('dev-auth-timeline-card'),
             prefs: activePrefs,
@@ -1897,30 +1863,110 @@ class _DeveloperIntegrationsSubPageState
 
   Future<void> _promptPromotedNotificationSettings() async {
     if (!mounted) return;
-    await showDialog<void>(
+    final activePrefs =
+        AppProvidersScope.maybeOf(context)?.settings.prefs ?? widget.initialPrefs;
+    await showFloatingGlassSheet<void>(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        title: Text(uwuLabel('Samsung Now Bar / Live Updates engedély')),
-        content: Text(
-          uwu(
-            'Android 16 és One UI alatt az állapotsoron és a zárolási képernyőn való kiemelt megjelenítéshez engedélyezd az „Élő értesítések” opciót a Tinta Napló rendszerbeállításaiban.',
+      prefs: activePrefs,
+      builder: (dialogCtx) {
+        final theme = Theme.of(dialogCtx);
+        final scheme = theme.colorScheme;
+        final closeMode = activePrefs.modalCloseMode;
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: FrostedBottomSheetSurface(
+            prefs: activePrefs,
+            showDragHandle: true,
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: scheme.primary.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.notifications_active_rounded,
+                        size: 20,
+                        color: scheme.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        uwuLabel(
+                          'Samsung Now Bar / Live Updates engedély',
+                          enabled: activePrefs.uwuModeEnabled,
+                        ),
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    if (closeMode.showTopX) ...[
+                      const SizedBox(width: 8),
+                      PopupTopCloseButton(
+                        onTap: () => Navigator.of(dialogCtx).pop(),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  uwu(
+                    'Android 16 és One UI alatt az állapotsoron és a zárolási képernyőn való kiemelt megjelenítéshez engedélyezd az „Élő értesítések” opciót a Tinta Napló rendszerbeállításaiban.',
+                    enabled: activePrefs.uwuModeEnabled,
+                  ),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    height: 1.45,
+                    color: scheme.onSurface.withValues(alpha: 0.85),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogCtx).pop(),
+                      child: Text(
+                        uwuLabel('Később', enabled: activePrefs.uwuModeEnabled),
+                      ),
+                    ),
+                    FilledButton.icon(
+                      onPressed: () {
+                        Navigator.of(dialogCtx).pop();
+                        unawaited(_widgetSync.openPromotedNotificationSettings());
+                      },
+                      icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                      label: Text(
+                        uwuLabel(
+                          'Beállítások megnyitása',
+                          enabled: activePrefs.uwuModeEnabled,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (closeMode.showBottomButton) ...[
+                  const SizedBox(height: 12),
+                  PopupBottomCloseButton(
+                    onTap: () => Navigator.of(dialogCtx).pop(),
+                    uwuEnabled: activePrefs.uwuModeEnabled,
+                  ),
+                ],
+              ],
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(),
-            child: Text(uwuLabel('Később')),
-          ),
-          FilledButton.icon(
-            onPressed: () {
-              Navigator.of(dialogCtx).pop();
-              unawaited(_widgetSync.openPromotedNotificationSettings());
-            },
-            icon: const Icon(Icons.open_in_new_rounded, size: 16),
-            label: Text(uwuLabel('Beállítások megnyitása')),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -1974,6 +2020,7 @@ class _DeveloperIntegrationsSubPageState
             36,
           ),
           children: [
+            const _DevSectionHeader('Zárolási Képernyő és Élő Értesítés', icon: Icons.notifications_active_outlined),
             SoftGlassCard(
               prefs: activePrefs,
               padding: const EdgeInsets.all(18),
@@ -2156,7 +2203,8 @@ class _DeveloperIntegrationsSubPageState
                 ],
               ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
+            const _DevSectionHeader('Viselhető Eszközök (Wear OS)', icon: Icons.watch_outlined),
             SoftGlassCard(
               prefs: activePrefs,
               padding: const EdgeInsets.all(18),
@@ -2228,7 +2276,8 @@ class _DeveloperIntegrationsSubPageState
                 ],
               ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
+            const _DevSectionHeader('Utazástervező Integráció', icon: Icons.directions_bus_rounded),
             SoftGlassCard(
               prefs: activePrefs,
               padding: const EdgeInsets.all(18),
@@ -2407,6 +2456,7 @@ class _DeveloperSystemCacheSubPageState
           36,
         ),
         children: [
+          const _DevSectionHeader('Alkalmazás és Rendszer Telemetria', icon: Icons.analytics_outlined),
           SoftGlassCard(
             prefs: activePrefs,
             padding: const EdgeInsets.all(18),
@@ -2496,7 +2546,8 @@ class _DeveloperSystemCacheSubPageState
               ],
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
+          const _DevSectionHeader('Gyorsítótár és Karbantartás', icon: Icons.cleaning_services_outlined),
           SoftGlassCard(
             prefs: activePrefs,
             padding: const EdgeInsets.all(18),

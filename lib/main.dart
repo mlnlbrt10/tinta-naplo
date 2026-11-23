@@ -13,6 +13,7 @@ import 'services/demo_data_service.dart';
 import 'services/dynamic_icon_service.dart';
 import 'services/home_widget_sync_service.dart';
 import 'services/kreta_client.dart';
+import 'services/kreta_notification_service.dart';
 import 'services/token_storage_service.dart';
 import 'services/wear_sync_service.dart';
 import 'theme/oled_theme.dart';
@@ -91,6 +92,11 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
     TokenStorageService.externalSessionFallbackLoader =
         WearSyncService.instance.loadCachedSessionFromNative;
     HomeWidgetSyncService.instance.initialize();
+    unawaited(
+      KretaNotificationService.instance
+          .syncBackgroundSchedule()
+          .catchError((_) {}),
+    );
     WearSyncService.instance.initialize(
       onWatchAuthRequested: () {
         unawaited(_handleWatchAuthRequested());

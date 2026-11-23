@@ -344,7 +344,7 @@ void main() {
         );
         expect(heroFinder, findsOneWidget);
 
-        await tester.tap(find.text('Bezárás'));
+        await tester.tap(find.byIcon(Icons.close_rounded));
         await tester.pumpAndSettle();
 
         // 2. Grade modal in Minimalista mód
@@ -358,7 +358,7 @@ void main() {
         expect(find.text('Tanár'), findsOneWidget);
         expect(find.text('Dátum'), findsOneWidget);
 
-        await tester.tap(find.text('Bezárás'));
+        await tester.tap(find.byIcon(Icons.close_rounded));
         await tester.pumpAndSettle();
 
         // 3. Test modal in Minimalista mód

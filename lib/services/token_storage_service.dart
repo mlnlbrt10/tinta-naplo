@@ -199,6 +199,62 @@ enum ModalCloseButtonMode {
       this == ModalCloseButtonMode.both;
 }
 
+/// Configurable subtitle modes shown beneath the Főoldal greeting header.
+enum GreetingSubtitleMode {
+  finishTime(
+    id: 'finish_time',
+    label: 'Mikor végzel ma',
+    description:
+        'Mutatja az utolsó mai tanóra végét (pl. „Ma 14:15-kor végzel”).',
+  ),
+  date(
+    id: 'date',
+    label: 'Dátum',
+    description: 'Letisztult magyar dátum (pl. „November 23., hétfő”).',
+  ),
+  tomorrowExams(
+    id: 'tomorrow_exams',
+    label: 'Holnapi számonkérések',
+    description: 'A holnapi napra kiírt KRÉTA számonkérések száma.',
+  ),
+  funFacts(
+    id: 'fun_facts',
+    label: 'Haszontalan fun factek',
+    description:
+        'Rövid, vicces és teljesen haszontalan tények – koppints rá az újhoz!',
+  ),
+  schoolName(
+    id: 'school_name',
+    label: 'Iskola neve',
+    description: 'A KRÉTA intézményed neve a köszönés alatt.',
+  ),
+  none(
+    id: 'none',
+    label: 'Rejtett',
+    description: 'Nem jelenik meg szöveg a köszönés alatt.',
+  );
+
+  final String id;
+  final String label;
+  final String description;
+
+  const GreetingSubtitleMode({
+    required this.id,
+    required this.label,
+    required this.description,
+  });
+
+  static GreetingSubtitleMode fromId(String? raw) {
+    final normalized = raw?.trim().toLowerCase();
+    for (final mode in GreetingSubtitleMode.values) {
+      if (mode.id == normalized || mode.name.toLowerCase() == normalized) {
+        return mode;
+      }
+    }
+    return GreetingSubtitleMode.finishTime;
+  }
+}
+
 /// Configurable grade rounding thresholds (minimum average required for each grade).
 class GradeRoundingConfig {
   final double threshold5;
@@ -277,7 +333,7 @@ class GradeRoundingConfig {
 /// User customization & personalization preferences persisted in secure storage.
 /// Survives logout/relogin and supports full JSON export/import.
 class UserProfilePrefs {
-  static ModalCloseButtonMode activeModalCloseMode = ModalCloseButtonMode.both;
+  static ModalCloseButtonMode activeModalCloseMode = ModalCloseButtonMode.onlyX;
   static bool activeLiquidGlassEnabled = false;
   static bool get activeSoftBlurEnabled => activeLiquidGlassEnabled;
   static LiquidGlassMode activeLiquidGlassMode = LiquidGlassMode.classicFrost;
@@ -387,7 +443,7 @@ class UserProfilePrefs {
     this.christmasModeEnabled = false,
     this.appIconPreset = 'default',
     this.backgroundPreset = 'pure_oled',
-    this.modalCloseMode = ModalCloseButtonMode.both,
+    this.modalCloseMode = ModalCloseButtonMode.onlyX,
     this.transitHomeStation = '',
     this.transitSchoolStation = '',
     this.transitAllowCoach = true,
@@ -430,6 +486,19 @@ class UserProfilePrefs {
   bool get hideFreeLessons =>
       (extras['hideFreeLessons'] as bool?) ?? !showCancelledLessons;
 
+  /// Timetable: "Számonkérések mutatása az órarenden" (enabled by default).
+  bool get showTimetableExams => (extras['showTimetableExams'] as bool?) ?? true;
+
+  UserProfilePrefs withShowTimetableExams(bool show) =>
+      withExtra('showTimetableExams', show);
+
+  /// Timetable: "Házik mutatása az órarenden" (enabled by default).
+  bool get showTimetableHomework =>
+      (extras['showTimetableHomework'] as bool?) ?? true;
+
+  UserProfilePrefs withShowTimetableHomework(bool show) =>
+      withExtra('showTimetableHomework', show);
+
   /// Developer Options: "Minimalista mód" (stripped-down expanded cards/modals).
   bool get minimalistModeEnabled => extras['minimalistModeEnabled'] == true;
 
@@ -459,6 +528,17 @@ class UserProfilePrefs {
 
   UserProfilePrefs withFunGreetings(bool enabled) =>
       withExtra('funGreetingsEnabled', enabled);
+
+  /// Appearance: "Köszönés alatti szöveg" subtitle mode below the Főoldal greeting.
+  GreetingSubtitleMode get greetingSubtitleMode {
+    final raw = extras['greetingSubtitleMode'];
+    return raw is String
+        ? GreetingSubtitleMode.fromId(raw)
+        : GreetingSubtitleMode.finishTime;
+  }
+
+  UserProfilePrefs withGreetingSubtitleMode(GreetingSubtitleMode mode) =>
+      withExtra('greetingSubtitleMode', mode.id);
 
   /// Developer Options: CSS-style Custom Skin Engine toggle & raw CSS variables.
   bool get customSkinEnabled => extras['customSkinEnabled'] == true;
@@ -716,11 +796,17 @@ class UserProfilePrefs {
     Map<String, String>? teacherCustomNames,
     Map<String, dynamic>? extras,
     bool? funGreetingsEnabled,
+    GreetingSubtitleMode? greetingSubtitleMode,
   }) {
     final Map<String, dynamic> resolvedExtras;
-    if (funGreetingsEnabled != null) {
-      resolvedExtras = Map<String, dynamic>.from(extras ?? this.extras)
-        ..['funGreetingsEnabled'] = funGreetingsEnabled;
+    if (funGreetingsEnabled != null || greetingSubtitleMode != null) {
+      resolvedExtras = Map<String, dynamic>.from(extras ?? this.extras);
+      if (funGreetingsEnabled != null) {
+        resolvedExtras['funGreetingsEnabled'] = funGreetingsEnabled;
+      }
+      if (greetingSubtitleMode != null) {
+        resolvedExtras['greetingSubtitleMode'] = greetingSubtitleMode.id;
+      }
     } else {
       resolvedExtras = extras ?? this.extras;
     }
@@ -859,7 +945,7 @@ class UserProfilePrefs {
     final modalCloseName = json['modalCloseMode'] as String?;
     final modalCloseMode = ModalCloseButtonMode.values.firstWhere(
       (e) => e.name == modalCloseName,
-      orElse: () => ModalCloseButtonMode.both,
+      orElse: () => ModalCloseButtonMode.onlyX,
     );
 
     final gradeColors = Map<int, int>.from(defaultGradeColors);
@@ -996,9 +1082,16 @@ class UserProfilePrefs {
       subjectCustomColors: subjColors,
       subjectCustomNames: subjNames,
       teacherCustomNames: teacherNames,
-      extras: json['extras'] is Map
-          ? Map<String, dynamic>.from(json['extras'] as Map)
-          : const {},
+      extras: () {
+        final map = json['extras'] is Map
+            ? Map<String, dynamic>.from(json['extras'] as Map)
+            : <String, dynamic>{};
+        if (json['greetingSubtitleMode'] is String &&
+            !map.containsKey('greetingSubtitleMode')) {
+          map['greetingSubtitleMode'] = json['greetingSubtitleMode'];
+        }
+        return map;
+      }(),
     );
   }
 
@@ -2295,7 +2388,7 @@ class TokenStorageService {
     final modalCloseName = values[_keyModalCloseMode];
     final modalCloseMode = ModalCloseButtonMode.values.firstWhere(
       (e) => e.name == modalCloseName,
-      orElse: () => ModalCloseButtonMode.both,
+      orElse: () => ModalCloseButtonMode.onlyX,
     );
     final transitHomeStation =
         values[_keyTransitHomeStation]?.trim().isNotEmpty == true

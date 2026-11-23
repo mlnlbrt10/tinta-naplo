@@ -264,6 +264,12 @@ void main() {
         );
         expect(animatedHeader, findsOneWidget);
 
+        final backdropRow = find.byKey(
+          const ValueKey<String>('appearance-animated-backdrop-row'),
+        );
+        await tester.ensureVisible(backdropRow);
+        await tester.pump(const Duration(milliseconds: 200));
+
         for (final preset in [
           AnimatedBackdropPreset.gyroLiquidHorizon,
           AnimatedBackdropPreset.causticWater,
@@ -273,21 +279,29 @@ void main() {
           AnimatedBackdropPreset.analogFilmLight,
           AnimatedBackdropPreset.off,
         ]) {
-          final chip = find.widgetWithText(ChoiceChip, preset.label);
-          await tester.ensureVisible(chip);
-          await tester.tap(chip);
-          await tester.pump(const Duration(milliseconds: 30));
+          await tester.tap(backdropRow);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 420));
+
+          final option = find.text(preset.label);
+          await tester.ensureVisible(option);
+          await tester.tap(option);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 420));
           expect(settings.prefs.animatedBackdropPreset, preset);
         }
 
         // Turn Gyro Liquid Horizon back on and send pointer down across screen
-        final gyroChip = find.widgetWithText(
-          ChoiceChip,
+        await tester.tap(backdropRow);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 420));
+        final gyroOption = find.text(
           AnimatedBackdropPreset.gyroLiquidHorizon.label,
         );
-        await tester.ensureVisible(gyroChip);
-        await tester.tap(gyroChip);
-        await tester.pump(const Duration(milliseconds: 30));
+        await tester.ensureVisible(gyroOption);
+        await tester.tap(gyroOption);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 420));
 
         await tester.tapAt(const Offset(540, 1200));
         await tester.pump(const Duration(milliseconds: 16));

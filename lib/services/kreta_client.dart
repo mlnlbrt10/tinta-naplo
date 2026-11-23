@@ -359,6 +359,28 @@ class OmissionsSummary {
     return tName.contains('keses') || tDesc.contains('késés');
   }
 
+  /// Whether an absence or late arrival requires excuse or remains unexcused.
+  static bool isActionableUnexcused(Omission o) =>
+      o.state != OmissionState.excused;
+
+  /// Whether an omission is awaiting excuse (`Igazolandó` / `unknown`).
+  static bool isPendingExcuse(Omission o) =>
+      o.state == OmissionState.pending || o.state == OmissionState.unknown;
+
+  /// Deterministic per-item key for dismissal tracking and deduplication.
+  static String omissionIdentityKey(Omission o) {
+    final uid = o.uid.trim();
+    if (uid.isNotEmpty) return uid;
+    return '${o.subject.name}_${o.date.toUtc().toIso8601String()}_${o.lesson?.classNo ?? 0}_${o.lateForMin ?? 0}';
+  }
+
+  /// Returns all unexcused or pending-excuse omissions/tardiness sorted newest-first.
+  static List<Omission> actionableUnexcused(Iterable<Omission> omissions) {
+    final items = omissions.where(isActionableUnexcused).toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+    return items;
+  }
+
   factory OmissionsSummary.fromList(List<Omission> list) {
     final sorted = List<Omission>.from(list)
       ..sort((a, b) => b.date.compareTo(a.date));
@@ -414,6 +436,253 @@ class OmissionsSummary {
   }
 }
 
+/// Normalized missing-equipment (`Felszereléshiány`) entry extracted from Kréta
+/// notes (`Feljegyzesek`), evaluations (`Ertekelesek`), or omissions (`Mulasztasok`).
+class MissingEquipmentItem {
+  final String uid;
+  final String subjectName;
+  final String title;
+  final String note;
+  final String teacher;
+  final DateTime date;
+  final String source;
+
+  const MissingEquipmentItem({
+    required this.uid,
+    required this.subjectName,
+    required this.title,
+    required this.note,
+    required this.teacher,
+    required this.date,
+    required this.source,
+  });
+
+  static bool isMissingEquipmentText(String raw) {
+    final lower = raw.toLowerCase();
+    return lower.contains('felszereléshiány') ||
+        lower.contains('felszereleshiany') ||
+        lower.contains('felszerelés hiány') ||
+        lower.contains('felszereles hiany') ||
+        lower.contains('nincs felszerel');
+  }
+
+  static bool isMissingEquipmentGrade(Grade g) {
+    final combined = [
+      g.type.name,
+      g.type.description,
+      g.mode?.name ?? '',
+      g.mode?.description ?? '',
+      g.valueType.name,
+      g.valueType.description,
+      g.topic ?? '',
+      g.strValue,
+    ].join(' ');
+    return isMissingEquipmentText(combined);
+  }
+
+  static List<MissingEquipmentItem> deduplicateAndSort(
+    Iterable<MissingEquipmentItem> items,
+  ) {
+    final seen = <String, MissingEquipmentItem>{};
+    for (final item in items) {
+      final normDay = DateUtils.dateOnly(item.date.toLocal()).toIso8601String();
+      final dedupeKey = item.uid.trim().isNotEmpty
+          ? '${item.source}:${item.uid.trim()}'
+          : '$normDay:${item.subjectName.toLowerCase()}:${item.title.toLowerCase()}:${item.note.toLowerCase()}';
+      seen.putIfAbsent(dedupeKey, () => item);
+    }
+    final list = seen.values.toList()..sort((a, b) => b.date.compareTo(a.date));
+    return list;
+  }
+
+  static String _stripHtml(String raw) => raw
+      .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'</p>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'<[^>]*>'), '')
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&quot;', '"')
+      .trim();
+
+  static MissingEquipmentItem? fromRawNoteJson(Map<String, dynamic> json) {
+    final tipusObj = json['Tipus'] is Map ? json['Tipus'] as Map : null;
+    final tipusStr = [
+      tipusObj?['Nev'],
+      tipusObj?['Leiras'],
+      json['Tipus'],
+    ].where((e) => e != null).map((e) => e.toString()).join(' ');
+    final title = (json['Cim'] ?? json['cim'] ?? '').toString().trim();
+    final rawContent = (json['Tartalom'] ??
+            json['TartalomFormazott'] ??
+            json['TartalomText'] ??
+            json['tartalom'] ??
+            '')
+        .toString();
+    final note = _stripHtml(rawContent);
+    if (!isMissingEquipmentText('$tipusStr $title $note')) {
+      return null;
+    }
+
+    final tantargy = json['Tantargy'] is Map ? json['Tantargy'] as Map : null;
+    final subjectName = (tantargy?['Nev'] ??
+            json['TantargyNev'] ??
+            json['tantargy'] ??
+            '')
+        .toString()
+        .trim();
+    final uid = (json['Uid'] ?? json['uid'] ?? '').toString().trim();
+    final rawDate = (json['Datum'] ??
+            json['datum'] ??
+            json['KeszitesDatuma'] ??
+            '')
+        .toString();
+    final date = DateTime.tryParse(rawDate)?.toLocal() ?? DateTime.now();
+    final teacher = (json['KeszitoTanarNeve'] ??
+            json['RogzitoNeve'] ??
+            json['tanar'] ??
+            '')
+        .toString()
+        .trim();
+
+    return MissingEquipmentItem(
+      uid: uid.isNotEmpty
+          ? uid
+          : 'felj_${date.millisecondsSinceEpoch}_${subjectName.hashCode}',
+      subjectName: subjectName.isNotEmpty ? subjectName : 'Felszereléshiány',
+      title: title.isNotEmpty ? title : 'Felszereléshiány',
+      note: note,
+      teacher: teacher,
+      date: date,
+      source: 'feljegyzes',
+    );
+  }
+
+  static List<MissingEquipmentItem> extractMissingEquipments({
+    List<Map<String, dynamic>> rawNotes = const [],
+    List<Grade> grades = const [],
+    List<Omission> omissions = const [],
+    List<KretaMessage> messages = const [],
+  }) {
+    final extracted = <MissingEquipmentItem>[];
+
+    for (final raw in rawNotes) {
+      final parsed = fromRawNoteJson(raw);
+      if (parsed != null) extracted.add(parsed);
+    }
+
+    for (final msg in messages) {
+      if (!msg.isSystemMessage) continue;
+      final bodyClean = msg.cleanBody;
+      if (!isMissingEquipmentText('${msg.subject} $bodyClean')) continue;
+      extracted.add(
+        MissingEquipmentItem(
+          uid: msg.uid.trim().isNotEmpty
+              ? msg.uid.trim()
+              : 'sys_${msg.sentAt.millisecondsSinceEpoch}',
+          subjectName: msg.subject.trim().isNotEmpty
+              ? msg.subject.trim()
+              : 'Felszereléshiány',
+          title: msg.subject.trim().isNotEmpty
+              ? msg.subject.trim()
+              : 'Felszereléshiány',
+          note: bodyClean,
+          teacher: msg.sender.trim(),
+          date: msg.sentAt.toLocal(),
+          source: 'feljegyzes',
+        ),
+      );
+    }
+
+    for (final g in grades) {
+      if (!isMissingEquipmentGrade(g)) continue;
+      final topicClean = (g.topic ?? '').trim();
+      final fallbackStr = g.strValue.trim();
+      extracted.add(
+        MissingEquipmentItem(
+          uid: g.uid.trim().isNotEmpty
+              ? g.uid.trim()
+              : 'grd_${g.recordedAt.millisecondsSinceEpoch}',
+          subjectName: g.subject.name.trim().isNotEmpty
+              ? g.subject.name.trim()
+              : 'Felszereléshiány',
+          title: 'Felszereléshiány',
+          note: topicClean.isNotEmpty
+              ? topicClean
+              : (fallbackStr.isNotEmpty ? fallbackStr : g.type.description),
+          teacher: g.teacher.trim(),
+          date: g.recordedAt,
+          source: 'ertekeles',
+        ),
+      );
+    }
+
+    for (final o in omissions) {
+      final combined = [
+        o.type?.name ?? '',
+        o.type?.description ?? '',
+        o.mode?.name ?? '',
+        o.mode?.description ?? '',
+      ].join(' ');
+      if (!isMissingEquipmentText(combined)) continue;
+      extracted.add(
+        MissingEquipmentItem(
+          uid: o.uid.trim().isNotEmpty
+              ? o.uid.trim()
+              : 'om_${o.date.millisecondsSinceEpoch}',
+          subjectName: o.subject.name.trim().isNotEmpty
+              ? o.subject.name.trim()
+              : 'Felszereléshiány',
+          title: 'Felszereléshiány',
+          note: o.mode?.description.trim().isNotEmpty == true
+              ? o.mode!.description.trim()
+              : (o.type?.description.trim() ?? ''),
+          teacher: o.teacher.trim(),
+          date: o.date.toLocal(),
+          source: 'mulasztas',
+        ),
+      );
+    }
+
+    return deduplicateAndSort(extracted);
+  }
+
+  Map<String, dynamic> toJson() => {
+        'uid': uid,
+        'subjectName': subjectName,
+        'title': title,
+        'note': note,
+        'teacher': teacher,
+        'date': date.toUtc().toIso8601String(),
+        'source': source,
+      };
+
+  factory MissingEquipmentItem.fromJson(Map<String, dynamic> json) {
+    if (json.containsKey('Uid') || json.containsKey('Cim')) {
+      return fromRawNoteJson(json) ??
+          MissingEquipmentItem(
+            uid: (json['Uid'] ?? '').toString(),
+            subjectName: 'Felszereléshiány',
+            title: (json['Cim'] ?? 'Felszereléshiány').toString(),
+            note: _stripHtml((json['Tartalom'] ?? '').toString()),
+            teacher: (json['KeszitoTanarNeve'] ?? '').toString(),
+            date: DateTime.tryParse((json['Datum'] ?? '').toString())?.toLocal() ??
+                DateTime.now(),
+            source: 'feljegyzes',
+          );
+    }
+    return MissingEquipmentItem(
+      uid: (json['uid'] ?? '').toString(),
+      subjectName: (json['subjectName'] ?? 'Felszereléshiány').toString(),
+      title: (json['title'] ?? 'Felszereléshiány').toString(),
+      note: (json['note'] ?? '').toString(),
+      teacher: (json['teacher'] ?? '').toString(),
+      date: DateTime.tryParse((json['date'] ?? '').toString())?.toLocal() ??
+          DateTime.now(),
+      source: (json['source'] ?? 'feljegyzes').toString(),
+    );
+  }
+}
+
 /// Aggregated payload for the Home, Grades, Timetable, and Továbbiak screens.
 class DashboardData {
   final Student? student;
@@ -424,6 +693,7 @@ class DashboardData {
   final List<Test> tests;
   final List<Omission> omissions;
   final List<KretaMessage> messages;
+  final List<MissingEquipmentItem> missingEquipments;
   final StoredSession activeSession;
 
   const DashboardData({
@@ -435,6 +705,7 @@ class DashboardData {
     required this.tests,
     this.omissions = const [],
     this.messages = const [],
+    this.missingEquipments = const [],
     required this.activeSession,
   });
 
@@ -447,6 +718,7 @@ class DashboardData {
         'tests': tests.map((t) => t.toJson()).toList(),
         'omissions': omissions.map((o) => o.toJson()).toList(),
         'messages': messages.map((m) => m.toJson()).toList(),
+        'missingEquipments': missingEquipments.map((e) => e.toJson()).toList(),
       };
 
   factory DashboardData.fromJson(
@@ -492,6 +764,9 @@ class DashboardData {
 
     final allGrades = parseList(json['allGrades'], Grade.fromJson);
     final rawMessages = parseList(json['messages'], KretaMessage.fromJson);
+    final omissions = parseList(json['omissions'], Omission.fromJson);
+    final parsedEquipment =
+        parseList(json['missingEquipments'], MissingEquipmentItem.fromJson);
     final messages = readMessageIds.isEmpty
         ? rawMessages
         : rawMessages
@@ -511,8 +786,16 @@ class DashboardData {
       latestGrades: allGrades.take(5).toList(),
       homeworks: parseList(json['homeworks'], Homework.fromJson),
       tests: parseList(json['tests'], Test.fromJson),
-      omissions: parseList(json['omissions'], Omission.fromJson),
+      omissions: omissions,
       messages: messages,
+      missingEquipments: MissingEquipmentItem.deduplicateAndSort([
+        ...parsedEquipment,
+        ...MissingEquipmentItem.extractMissingEquipments(
+          grades: allGrades,
+          omissions: omissions,
+          messages: messages,
+        ),
+      ]),
       activeSession: session,
     );
   }
@@ -894,6 +1177,29 @@ class KretaClient {
     return _dayTimetableCache[_dayCacheKey(session, date)];
   }
 
+  /// Returns all cached timetable lessons currently stored across dates for [session].
+  List<Lesson> getAllCachedTimetableLessons(StoredSession session) {
+    final userName = (session.userName ?? '').trim();
+    final acct = userName.isNotEmpty
+        ? userName
+        : TokenStorageService.accountKeyForSession(session);
+    final prefix = '$acct|';
+    final seen = <String>{};
+    final out = <Lesson>[];
+    for (final entry in _dayTimetableCache.entries) {
+      if (!entry.key.startsWith(prefix)) continue;
+      for (final lesson in entry.value) {
+        final key = lesson.uid.trim().isNotEmpty
+            ? lesson.uid.trim()
+            : '${lesson.lessonNumber ?? ''}_${lesson.start.toIso8601String()}_${lesson.name}';
+        if (seen.add(key)) {
+          out.add(lesson);
+        }
+      }
+    }
+    return out;
+  }
+
   void _cacheTimetableLessons(
     StoredSession session,
     List<Lesson> lessons, {
@@ -1192,6 +1498,126 @@ class KretaClient {
       }
     }
     return null;
+  }
+
+  /// Returns all announced [tests] scheduled on the local calendar date of [day],
+  /// sorted by period number (`lessonNumber`) and timestamp.
+  static List<Test> findTestsForDay(
+    DateTime day,
+    Iterable<Test> tests,
+  ) {
+    final targetDay = DateUtils.dateOnly(day.toLocal());
+    final matches = tests
+        .where((t) => DateUtils.dateOnly(t.date.toLocal()) == targetDay)
+        .toList();
+    matches.sort((a, b) {
+      final lnCmp = a.lessonNumber.compareTo(b.lessonNumber);
+      if (lnCmp != 0) return lnCmp;
+      return a.date.toLocal().compareTo(b.date.toLocal());
+    });
+    return matches;
+  }
+
+  /// Matches [lesson] to scheduled [tests] on the same calendar day by period
+  /// number (`lessonNumber`) or subject identity when period number is absent.
+  static List<Test> findTestsForLesson(
+    Lesson lesson,
+    Iterable<Test> tests,
+  ) {
+    final lessonDay = DateUtils.dateOnly(lesson.start.toLocal());
+    final lessonNum = lesson.lessonNumber;
+    final lessonSubjUid = lesson.subject?.uid.trim() ?? '';
+    final lessonSubjName =
+        (lesson.subject?.name ?? lesson.name).trim().toLowerCase();
+
+    bool subjectMatches(Test test) {
+      if (lessonSubjUid.isNotEmpty &&
+          test.subject.uid.trim().isNotEmpty &&
+          test.subject.uid.trim() == lessonSubjUid) {
+        return true;
+      }
+      final testSubjName = (test.subject.name.isNotEmpty
+              ? test.subject.name
+              : test.subjectName)
+          .trim()
+          .toLowerCase();
+      return lessonSubjName.isNotEmpty && testSubjName == lessonSubjName;
+    }
+
+    final exactMatches = <Test>[];
+    final periodOnlyMatches = <Test>[];
+    for (final test in tests) {
+      if (DateUtils.dateOnly(test.date.toLocal()) != lessonDay) continue;
+      if (test.lessonNumber > 0 &&
+          lessonNum != null &&
+          lessonNum == test.lessonNumber) {
+        if (subjectMatches(test)) {
+          exactMatches.add(test);
+        } else {
+          periodOnlyMatches.add(test);
+        }
+      } else if (test.lessonNumber <= 0 && subjectMatches(test)) {
+        exactMatches.add(test);
+      }
+    }
+    return exactMatches.isNotEmpty ? exactMatches : periodOnlyMatches;
+  }
+
+  /// Matches a timetable [lesson] with an absence or late arrival [Omission]
+  /// on the same calendar date by period number, start time, or subject.
+  static Omission? findOmissionForLesson(
+    Lesson lesson,
+    Iterable<Omission> omissions,
+  ) {
+    final lessonDay = DateUtils.dateOnly(lesson.start.toLocal());
+    final lessonStartLocal = lesson.start.toLocal();
+    final lessonNum = lesson.lessonNumber;
+    final lessonSubjUid = lesson.subject?.uid.trim() ?? '';
+    final lessonSubjName =
+        (lesson.subject?.name ?? lesson.name).trim().toLowerCase();
+
+    bool subjectMatches(Omission o) {
+      if (lessonSubjUid.isNotEmpty &&
+          o.subject.uid.trim().isNotEmpty &&
+          o.subject.uid.trim() == lessonSubjUid) {
+        return true;
+      }
+      final omSubj = o.subject.name.trim().toLowerCase();
+      return lessonSubjName.isNotEmpty && omSubj == lessonSubjName;
+    }
+
+    Omission? periodSubjectMatch;
+    Omission? periodOnlyMatch;
+    Omission? timeMatch;
+    Omission? subjectOnlyMatch;
+
+    for (final o in omissions) {
+      if (DateUtils.dateOnly(o.date.toLocal()) != lessonDay) continue;
+      final omClassNo = o.lesson?.classNo;
+      if (lessonNum != null && omClassNo != null && omClassNo == lessonNum) {
+        if (subjectMatches(o)) {
+          periodSubjectMatch ??= o;
+        } else {
+          periodOnlyMatch ??= o;
+        }
+        continue;
+      }
+      if (o.lesson != null) {
+        final omStart = o.lesson!.start.toLocal();
+        if (omStart.difference(lessonStartLocal).inMinutes.abs() <= 5) {
+          timeMatch ??= o;
+          continue;
+        }
+      }
+      if (omClassNo == null && subjectMatches(o)) {
+        subjectOnlyMatch ??= o;
+      }
+    }
+
+    return periodSubjectMatch ??
+        periodOnlyMatch ??
+        timeMatch ??
+        subjectOnlyMatch;
   }
 
   /// Fetches announced tests/exams via [KretaEndpoints.getTests], sorted newest-first.
@@ -1534,6 +1960,84 @@ class KretaClient {
     }
   }
 
+  /// Marks all unread inbox and system messages in [messages] as read both
+  /// locally and in batches via Kréta's `/kommunikacio/uzenetek/olvasott` endpoint.
+  /// Returns the number of newly read messages.
+  Future<int> markAllMessagesAsRead(
+    StoredSession session,
+    Iterable<KretaMessage> messages,
+  ) async {
+    final unread = messages.where((m) => !m.isRead && !m.isSent).toList();
+    if (unread.isEmpty) return 0;
+    if (_isDemoActive(session)) return unread.length;
+
+    final accountKey = TokenStorageService.accountKeyForSession(session);
+    final localKeys = <String>[];
+    final serverIds = <Object>[];
+    final seenServerIds = <String>{};
+
+    for (final msg in unread) {
+      if (msg.uid.trim().isNotEmpty) {
+        localKeys.add(msg.uid.trim());
+      }
+      if (msg.messageId != null && msg.messageId!.trim().isNotEmpty) {
+        localKeys.add(msg.messageId!.trim());
+      }
+      if (msg.isSystemMessage) {
+        localKeys.add('sys:${msg.uid}');
+        continue;
+      }
+      final rawTargetId = (msg.messageId?.trim().isNotEmpty == true)
+          ? msg.messageId!.trim()
+          : msg.uid.trim();
+      if (rawTargetId.isNotEmpty && seenServerIds.add(rawTargetId)) {
+        serverIds.add(int.tryParse(rawTargetId) ?? rawTargetId);
+      }
+    }
+
+    if (localKeys.isNotEmpty) {
+      await _storage.markMessagesReadLocally(
+        localKeys,
+        accountKey: accountKey,
+      );
+    }
+
+    if (serverIds.isEmpty) return unread.length;
+
+    const batchSize = 50;
+    try {
+      for (var i = 0; i < serverIds.length; i += batchSize) {
+        final end =
+            (i + batchSize < serverIds.length) ? i + batchSize : serverIds.length;
+        final chunk = serverIds.sublist(i, end);
+        final payload = <String, dynamic>{
+          'isOlvasott': true,
+          'uzenetAzonositoLista': chunk,
+        };
+        final ok = await _postOrPutEugyintezes(
+          session,
+          KretaEndpoints.getMarkMessagesReadUrl(),
+          payload,
+        );
+        if (!ok) {
+          await _postOrPutEugyintezes(
+            session,
+            KretaEndpoints.getMarkMessagesReadV1Url(),
+            payload,
+          );
+        }
+      }
+    } on TokenExpiredException {
+      rethrow;
+    } on InvalidGrantException {
+      rethrow;
+    } catch (_) {
+      // Local read state already saved above.
+    }
+
+    return unread.length;
+  }
+
   /// Downloads an attachment from Kréta e-Ügyintézés into temporary cache storage.
   Future<File> downloadMessageAttachment(
     StoredSession session,
@@ -1653,6 +2157,20 @@ class KretaClient {
     return null;
   }
 
+  Future<List<Map<String, dynamic>>> _safeFetchRawInfoBoard(
+    StoredSession session,
+  ) async {
+    try {
+      final raw = await _getAuthenticatedJson(
+        session,
+        KretaEndpoints.getInfoBoard(session.instituteCode),
+      );
+      return _extractMessageMaps(raw);
+    } catch (_) {
+      return const [];
+    }
+  }
+
   /// Fetches today's timetable, all grades, homeworks, announced tests,
   /// omissions, messages, and student profile in parallel, using the
   /// transparent token refresh interceptor.
@@ -1673,6 +2191,7 @@ class KretaClient {
       fetchTests(session),
       fetchOmissions(session),
       fetchMessages(session),
+      _safeFetchRawInfoBoard(session),
     ]);
 
     final todaysLessons = results[0] as List<Lesson>;
@@ -1702,6 +2221,16 @@ class KretaClient {
       homeworks.sort((a, b) => b.creationDate.compareTo(a.creationDate));
     }
 
+    final omissions = results[5] as List<Omission>;
+    final messages = results[6] as List<KretaMessage>;
+    final rawInfoNotes = results[7] as List<Map<String, dynamic>>;
+    final missingEquipments = MissingEquipmentItem.extractMissingEquipments(
+      rawNotes: rawInfoNotes,
+      grades: allGrades,
+      omissions: omissions,
+      messages: messages,
+    );
+
     final payload = DashboardData(
       todaysLessons: todaysLessons,
       allGrades: allGrades,
@@ -1709,8 +2238,9 @@ class KretaClient {
       student: results[2] as Student?,
       homeworks: homeworks,
       tests: results[4] as List<Test>,
-      omissions: results[5] as List<Omission>,
-      messages: results[6] as List<KretaMessage>,
+      omissions: omissions,
+      messages: messages,
+      missingEquipments: missingEquipments,
       activeSession: _latestSession ?? session,
     );
     await saveCachedDashboard(payload);

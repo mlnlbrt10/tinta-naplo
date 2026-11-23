@@ -13,8 +13,9 @@ import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 import '../widgets/privacy_legal_modal.dart';
 
-/// Showcase-driven WebAuth-only login screen seamlessly integrated on pure
-/// `#000000` OLED black with horizontal/vertical alpha fades and a single CTA.
+/// Clean, editorial showcase login screen on pure `#000000` OLED black with
+/// static, deliberately cropped/zoomed-in phone mockups, bottom-nav-free
+/// framing, crisp typography, and a thumb-accessible WebAuth CTA.
 class LoginScreen extends StatefulWidget {
   final UserProfilePrefs prefs;
   final VoidCallback onLaunchWebAuth;
@@ -68,18 +69,28 @@ class _ShowcaseSlideSpec {
   final String assetPath;
   final double aspectRatio;
   final String statusBarTime;
+  final String editorialTitleTop;
+  final String editorialTitleAccent;
   final String caption;
+  final Color accentColor;
+  final Alignment focusAlignment;
+  final double cropZoom;
 
   const _ShowcaseSlideSpec({
     required this.assetPath,
     required this.aspectRatio,
     required this.statusBarTime,
+    required this.editorialTitleTop,
+    required this.editorialTitleAccent,
     required this.caption,
+    required this.accentColor,
+    required this.focusAlignment,
+    required this.cropZoom,
   });
 }
 
 class _LoginScreenState extends State<LoginScreen>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   static const Color _oledBlack = Color(0xFF000000);
   static const Color _crispOffWhite = Color(0xFFF8FAFC);
   static const double _showcaseAspectRatio = 1440 / 2992;
@@ -89,47 +100,75 @@ class _LoginScreenState extends State<LoginScreen>
       assetPath: 'assets/images/showcase/showcase_home.jpg',
       aspectRatio: _showcaseAspectRatio,
       statusBarTime: LoginScreen.fixedStatusBarTime,
+      editorialTitleTop: 'Aktuális óra,',
+      editorialTitleAccent: 'egy pillantásra.',
       caption:
           'Minden fontos infó egy helyen - aktuális óra, házik és jegyek átlaghatással.',
+      accentColor: Color(0xFF3B82F6),
+      focusAlignment: Alignment(0.0, -0.78),
+      cropZoom: 1.18,
     ),
     _ShowcaseSlideSpec(
       assetPath: 'assets/images/showcase/showcase_timetable.jpg',
       aspectRatio: _showcaseAspectRatio,
       statusBarTime: LoginScreen.fixedStatusBarTime,
+      editorialTitleTop: 'Tiszta napirend,',
+      editorialTitleAccent: 'káosz nélkül.',
       caption:
           'Átlátható heti órarend helyettesítésekkel, elmaradt órákkal és házikkal.',
+      accentColor: Color(0xFF06B6D4),
+      focusAlignment: Alignment(0.0, -0.34),
+      cropZoom: 1.16,
     ),
     _ShowcaseSlideSpec(
       assetPath: 'assets/images/showcase/showcase_grades.jpg',
       aspectRatio: _showcaseAspectRatio,
       statusBarTime: LoginScreen.fixedStatusBarTime,
+      editorialTitleTop: 'Átlaghatás,',
+      editorialTitleAccent: 'tizedre pontosan.',
       caption:
           'Tantárgyankénti átlagok és jegyek, rendezhetően és azonnal átláthatóan.',
+      accentColor: Color(0xFF22C55E),
+      focusAlignment: Alignment(0.0, -0.68),
+      cropZoom: 1.18,
     ),
     _ShowcaseSlideSpec(
       assetPath: 'assets/images/showcase/showcase_scholarship.jpg',
       aspectRatio: _showcaseAspectRatio,
       statusBarTime: LoginScreen.fixedStatusBarTime,
+      editorialTitleTop: 'Tűzd ki a célt,',
+      editorialTitleAccent: 'mérd a lépést.',
       caption:
           'Tűzd ki, érd el - kövesd az ösztöndíjadat és a következő sávhoz szükséges lépéseket.',
+      accentColor: Color(0xFFF59E0B),
+      focusAlignment: Alignment(0.0, -0.38),
+      cropZoom: 1.15,
     ),
     _ShowcaseSlideSpec(
       assetPath: 'assets/images/showcase/showcase_absences.jpg',
       aspectRatio: _showcaseAspectRatio,
       statusBarTime: LoginScreen.fixedStatusBarTime,
+      editorialTitleTop: 'Minden mulasztás',
+      editorialTitleAccent: 'tiszta keretben.',
       caption:
           'Hiányzások tantárgyanként és napi órarend-nézetben, pirossal kiemelve.',
+      accentColor: Color(0xFFEF4444),
+      focusAlignment: Alignment(0.0, -0.45),
+      cropZoom: 1.16,
     ),
     _ShowcaseSlideSpec(
       assetPath: 'assets/images/showcase/showcase_themes.jpg',
       aspectRatio: _showcaseAspectRatio,
       statusBarTime: LoginScreen.fixedStatusBarTime,
+      editorialTitleTop: 'OLED fekete,',
+      editorialTitleAccent: 'folyékony üveg.',
       caption:
           'OLED fekete, Material You és Liquid Glass - szabd teljesen magadra az appot.',
+      accentColor: Color(0xFFA855F7),
+      focusAlignment: Alignment(0.0, -0.28),
+      cropZoom: 1.15,
     ),
   ];
-  static const String _menetrendSlideStatusBarTime =
-      LoginScreen.fixedStatusBarTime;
 
   static final Uri _menetrendGoUri = Uri.parse('https://menetrendgo.hu');
 
@@ -148,6 +187,7 @@ class _LoginScreenState extends State<LoginScreen>
   Timer? _autoAdvanceTimer;
   Timer? _resumeTimer;
   int _currentPage = _kInfiniteBasePage;
+  double _pagePosition = _kInfiniteBasePage.toDouble();
   bool _userTouching = false;
   bool _screenshotsPrecached = false;
 
@@ -159,7 +199,7 @@ class _LoginScreenState extends State<LoginScreen>
 
     _entranceController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 500),
+      duration: const Duration(milliseconds: 520),
     );
     _heroFade = CurvedAnimation(
       parent: _entranceController,
@@ -176,7 +216,16 @@ class _LoginScreenState extends State<LoginScreen>
     );
     _entranceController.forward();
 
+    _pageController.addListener(_onPageScroll);
     _startAutoAdvance();
+  }
+
+  void _onPageScroll() {
+    if (!_pageController.hasClients) return;
+    final nextPos = _pageController.page ?? _currentPage.toDouble();
+    if ((nextPos - _pagePosition).abs() > 0.002 && mounted) {
+      setState(() => _pagePosition = nextPos);
+    }
   }
 
   Future<void> _openMenetrendGoWebsite() async {
@@ -210,7 +259,7 @@ class _LoginScreenState extends State<LoginScreen>
       }
       _pageController.animateToPage(
         _currentPage + 1,
-        duration: const Duration(milliseconds: 460),
+        duration: const Duration(milliseconds: 520),
         curve: Curves.easeOutCubic,
       );
     });
@@ -235,106 +284,185 @@ class _LoginScreenState extends State<LoginScreen>
   void dispose() {
     _autoAdvanceTimer?.cancel();
     _resumeTimer?.cancel();
+    _pageController.removeListener(_onPageScroll);
     _menetrendLinkRecognizer.dispose();
     _entranceController.dispose();
     _pageController.dispose();
     super.dispose();
   }
 
+  Color _activeAccentColor(int normalizedIdx) {
+    if (normalizedIdx < _screenshotSlides.length) {
+      return _screenshotSlides[normalizedIdx].accentColor;
+    }
+    return const Color(0xFF38BDF8);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final activeIdx = _currentPage % _slideCount;
+    final activeAccent = _activeAccentColor(activeIdx);
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: OledTheme.systemOverlayStyleForBrightness(Brightness.dark),
       child: Scaffold(
         backgroundColor: _oledBlack,
-      body: ColoredBox(
-        color: _oledBlack,
-        child: SafeArea(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
-              child: Padding(
-                padding: const EdgeInsets.only(top: 12, bottom: 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: _buildBrandHeader(theme),
-                    ),
-                    const SizedBox(height: 14),
-                    Expanded(
-                      child: Listener(
-                        onPointerDown: (_) => _onUserTouchStart(),
-                        onPointerUp: (_) => _onUserTouchEnd(),
-                        onPointerCancel: (_) => _onUserTouchEnd(),
-                        child: RepaintBoundary(
-                          child: ShaderMask(
-                            blendMode: BlendMode.dstIn,
-                            shaderCallback: (bounds) => const LinearGradient(
-                              begin: Alignment.centerLeft,
-                              end: Alignment.centerRight,
-                              colors: [
-                                Colors.transparent,
-                                Colors.black,
-                                Colors.black,
-                                Colors.transparent,
-                              ],
-                              stops: [0.0, 0.09, 0.91, 1.0],
-                            ).createShader(bounds),
-                            child: PageView.builder(
-                              clipBehavior: Clip.none,
-                              controller: _pageController,
-                              physics: const BouncingScrollPhysics(),
-                              onPageChanged: (idx) {
-                                _currentPage = idx;
-                              },
-                              itemBuilder: (context, index) =>
-                                  _buildShowcaseSlide(
-                                context,
-                                theme,
-                                scheme,
-                                index % _slideCount,
-                              ),
-                            ),
-                          ),
-                        ),
+        body: ColoredBox(
+          color: _oledBlack,
+          child: Stack(
+            children: [
+              // Subtle asymmetric ambient spotlight shifted toward the phone stage.
+              Positioned(
+                top: -60,
+                right: -80,
+                child: IgnorePointer(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 650),
+                    curve: Curves.easeOutCubic,
+                    width: 340,
+                    height: 340,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          activeAccent.withValues(alpha: 0.22),
+                          activeAccent.withValues(alpha: 0.05),
+                          Colors.transparent,
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 16),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: _buildHeroCtaSection(theme, scheme),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ),
+              SafeArea(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 460),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final compactHeight = constraints.maxHeight < 680;
+                        final activeSlide = activeIdx < _screenshotSlides.length
+                            ? _screenshotSlides[activeIdx]
+                            : null;
+                        final activeAccent =
+                            activeSlide?.accentColor ?? const Color(0xFF38BDF8);
+
+                        return Padding(
+                          padding: EdgeInsets.only(
+                            top: compactHeight ? 8 : 14,
+                            bottom: compactHeight ? 10 : 16,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                ),
+                                child: _buildBrandHeader(
+                                  theme,
+                                  compactHeight: compactHeight,
+                                ),
+                              ),
+                              SizedBox(height: compactHeight ? 6 : 12),
+                              Expanded(
+                                child: Listener(
+                                  onPointerDown: (_) => _onUserTouchStart(),
+                                  onPointerUp: (_) => _onUserTouchEnd(),
+                                  onPointerCancel: (_) => _onUserTouchEnd(),
+                                  child: RepaintBoundary(
+                                    child: PageView.builder(
+                                      clipBehavior: Clip.none,
+                                      controller: _pageController,
+                                      physics: const BouncingScrollPhysics(),
+                                      onPageChanged: (idx) {
+                                        if (mounted) {
+                                          setState(() => _currentPage = idx);
+                                        }
+                                      },
+                                      itemBuilder: (context, index) =>
+                                          _buildShowcaseSlide(
+                                        context,
+                                        theme,
+                                        scheme,
+                                        index,
+                                        compactHeight: compactHeight,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              SizedBox(height: compactHeight ? 6 : 10),
+                              _buildSlideProgressBar(
+                                activeIdx,
+                                activeAccent,
+                              ),
+                              SizedBox(height: compactHeight ? 10 : 16),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                ),
+                                child: _buildHeroCtaSection(
+                                  theme,
+                                  scheme,
+                                  activeAccent,
+                                  compactHeight: compactHeight,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
-    ),
     );
   }
 
-  Widget _buildBrandHeader(ThemeData theme) {
+  void _jumpToSlide(int targetModIdx) {
+    if (!_pageController.hasClients) return;
+    HapticFeedback.selectionClick();
+    final currentWhole = _pageController.page?.round() ?? _currentPage;
+    final currentMod = currentWhole % _slideCount;
+    var delta = targetModIdx - currentMod;
+    if (delta > _slideCount ~/ 2) delta -= _slideCount;
+    if (delta < -(_slideCount ~/ 2)) delta += _slideCount;
+    _onUserTouchStart();
+    _pageController
+        .animateToPage(
+          currentWhole + delta,
+          duration: const Duration(milliseconds: 420),
+          curve: Curves.easeOutCubic,
+        )
+        .whenComplete(_onUserTouchEnd);
+  }
+
+  Widget _buildBrandHeader(
+    ThemeData theme, {
+    required bool compactHeight,
+  }) {
     return Row(
       children: [
         AppBrandIconBadge(
           prefs: widget.prefs,
-          size: 42,
+          size: compactHeight ? 34 : 38,
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 11),
         Expanded(
           child: Text(
             uwu('Tinta Napló'),
             style: theme.textTheme.titleLarge?.copyWith(
+              fontSize: compactHeight ? 18.5 : 20.5,
               fontWeight: FontWeight.w900,
               color: _crispOffWhite,
-              letterSpacing: -0.3,
+              letterSpacing: -0.45,
             ),
           ),
         ),
@@ -342,7 +470,49 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Widget _buildHeroCtaSection(ThemeData theme, ColorScheme scheme) {
+  Widget _buildSlideProgressBar(int activeIdx, Color activeAccent) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        for (int i = 0; i < _slideCount; i++)
+          GestureDetector(
+            key: ValueKey<String>('login-slide-dot-$i'),
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _jumpToSlide(i),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 3.5, vertical: 4),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                width: i == activeIdx ? 24 : 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: i == activeIdx
+                      ? activeAccent
+                      : Colors.white.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(999),
+                  boxShadow: i == activeIdx
+                      ? [
+                          BoxShadow(
+                            color: activeAccent.withValues(alpha: 0.45),
+                            blurRadius: 8,
+                          ),
+                        ]
+                      : null,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildHeroCtaSection(
+    ThemeData theme,
+    ColorScheme scheme,
+    Color activeAccent, {
+    required bool compactHeight,
+  }) {
     return FadeTransition(
       opacity: _heroFade,
       child: SlideTransition(
@@ -351,54 +521,68 @@ class _LoginScreenState extends State<LoginScreen>
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Center(
+            Align(
+              alignment: Alignment.center,
               child: RichText(
                 key: const ValueKey<String>('login-hero-headline'),
                 textAlign: TextAlign.center,
                 text: TextSpan(
                   style: theme.textTheme.headlineSmall?.copyWith(
                     fontFamily: OledTheme.defaultFontFamily,
-                    color: _crispOffWhite,
-                    fontSize: 28,
+                    color: _crispOffWhite.withValues(alpha: 0.90),
+                    fontSize: compactHeight ? 18 : 21,
                     fontWeight: FontWeight.w600,
                     letterSpacing: -0.5,
-                    height: 1.18,
+                    height: 1.16,
                   ),
                   children: [
                     TextSpan(
-                      text: '${uwu('Készen állsz valami')}\n',
+                      text: '${uwu('Készen állsz valami')} ',
                     ),
                     TextSpan(
                       text: uwu('igazán jóra?'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: OledTheme.defaultFontFamily,
-                        color: Color(0xFF3B82F6),
-                        fontSize: 32,
+                        color: const Color(0xFF3B82F6),
+                        fontSize: compactHeight ? 19 : 22,
                         fontWeight: FontWeight.w900,
-                        letterSpacing: -0.8,
+                        letterSpacing: -0.6,
                       ),
                     ),
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: 14),
+            SizedBox(height: compactHeight ? 10 : 12),
             TactileBounce(
               pressedScale: 0.97,
               onTap: () {
                 HapticFeedback.lightImpact();
                 widget.onLaunchWebAuth();
               },
-              child: Container(
-                height: 54,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 280),
+                height: compactHeight ? 48 : 54,
                 decoration: BoxDecoration(
-                  color: scheme.primary,
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      scheme.primary,
+                      Color.lerp(scheme.primary, activeAccent, 0.24) ??
+                          scheme.primary,
+                    ],
+                  ),
                   borderRadius: BorderRadius.circular(28),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.22),
+                    width: 0.9,
+                  ),
                   boxShadow: [
                     BoxShadow(
-                      color: scheme.primary.withValues(alpha: 0.28),
-                      blurRadius: 18,
-                      offset: const Offset(0, 6),
+                      color: scheme.primary.withValues(alpha: 0.34),
+                      blurRadius: 22,
+                      offset: const Offset(0, 7),
                     ),
                   ],
                 ),
@@ -407,7 +591,7 @@ class _LoginScreenState extends State<LoginScreen>
                   children: [
                     Icon(
                       Icons.lock_outline_rounded,
-                      size: 20,
+                      size: 19,
                       color: scheme.onPrimary,
                     ),
                     const SizedBox(width: 10),
@@ -423,11 +607,17 @@ class _LoginScreenState extends State<LoginScreen>
                         ),
                       ),
                     ),
+                    const SizedBox(width: 6),
+                    Icon(
+                      Icons.arrow_forward_rounded,
+                      size: 17,
+                      color: scheme.onPrimary.withValues(alpha: 0.85),
+                    ),
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: 10),
+            SizedBox(height: compactHeight ? 6 : 8),
             Center(
               child: GestureDetector(
                 key: const ValueKey<String>('login-privacy-legal-link'),
@@ -437,15 +627,17 @@ class _LoginScreenState extends State<LoginScreen>
                   showPrivacyAndLegalModal(context, prefs: widget.prefs);
                 },
                 child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   child: Text(
                     uwu('Nem hivatalos e-KRÉTA kliens • Adatvédelem'),
                     textAlign: TextAlign.center,
                     style: theme.textTheme.labelSmall?.copyWith(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w500,
-                      color: _crispOffWhite.withValues(alpha: 0.48),
+                      color: _crispOffWhite.withValues(alpha: 0.50),
                     ),
                   ),
                 ),
@@ -461,179 +653,76 @@ class _LoginScreenState extends State<LoginScreen>
     BuildContext context,
     ThemeData theme,
     ColorScheme scheme,
-    int index,
-  ) {
+    int pageIndex, {
+    required bool compactHeight,
+  }) {
+    final index = pageIndex % _slideCount;
     final bool isScreenshotSlide = index < _screenshotSlides.length;
+    final spec = isScreenshotSlide ? _screenshotSlides[index] : null;
+    final accent = spec?.accentColor ?? const Color(0xFF38BDF8);
+    final titleTop = spec?.editorialTitleTop ?? 'Mindig tudd,';
+    final titleAccent = spec?.editorialTitleAccent ?? 'mikor indulj.';
+    final pageDelta = (_pagePosition - pageIndex).clamp(-1.0, 1.0);
+    final absDelta = pageDelta.abs();
+    final stageScale = (1.0 - absDelta * 0.09).clamp(0.85, 1.0);
+    final stageOpacity = (1.0 - absDelta * 0.52).clamp(0.32, 1.0);
+    final captionOpacity = (1.0 - absDelta * 0.85).clamp(0.0, 1.0);
+
     final baseCaptionStyle = theme.textTheme.bodyMedium?.copyWith(
-      fontSize: 13.5,
-      fontWeight: FontWeight.w600,
-      color: _crispOffWhite.withValues(alpha: 0.78),
-      height: 1.38,
+      fontSize: compactHeight ? 11.5 : 12.5,
+      fontWeight: FontWeight.w500,
+      color: _crispOffWhite.withValues(alpha: 0.72),
+      height: 1.32,
     );
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 6),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // 1. Frameless floating hero showcase visual with ambient depth glow.
+          // The reworked screenshot asset is rendered cleanly & directly without
+          // any fake device bezel, cutout, or artificial crop.
           Expanded(
-            child: _buildPhoneMockupFrame(
-              slideIndex: index,
-              statusBarTime: isScreenshotSlide
-                  ? _screenshotSlides[index].statusBarTime
-                  : _menetrendSlideStatusBarTime,
-              child: isScreenshotSlide
-                  ? _buildSeamlessScreenshot(_screenshotSlides[index])
-                  : _buildExpandedMenetrendFrame(theme, scheme),
-            ),
-          ),
-          const SizedBox(height: 14),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 340),
-            child: isScreenshotSlide
-                ? Text(
-                    uwu(_screenshotSlides[index].caption),
-                    textAlign: TextAlign.center,
-                    style: baseCaptionStyle,
-                  )
-                : Text.rich(
-                    TextSpan(
-                      style: baseCaptionStyle,
-                      children: [
-                        TextSpan(
-                          text: uwu('Mindig tudd, mikor kell menned, a '),
-                        ),
-                        TextSpan(
-                          text: 'MenetrendGO',
-                          recognizer: _menetrendLinkRecognizer,
-                          style: baseCaptionStyle?.copyWith(
-                            color: const Color(0xFF38BDF8),
-                            fontWeight: FontWeight.w800,
-                            decoration: TextDecoration.underline,
-                            decorationColor: const Color(0xFF38BDF8)
-                                .withValues(alpha: 0.72),
-                          ),
-                        ),
-                        TextSpan(
-                          text: uwu(' integrációnak köszönhetően.'),
-                        ),
-                      ],
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPhoneMockupFrame({
-    required int slideIndex,
-    required String statusBarTime,
-    required Widget child,
-  }) {
-    return RepaintBoundary(
-      child: Center(
-        child: FittedBox(
-          fit: BoxFit.contain,
-          alignment: Alignment.center,
-          child: SizedBox(
-            width: 260,
-            height: 508,
-            child: Container(
-              key: ValueKey<String>('login-phone-mockup-$slideIndex'),
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0B0E14),
-                borderRadius: BorderRadius.circular(30),
-                border: Border.all(
-                  color: const Color(0xFF2B3240),
-                  width: 2.2,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.white.withValues(alpha: 0.05),
-                    blurRadius: 1,
-                    spreadRadius: 0.5,
-                  ),
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.70),
-                    blurRadius: 24,
-                    offset: const Offset(0, 12),
-                  ),
-                ],
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(24),
-                child: ColoredBox(
-                  color: const Color(0xFF04060A),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+            child: Opacity(
+              opacity: stageOpacity,
+              child: Transform.translate(
+                offset: Offset(0, absDelta * 10),
+                child: Transform.scale(
+                  scale: stageScale,
+                  child: Stack(
+                    alignment: Alignment.center,
                     children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(14, 8, 14, 6),
-                        child: Row(
-                          children: [
-                            Text(
-                              statusBarTime,
-                              key: ValueKey<String>('login-phone-time-$slideIndex'),
-                              style: const TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xD8F8FAFC),
-                                fontFeatures: [FontFeature.tabularFigures()],
-                              ),
-                            ),
-                            const Spacer(),
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF020305),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: const Color(0xFF262D3A),
-                                  width: 1.0,
-                                ),
-                              ),
-                            ),
-                            const Spacer(),
-                            const Icon(
-                              Icons.signal_cellular_4_bar_rounded,
-                              size: 11,
-                              color: Color(0xCCF8FAFC),
-                            ),
-                            const SizedBox(width: 3),
-                            const Icon(
-                              Icons.wifi_rounded,
-                              size: 11,
-                              color: Color(0xCCF8FAFC),
-                            ),
-                            const SizedBox(width: 3),
-                            const Icon(
-                              Icons.battery_full_rounded,
-                              size: 11,
-                              color: Color(0xCCF8FAFC),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                          child: child,
-                        ),
-                      ),
-                      Center(
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(vertical: 7),
-                          width: 56,
-                          height: 3.5,
+                      // Soft ambient reactive light bloom behind the screenshot
+                      Positioned.fill(
+                        child: DecoratedBox(
                           decoration: BoxDecoration(
-                            color: _crispOffWhite.withValues(alpha: 0.28),
-                            borderRadius: BorderRadius.circular(999),
+                            gradient: RadialGradient(
+                              center: const Alignment(0, -0.05),
+                              radius: 0.78,
+                              colors: [
+                                accent.withValues(alpha: 0.22),
+                                accent.withValues(alpha: 0.06),
+                                Colors.transparent,
+                              ],
+                              stops: const [0.0, 0.48, 1.0],
+                            ),
                           ),
                         ),
+                      ),
+                      Container(
+                        key: ValueKey<String>('login-showcase-stage-$index'),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: compactHeight ? 6 : 10,
+                          vertical: compactHeight ? 2 : 4,
+                        ),
+                        child: isScreenshotSlide
+                            ? Image.asset(
+                                spec!.assetPath,
+                                fit: BoxFit.contain,
+                                filterQuality: FilterQuality.high,
+                              )
+                            : _buildExpandedMenetrendFrame(theme, scheme),
                       ),
                     ],
                   ),
@@ -641,23 +730,83 @@ class _LoginScreenState extends State<LoginScreen>
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSeamlessScreenshot(_ShowcaseSlideSpec spec) {
-    return Center(
-      child: AspectRatio(
-        aspectRatio: spec.aspectRatio,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: Image.asset(
-            spec.assetPath,
-            fit: BoxFit.contain,
-            filterQuality: FilterQuality.medium,
+          SizedBox(height: compactHeight ? 6 : 10),
+          // 2. Editorial copy synchronized with subtle horizontal parallax
+          Opacity(
+            opacity: captionOpacity,
+            child: Transform.translate(
+              offset: Offset(-pageDelta * 16, 0),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    RichText(
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      text: TextSpan(
+                        style: TextStyle(
+                          fontFamily: OledTheme.defaultFontFamily,
+                          fontSize: compactHeight ? 17.5 : 20,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.5,
+                          height: 1.12,
+                          color: _crispOffWhite,
+                        ),
+                        children: [
+                          TextSpan(text: '${uwu(titleTop)} '),
+                          TextSpan(
+                            text: uwu(titleAccent),
+                            style: TextStyle(color: accent),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    isScreenshotSlide
+                        ? Text(
+                            uwu(spec!.caption),
+                            textAlign: TextAlign.left,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: baseCaptionStyle,
+                          )
+                        : Text.rich(
+                            TextSpan(
+                              style: baseCaptionStyle,
+                              children: [
+                                TextSpan(
+                                  text: uwu(
+                                    'Mindig tudd, mikor kell menned, a ',
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: 'MenetrendGO',
+                                  recognizer: _menetrendLinkRecognizer,
+                                  style: baseCaptionStyle?.copyWith(
+                                    color: const Color(0xFF38BDF8),
+                                    fontWeight: FontWeight.w800,
+                                    decoration: TextDecoration.underline,
+                                    decorationColor: const Color(0xFF38BDF8)
+                                        .withValues(alpha: 0.72),
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: uwu(' integrációnak köszönhetően.'),
+                                ),
+                              ],
+                            ),
+                            textAlign: TextAlign.left,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                  ],
+                ),
+              ),
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -669,21 +818,36 @@ class _LoginScreenState extends State<LoginScreen>
     return Center(
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final cardWidth = math.min(math.max(constraints.maxWidth, 336.0), 360.0);
+          final cardWidth = math.min(math.max(constraints.maxWidth, 320.0), 356.0);
           return FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.center,
             child: SizedBox(
               width: cardWidth,
               child: Container(
+                margin: const EdgeInsets.all(6),
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF0A0D13),
-                  borderRadius: BorderRadius.circular(22),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color(0xFF101622),
+                      Color(0xFF090C12),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(24),
                   border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.10),
+                    color: const Color(0xFF38BDF8).withValues(alpha: 0.24),
                     width: 1.0,
                   ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF38BDF8).withValues(alpha: 0.10),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
                 ),
                 child: _buildExpandedMenetrendContent(theme, scheme),
               ),

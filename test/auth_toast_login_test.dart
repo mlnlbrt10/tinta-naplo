@@ -44,7 +44,7 @@ void main() {
         ),
       );
 
-      await tester.pumpAndSettle(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 600));
 
       expect(find.byType(TextField), findsNothing);
       expect(find.byType(TextFormField), findsNothing);
@@ -59,14 +59,28 @@ void main() {
 
       expect(find.text('Tinta Napló'), findsOneWidget);
       expect(find.text('Bejelentkezés KRÉTA-val'), findsOneWidget);
+      // Top-right slide counter pill (`01 / 07`) and category labels were removed.
+      expect(find.text('01 / 07'), findsNothing);
+      expect(find.text('04 / Ösztöndíj'), findsNothing);
+
+      final alignFinder = find.ancestor(
+        of: find.byKey(const ValueKey<String>('login-hero-headline')),
+        matching: find.byType(Align),
+      );
+      expect(alignFinder, findsAtLeastNWidgets(1));
+      expect(
+        tester.widget<Align>(alignFinder.first).alignment,
+        Alignment.center,
+      );
 
       final ctaHeadline = tester.widget<RichText>(
         find.byKey(const ValueKey<String>('login-hero-headline')),
       );
+      expect(ctaHeadline.textAlign, TextAlign.center);
       final rootSpan = ctaHeadline.text as TextSpan;
       final children = rootSpan.children!;
       expect(children.length, 2);
-      expect((children[0] as TextSpan).text, 'Készen állsz valami\n');
+      expect((children[0] as TextSpan).text, 'Készen állsz valami ');
       final secondSpan = children[1] as TextSpan;
       expect(secondSpan.text, 'igazán jóra?');
       expect(secondSpan.style?.color, const Color(0xFF3B82F6));
@@ -76,49 +90,49 @@ void main() {
       final pageView = tester.widget<PageView>(find.byType(PageView));
       expect(pageView.clipBehavior, Clip.none);
       expect(pageView.controller?.viewportFraction, closeTo(0.85, 0.001));
-      expect(
-        find.ancestor(
-          of: find.byType(PageView),
-          matching: find.byWidgetPredicate(
-            (w) => w is ShaderMask && w.blendMode == BlendMode.dstIn,
-          ),
-        ),
-        findsOneWidget,
-      );
 
       bool hasShowcaseImage(String assetPath) => find
           .byWidgetPredicate(
             (w) =>
                 w is Image &&
                 w.image is AssetImage &&
-                (w.image as AssetImage).assetName == assetPath,
+                (w.image as AssetImage).assetName == assetPath &&
+                w.fit == BoxFit.contain,
           )
           .evaluate()
           .isNotEmpty;
 
-      // Realistic Phone Mockup bezel + fixed 08:02 status bar clock & zero screenshot vignette fade
+      // Frameless redesigned LoginScreen: NO fake phone bezel / status bar clock overlay
       expect(
         find.byKey(const ValueKey<String>('login-phone-mockup-0')),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(
-          of: find.byKey(const ValueKey<String>('login-phone-mockup-0')),
-          matching: find.byType(ShaderMask),
-        ),
         findsNothing,
       );
       expect(
-        tester
-            .widget<Text>(find.byKey(const ValueKey<String>('login-phone-time-0')))
-            .data,
-        '08:02',
+        find.byKey(const ValueKey<String>('login-phone-time-0')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('login-showcase-stage-0')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('login-slide-dot-0')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('login-slide-dot-6')),
+        findsOneWidget,
       );
 
-      // Slide 1
+      // Slide 1 + editorial callout & typography (numbered kickers removed)
       expect(
         hasShowcaseImage('assets/images/showcase/showcase_home.jpg'),
         isTrue,
+      );
+      expect(find.text('01 / ÉLŐ FŐOLDAL'), findsNothing);
+      expect(
+        find.byKey(const ValueKey<String>('login-hero-headline')),
+        findsOneWidget,
       );
       expect(
         find.text(
@@ -129,12 +143,10 @@ void main() {
 
       // Slide 2
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 600));
       expect(
-        tester
-            .widget<Text>(find.byKey(const ValueKey<String>('login-phone-time-1')))
-            .data,
-        '08:02',
+        find.byKey(const ValueKey<String>('login-showcase-stage-1')),
+        findsOneWidget,
       );
       expect(
         hasShowcaseImage('assets/images/showcase/showcase_timetable.jpg'),
@@ -149,12 +161,10 @@ void main() {
 
       // Slide 3
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 600));
       expect(
-        tester
-            .widget<Text>(find.byKey(const ValueKey<String>('login-phone-time-2')))
-            .data,
-        '08:02',
+        find.byKey(const ValueKey<String>('login-showcase-stage-2')),
+        findsOneWidget,
       );
       expect(
         hasShowcaseImage('assets/images/showcase/showcase_grades.jpg'),
@@ -169,12 +179,10 @@ void main() {
 
       // Slide 4
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 600));
       expect(
-        tester
-            .widget<Text>(find.byKey(const ValueKey<String>('login-phone-time-3')))
-            .data,
-        '08:02',
+        find.byKey(const ValueKey<String>('login-showcase-stage-3')),
+        findsOneWidget,
       );
       expect(
         hasShowcaseImage('assets/images/showcase/showcase_scholarship.jpg'),
@@ -189,12 +197,10 @@ void main() {
 
       // Slide 5
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 600));
       expect(
-        tester
-            .widget<Text>(find.byKey(const ValueKey<String>('login-phone-time-4')))
-            .data,
-        '08:02',
+        find.byKey(const ValueKey<String>('login-showcase-stage-4')),
+        findsOneWidget,
       );
       expect(
         hasShowcaseImage('assets/images/showcase/showcase_absences.jpg'),
@@ -209,12 +215,10 @@ void main() {
 
       // Slide 6
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 600));
       expect(
-        tester
-            .widget<Text>(find.byKey(const ValueKey<String>('login-phone-time-5')))
-            .data,
-        '08:02',
+        find.byKey(const ValueKey<String>('login-showcase-stage-5')),
+        findsOneWidget,
       );
       expect(
         hasShowcaseImage('assets/images/showcase/showcase_themes.jpg'),
@@ -227,14 +231,12 @@ void main() {
         findsOneWidget,
       );
 
-      // Slide 7 (Expanded MenetrendGO card inside Phone Frame + interactive caption link)
+      // Slide 7 (Expanded MenetrendGO glass card + interactive caption link)
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 600));
       expect(
-        tester
-            .widget<Text>(find.byKey(const ValueKey<String>('login-phone-time-6')))
-            .data,
-        '08:02',
+        find.byKey(const ValueKey<String>('login-showcase-stage-6')),
+        findsOneWidget,
       );
       expect(find.text('Időben'), findsOneWidget);
       expect(find.text('MenetrendGO'), findsOneWidget);
@@ -276,13 +278,14 @@ void main() {
 
       // Infinite loop: swiping past Slide 7 wraps seamlessly back to Slide 1
       await tester.drag(find.byType(PageView), const Offset(-350, 0));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 600));
       expect(
         hasShowcaseImage('assets/images/showcase/showcase_home.jpg'),
         isTrue,
       );
-      // Verify pagination indicator dots are completely removed
-      expect(find.byType(AnimatedContainer), findsNothing);
+      // Top-right pagination pill remains removed on LoginScreen
+      expect(find.text('01 / 07'), findsNothing);
+      expect(find.text('02 / 07'), findsNothing);
 
       await tester.tap(find.text('Bejelentkezés KRÉTA-val'));
       await tester.pump(const Duration(milliseconds: 200));
@@ -295,15 +298,19 @@ void main() {
         tester.getRect(footerLink).top,
         greaterThan(tester.getRect(find.text('Bejelentkezés KRÉTA-val')).bottom),
       );
-      await tester.tap(footerLink);
-      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('login-privacy-legal-link')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
 
       expect(find.text('Adatvédelem és jogi nyilatkozat'), findsOneWidget);
       expect(find.text('Nem hivatalos kliens'), findsOneWidget);
       expect(find.text('Adatkezelés & Biztonság'), findsOneWidget);
       expect(find.text('Hibajelentések'), findsOneWidget);
-      await tester.tap(find.text('Rendben'));
-      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.close_rounded));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
       expect(find.text('Adatvédelem és jogi nyilatkozat'), findsNothing);
     },
   );
@@ -328,11 +335,11 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 600));
 
       for (int i = 0; i < 6; i++) {
         await tester.drag(find.byType(PageView), const Offset(-300, 0));
-        await tester.pumpAndSettle();
+        await tester.pump(const Duration(milliseconds: 600));
       }
       expect(find.text('Időben'), findsOneWidget);
       expect(find.text('Bejelentkezés KRÉTA-val'), findsOneWidget);

@@ -1,7 +1,7 @@
 name: tinta_naplo
 description: Tinta Napló Mobile Flutter client using in-app WebView OAuth2 PKCE and kreta_api.
 publish_to: 'none'
-version: 3.0.2+5000
+version: 3.1.0+7002
 
 environment:
   sdk: ^3.11.0
@@ -32,6 +32,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/data/useless_fun_facts.json
     - assets/images/tinta_icon.png
     - assets/images/tinta_icon_classic.png
     - assets/images/fityma-icon.png

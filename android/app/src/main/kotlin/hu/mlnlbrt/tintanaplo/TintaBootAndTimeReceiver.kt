@@ -18,6 +18,7 @@ class TintaBootAndTimeReceiver : BroadcastReceiver() {
             action == Intent.ACTION_DATE_CHANGED
         ) {
             runCatching { TintaLiveTickReceiver.refreshAndSchedule(context) }
+            runCatching { KretaNotificationDispatcher.rescheduleFromSavedPrefs(context) }
         }
     }
 }

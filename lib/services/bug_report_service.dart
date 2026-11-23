@@ -43,7 +43,7 @@ class AttachmentValidationResult {
   bool get isValid => attachment != null && errorMessage == null;
 }
 
-/// Outcome of submitting a bug report to `https://ticket.mlnlbrt.hu/api/tickets`.
+/// Outcome of submitting a bug report to `https://ticket.tintanaplo.hu/api/tickets`.
 class BugReportSubmitResult {
   final bool success;
   final int? statusCode;
@@ -89,11 +89,11 @@ class _ProgressForwardingRequest extends http.BaseRequest {
   }
 }
 
-/// Privacy-first bug report serializer & uploader for `ticket.mlnlbrt.hu`.
+/// Privacy-first bug report serializer & uploader for `ticket.tintanaplo.hu`.
 class BugReportService {
   BugReportService._();
 
-  static const String endpointUrl = 'https://ticket.mlnlbrt.hu/api/tickets';
+  static const String endpointUrl = 'https://ticket.tintanaplo.hu/api/tickets';
 
   static const List<String> categories = <String>[
     'Hiba / Bug',
@@ -217,7 +217,14 @@ class BugReportService {
     return buf.toString();
   }
 
+  static bool _isTransientGatewayStatus(int code) =>
+      code == 502 || code == 503 || code == 504 || (code >= 520 && code <= 524);
+
   /// Submits the bug report as `multipart/form-data` to [endpointUrl].
+  ///
+  /// Retries transient gateway errors (HTTP 502/503/504/52x) and temporary
+  /// network/timeout failures up to [maxAttempts] times unless an immutable
+  /// [attachmentFileOverride] stream is supplied.
   static Future<BugReportSubmitResult> submitTicket({
     required String reporter,
     required String category,
@@ -229,82 +236,122 @@ class BugReportService {
     void Function(double progress)? onProgress,
     http.Client? client,
     Duration timeout = const Duration(seconds: 25),
+    int maxAttempts = 3,
+    Duration retryDelay = const Duration(milliseconds: 600),
     http.MultipartFile? attachmentFileOverride,
   }) async {
     final ownClient = client == null;
     final httpClient = client ?? http.Client();
+    final effectiveAttempts =
+        attachmentFileOverride != null ? 1 : maxAttempts.clamp(1, 5);
+    final endpointUri = Uri.parse(endpointUrl);
+
     try {
-      final request = http.MultipartRequest('POST', Uri.parse(endpointUrl))
-        ..fields['reporter'] = reporter
-        ..fields['category'] = category
-        ..fields['description'] = description.trim()
-        ..fields['app_version'] = appVersion
-        ..fields['os_version'] = osVersion
-        ..fields['theme_mode'] = themeMode;
+      for (int attempt = 1; attempt <= effectiveAttempts; attempt++) {
+        try {
+          final request = http.MultipartRequest('POST', endpointUri)
+            ..headers['Accept'] = 'application/json'
+            ..headers['X-Client'] = 'Tinta-Naplo'
+            ..fields['reporter'] = reporter
+            ..fields['category'] = category
+            ..fields['description'] = description.trim()
+            ..fields['app_version'] = appVersion
+            ..fields['os_version'] = osVersion
+            ..fields['theme_mode'] = themeMode;
 
-      if (attachmentFileOverride != null) {
-        request.files.add(attachmentFileOverride);
-      } else if (attachment != null) {
-        request.files.add(
-          await http.MultipartFile.fromPath(
-            'attachment',
-            attachment.path,
-            filename: attachment.name,
-          ),
-        );
-      }
+          if (attachmentFileOverride != null) {
+            request.files.add(attachmentFileOverride);
+          } else if (attachment != null) {
+            request.files.add(
+              await http.MultipartFile.fromPath(
+                'attachment',
+                attachment.path,
+                filename: attachment.name,
+              ),
+            );
+          }
 
-      final http.StreamedResponse streamed;
-      if (onProgress != null && request.files.isNotEmpty) {
-        final totalBytes = request.contentLength;
-        final baseStream = request.finalize();
-        var sentBytes = 0;
-        final trackedStream = baseStream.transform(
-          StreamTransformer<List<int>, List<int>>.fromHandlers(
-            handleData: (chunk, sink) {
-              sentBytes += chunk.length;
-              if (totalBytes > 0) {
-                onProgress((sentBytes / totalBytes).clamp(0.0, 1.0));
-              }
-              sink.add(chunk);
-            },
-          ),
-        );
-        final forwarded = _ProgressForwardingRequest(
-          request.method,
-          request.url,
-          headers: request.headers,
-          stream: trackedStream,
-          contentLength: totalBytes,
-        );
-        streamed = await httpClient.send(forwarded).timeout(timeout);
-      } else {
-        streamed = await httpClient.send(request).timeout(timeout);
-      }
+          final http.StreamedResponse streamed;
+          if (onProgress != null && request.files.isNotEmpty) {
+            final totalBytes = request.contentLength;
+            final baseStream = request.finalize();
+            var sentBytes = 0;
+            final trackedStream = baseStream.transform(
+              StreamTransformer<List<int>, List<int>>.fromHandlers(
+                handleData: (chunk, sink) {
+                  sentBytes += chunk.length;
+                  if (totalBytes > 0) {
+                    onProgress((sentBytes / totalBytes).clamp(0.0, 1.0));
+                  }
+                  sink.add(chunk);
+                },
+              ),
+            );
+            final forwarded = _ProgressForwardingRequest(
+              request.method,
+              request.url,
+              headers: request.headers,
+              stream: trackedStream,
+              contentLength: totalBytes,
+            );
+            streamed = await httpClient.send(forwarded).timeout(timeout);
+          } else {
+            streamed = await httpClient.send(request).timeout(timeout);
+          }
 
-      await streamed.stream.drain<void>().timeout(timeout);
-      if (streamed.statusCode >= 200 && streamed.statusCode < 300) {
-        return BugReportSubmitResult.ok(statusCode: streamed.statusCode);
+          await streamed.stream.drain<void>().timeout(timeout);
+          if (streamed.statusCode >= 200 && streamed.statusCode < 300) {
+            return BugReportSubmitResult.ok(statusCode: streamed.statusCode);
+          }
+          if (_isTransientGatewayStatus(streamed.statusCode) &&
+              attempt < effectiveAttempts) {
+            if (retryDelay > Duration.zero) {
+              await Future<void>.delayed(retryDelay * attempt);
+            }
+            continue;
+          }
+          return BugReportSubmitResult.failure(
+            'A szerver hibát jelzett (HTTP ${streamed.statusCode}). Próbáld meg később, vagy másold ki a részleteket.',
+            statusCode: streamed.statusCode,
+          );
+        } on TimeoutException {
+          if (attempt < effectiveAttempts) {
+            if (retryDelay > Duration.zero) {
+              await Future<void>.delayed(retryDelay * attempt);
+            }
+            continue;
+          }
+          return const BugReportSubmitResult.failure(
+            'A beküldés időtúllépés miatt megszakadt. Ellenőrizd az internetkapcsolatot.',
+          );
+        } on SocketException {
+          if (attempt < effectiveAttempts) {
+            if (retryDelay > Duration.zero) {
+              await Future<void>.delayed(retryDelay * attempt);
+            }
+            continue;
+          }
+          return const BugReportSubmitResult.failure(
+            'Nincs internetkapcsolat vagy a hibajelentő szerver nem elérhető.',
+          );
+        } on http.ClientException {
+          if (attempt < effectiveAttempts) {
+            if (retryDelay > Duration.zero) {
+              await Future<void>.delayed(retryDelay * attempt);
+            }
+            continue;
+          }
+          return const BugReportSubmitResult.failure(
+            'Hálózati hiba a beküldés közben. Másold ki a részleteket, hogy ne vesszen el.',
+          );
+        } catch (e) {
+          return BugReportSubmitResult.failure(
+            'Váratlan hiba történt: $e',
+          );
+        }
       }
-      return BugReportSubmitResult.failure(
-        'A szerver hibát jelzett (HTTP ${streamed.statusCode}). Próbáld meg később, vagy másold ki a részleteket.',
-        statusCode: streamed.statusCode,
-      );
-    } on TimeoutException {
-      return const BugReportSubmitResult.failure(
-        'A beküldés időtúllépés miatt megszakadt. Ellenőrizd az internetkapcsolatot.',
-      );
-    } on SocketException {
-      return const BugReportSubmitResult.failure(
-        'Nincs internetkapcsolat vagy a hibajelentő szerver nem elérhető.',
-      );
-    } on http.ClientException {
       return const BugReportSubmitResult.failure(
         'Hálózati hiba a beküldés közben. Másold ki a részleteket, hogy ne vesszen el.',
-      );
-    } catch (e) {
-      return BugReportSubmitResult.failure(
-        'Váratlan hiba történt: $e',
       );
     } finally {
       if (ownClient) {

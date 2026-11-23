@@ -157,6 +157,35 @@ class _FakeNativeCalendarPlatform {
         return permissionGranted;
       case 'getAvailableCalendars':
         return permissionGranted ? calendars : <Map<String, Object?>>[];
+      case 'getCalendarEventColors':
+        return [
+          for (var i = 0; i < kDefaultCalendarColorPalette.length; i++)
+            {'colorKey': '${i + 1}', 'color': kDefaultCalendarColorPalette[i]},
+        ];
+      case 'findExistingEvents':
+        final args = Map<Object?, Object?>.from(call.arguments as Map);
+        final calId = args['calendarId']?.toString();
+        final fromMs = (args['fromMillis'] as num?)?.toInt() ?? 0;
+        final toMs = (args['toMillis'] as num?)?.toInt() ?? 0x7fffffffffffffff;
+        return storedEvents.entries
+            .where((e) {
+              final v = e.value;
+              final startMs = (v['startMillis'] as num?)?.toInt() ?? 0;
+              return v['calendarId'] == calId &&
+                  startMs >= fromMs &&
+                  startMs <= toMs;
+            })
+            .map(
+              (e) => <String, Object?>{
+                'eventId': e.key,
+                'title': e.value['title'],
+                'description': e.value['description'],
+                'startMillis': e.value['startMillis'],
+                'endMillis': e.value['endMillis'],
+                'eventColor': e.value['eventColor'],
+              },
+            )
+            .toList();
       case 'upsertEvent':
         final args = Map<Object?, Object?>.from(call.arguments as Map);
         final existingId = args['eventId']?.toString();
@@ -171,6 +200,8 @@ class _FakeNativeCalendarPlatform {
           'description': args['description']?.toString(),
           'startMillis': args['startMillis'],
           'endMillis': args['endMillis'],
+          'eventColor': args['eventColor'],
+          'syncTag': args['syncTag']?.toString(),
         };
         return id;
       case 'deleteEvent':
@@ -426,14 +457,26 @@ void main() {
         expect(
           titles,
           containsAll([
-            '[Dolgozat] Fizika - Newton törvényei',
-            '[Számonkérés] Kémia',
-            '[Házi] Magyar',
+            'Fizika - Dolgozat',
+            'Kémia - Dolgozat',
+            'Magyar - Házi feladat',
           ]),
         );
+        final fizikaEv = fakeNative.storedEvents.values
+            .firstWhere((e) => e['title'] == 'Fizika - Dolgozat');
+        expect(fizikaEv['description'].toString(), contains('Newton törvényei'));
+        expect(fizikaEv['description'].toString(), contains('Tantárgy: Fizika'));
+        expect(fizikaEv['description'].toString(), contains('Tanár: Kiss Anna'));
         final hwEvent = fakeNative.storedEvents.values
-            .firstWhere((e) => e['title'] == '[Házi] Magyar');
-        expect(hwEvent['description'], 'Elemzés írása');
+            .firstWhere((e) => e['title'] == 'Magyar - Házi feladat');
+        expect(
+          hwEvent['description'].toString(),
+          contains('Elemzés írása'),
+        );
+        expect(
+          hwEvent['description'].toString(),
+          contains('[TintaID:hw:future-hw-1]'),
+        );
 
         // 2. Repeated sync with identical data => ZERO duplicate upsert calls
         fakeNative.calls.clear();
@@ -476,7 +519,9 @@ void main() {
         expect(fakeNative.storedEvents.length, 3);
         expect(
           fakeNative.storedEvents.values.any(
-            (e) => e['title'] == '[Dolgozat] Fizika - Mechanika frissítve',
+            (e) =>
+                e['title'] == 'Fizika - Dolgozat' &&
+                e['description'].toString().contains('Mechanika frissítve'),
           ),
           isTrue,
         );
@@ -489,7 +534,7 @@ void main() {
         expect(fakeNative.storedEvents.length, 2);
         expect(
           fakeNative.storedEvents.values
-              .any((e) => e['title'] == '[Házi] Magyar'),
+              .any((e) => e['title'] == 'Magyar - Házi feladat'),
           isFalse,
         );
 
@@ -582,7 +627,8 @@ void main() {
         await tester.pumpAndSettle();
 
         // Default OFF
-        final switchFinder = find.byType(SwitchListTile);
+        final switchFinder =
+            find.byKey(const ValueKey<String>('calendar-sync-main-switch'));
         expect(switchFinder, findsOneWidget);
         expect(tester.widget<SwitchListTile>(switchFinder).value, isFalse);
 
@@ -596,6 +642,8 @@ void main() {
         expect(find.text('Csak számonkérések'), findsOneWidget);
         expect(find.text('Csak házi feladatok'), findsOneWidget);
         expect(find.text('Mindkettő'), findsOneWidget);
+        expect(find.text('Órarend szinkronizálása'), findsOneWidget);
+        expect(find.text('Esemény színek'), findsOneWidget);
         expect(find.text('Szinkronizálás most'), findsOneWidget);
         expect(find.text('Szinkronizált események törlése'), findsOneWidget);
         expect(fakeNative.storedEvents.length, 2);
@@ -621,5 +669,215 @@ void main() {
         expect(fakeNative.storedEvents, isEmpty);
       },
     );
+
+    test(
+      'Resolves [FELELÉS]/[TÉMAZÁRÓ]/[RÖPDOLGOZAT] labels, deduplicates after SharedPreferences wipe (reinstall), and forwards custom colors',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          kCalendarSyncEnabledKey: true,
+          kCalendarSyncTargetIdKey: '1',
+          kCalendarSyncContentModeKey: CalendarSyncContentMode.both.name,
+        });
+
+        final fakeNative = _FakeNativeCalendarPlatform();
+        const testChannel = MethodChannel('test_calendar_sync_dedup_colors');
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(testChannel, fakeNative.handleCall);
+        addTearDown(() {
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(testChannel, null);
+        });
+
+        final fixedNow = DateTime(2026, 11, 13, 12, 0);
+        final service = CalendarSyncService(
+          channel: testChannel,
+          nowProvider: () => fixedNow,
+        );
+
+        await service.setCategoryColor(
+          CalendarEventColorCategory.feleles,
+          0xFFF4511E,
+        );
+        await service.setCategoryColor(
+          CalendarEventColorCategory.temazaro,
+          0xFF8E24AA,
+        );
+
+        final session = StoredSession(
+          accessToken: 'a',
+          refreshToken: 'r',
+          idToken: 'i',
+          instituteCode: 'klik001',
+          expiresAt: DateTime(2026, 11, 14),
+        );
+
+        final dash = DashboardData(
+          student: null,
+          todaysLessons: const [],
+          allGrades: const [],
+          latestGrades: const [],
+          tests: [
+            _makeExam(
+              uid: 'oral-1',
+              date: DateTime(2026, 11, 16, 9, 0),
+              subjectName: 'Történelem',
+              theme: 'Reformkor',
+              methodDesc: 'Szóbeli felelés',
+            ),
+            _makeExam(
+              uid: 'tz-1',
+              date: DateTime(2026, 11, 17, 10, 0),
+              subjectName: 'Matematika',
+              theme: 'Függvények',
+              methodDesc: 'Témazáró dolgozat',
+            ),
+            _makeExam(
+              uid: 'rop-1',
+              date: DateTime(2026, 11, 18, 11, 0),
+              subjectName: 'Angol',
+              theme: 'Szódolgozat',
+              methodDesc: 'Röpdolgozat',
+            ),
+          ],
+          homeworks: const [],
+          activeSession: session,
+        );
+
+        final res1 = await service.syncNow(dashboard: dash);
+        expect(res1.createdCount, 3);
+        expect(fakeNative.storedEvents.length, 3);
+
+        final titles = fakeNative.storedEvents.values
+            .map((e) => e['title'])
+            .toSet();
+        expect(
+          titles,
+          containsAll([
+            'Töri - Felelés',
+            'Matek - Témazáró',
+            'Angol - Röpdolgozat',
+          ]),
+        );
+
+        final oralEv = fakeNative.storedEvents.values
+            .firstWhere((e) => e['title'] == 'Töri - Felelés');
+        expect(oralEv['eventColor'], 0xFFF4511E);
+        expect(oralEv['description'].toString(), contains('Reformkor'));
+        final tzEv = fakeNative.storedEvents.values
+            .firstWhere((e) => e['title'] == 'Matek - Témazáró');
+        expect(tzEv['eventColor'], 0xFF8E24AA);
+        expect(tzEv['description'].toString(), contains('Függvények'));
+
+        // Changing category color deletes previous app-synced events first and recreates cleanly
+        fakeNative.calls.clear();
+        await service.setCategoryColor(
+          CalendarEventColorCategory.temazaro,
+          0xFF00ACC1,
+        );
+        final resAfterColorChange = await service.syncNow(dashboard: dash);
+        expect(resAfterColorChange.deletedCount, 3);
+        expect(resAfterColorChange.updatedCount, 3);
+        expect(
+          fakeNative.calls.any((c) => c.method == 'deleteEvents'),
+          isTrue,
+        );
+        expect(fakeNative.storedEvents.length, 3);
+        final updatedTzEv = fakeNative.storedEvents.values
+            .firstWhere((e) => e['title'] == 'Matek - Témazáró');
+        expect(updatedTzEv['eventColor'], 0xFF00ACC1);
+
+        // Simulate app reinstall on current format version: SharedPreferences tracking wiped while native events remain
+        SharedPreferences.setMockInitialValues({
+          kCalendarSyncEnabledKey: true,
+          kCalendarSyncTargetIdKey: '1',
+          kCalendarSyncContentModeKey: CalendarSyncContentMode.both.name,
+          kCalendarSyncFormatVersionKey: kCurrentCalendarSyncFormatVersion,
+        });
+
+        final resAfterReinstall = await service.syncNow(dashboard: dash);
+        expect(resAfterReinstall.createdCount, 0);
+        expect(resAfterReinstall.updatedCount, 3);
+        expect(fakeNative.storedEvents.length, 3);
+      },
+    );
+
+    test('abbreviateSubjectName maps Hungarian subjects cleanly and strips trailing numerals', () {
+      expect(
+        CalendarSyncService.abbreviateSubjectName('Magyar nyelv és irodalom'),
+        'Magyar',
+      );
+      expect(CalendarSyncService.abbreviateSubjectName('Matematika'), 'Matek');
+      expect(CalendarSyncService.abbreviateSubjectName('Történelem'), 'Töri');
+      expect(CalendarSyncService.abbreviateSubjectName('Testnevelés'), 'Tesi');
+      expect(CalendarSyncService.abbreviateSubjectName('Biológia'), 'Biosz');
+      expect(CalendarSyncService.abbreviateSubjectName('Földrajz'), 'Föci');
+      expect(
+        CalendarSyncService.abbreviateSubjectName('Digitális kultúra'),
+        'Digikult',
+      );
+      expect(CalendarSyncService.abbreviateSubjectName('Osztályfőnöki'), 'Ofő');
+      expect(CalendarSyncService.abbreviateSubjectName('Angol nyelv'), 'Angol');
+      expect(CalendarSyncService.abbreviateSubjectName('Német nyelv'), 'Német');
+      expect(CalendarSyncService.abbreviateSubjectName('Hálózatok I.'), 'Hálózatok');
+    });
+
+    test('resolveExamLessonDetails matches Kréta timetable lessons and consecutive double lessons', () {
+      Lesson makeTimetableLesson(int period, DateTime start, DateTime end) =>
+          Lesson.fromJson({
+            'Uid': 'l-$period',
+            'Datum': start.toIso8601String(),
+            'Oraszam': period,
+            'KezdetIdopont': start.toIso8601String(),
+            'VegIdopont': end.toIso8601String(),
+            'Nev': 'Matematika',
+            'Tantargy': {
+              'Uid': 's-math',
+              'Nev': 'Matematika',
+              'Kategoria': {'Uid': 'c', 'Nev': 'Matematika', 'Leiras': ''},
+              'SortIndex': 1,
+            },
+            'OsztalyCsoport': {'Uid': 'g1', 'Nev': '11.A'},
+            'TanarNeve': 'Kovács Péter',
+            'TeremNeve': 'B-204',
+            'Tipus': {'Uid': 't', 'Nev': 'Tanóra', 'Leiras': 'Tanóra'},
+            'Tema': '',
+            'Allapot': {'Uid': 'a', 'Nev': 'Megtartott', 'Leiras': 'Megtartott'},
+            'HaziFeladatUid': null,
+            'IsTanuloHaziFeladatEnabled': false,
+            'IsHaziFeladatMegoldva': false,
+            'Csatolmanyok': const <Map<String, dynamic>>[],
+            'IsDigitalisOra': false,
+            'Letrehozas': start.toIso8601String(),
+            'UtolsoModositas': start.toIso8601String(),
+          });
+
+      final lessons = [
+        makeTimetableLesson(
+          2,
+          DateTime(2026, 11, 17, 8, 55),
+          DateTime(2026, 11, 17, 9, 40),
+        ),
+        makeTimetableLesson(
+          3,
+          DateTime(2026, 11, 17, 9, 50),
+          DateTime(2026, 11, 17, 10, 35),
+        ),
+      ];
+      final exam = _makeExam(
+        uid: 'double-math',
+        date: DateTime(2026, 11, 17),
+        subjectName: 'Matematika',
+        lessonNumber: 2,
+      );
+
+      final resolved = CalendarSyncService.resolveExamLessonDetails(
+        exam,
+        lessons,
+      );
+      expect(resolved.start, DateTime(2026, 11, 17, 8, 55));
+      expect(resolved.end, DateTime(2026, 11, 17, 10, 35));
+      expect(resolved.matchedLesson?.roomName, 'B-204');
+      expect(resolved.matchedLesson?.teacher, 'Kovács Péter');
+    });
   });
 }

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,9 +9,11 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
+import '../widgets/frosted_inspection_modal.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/tinta_toast.dart';
 
@@ -43,8 +46,16 @@ class GitHubReleaseInfo {
     final assets = json['assets'];
     if (assets is List) {
       final cleanVer = GitHubUpdaterService._stripPrefix(tag).toLowerCase();
+      final displayVer =
+          GitHubUpdaterService.formatDisplayVersion(tag).toLowerCase();
       final expectedAndroidApk = cleanVer.isNotEmpty
           ? 'tinta-naplo-android-v$cleanVer.apk'
+          : GitHubUpdaterService.defaultApkFileName.toLowerCase();
+      final expectedAndroidArm64Apk = cleanVer.isNotEmpty
+          ? 'tinta-naplo-android-v$cleanVer-arm64-v8a.apk'
+          : GitHubUpdaterService.defaultApkFileName.toLowerCase();
+      final expectedDisplayAndroidArm64Apk = displayVer.isNotEmpty
+          ? 'tinta-naplo-android-v$displayVer-arm64-v8a.apk'
           : GitHubUpdaterService.defaultApkFileName.toLowerCase();
       final expectedVersionedApk = cleanVer.isNotEmpty
           ? 'tinta-naplo-v$cleanVer.apk'
@@ -52,6 +63,7 @@ class GitHubReleaseInfo {
       final expectedArm64Apk = cleanVer.isNotEmpty
           ? 'tinta-naplo-v$cleanVer-arm64-v8a.apk'
           : 'tinta-naplo-v${GitHubUpdaterService.fallbackAppVersion}-arm64-v8a.apk';
+      String? androidArm64ExactApkUrl;
       String? versionedUniversalApkUrl;
       String? arm64ExactApkUrl;
       String? tintaAndroidApkUrl;
@@ -72,7 +84,10 @@ class GitHubReleaseInfo {
             apkUrl = downloadUrl;
             break;
           }
-          if (assetName == expectedVersionedApk) {
+          if (assetName == expectedAndroidArm64Apk ||
+              assetName == expectedDisplayAndroidArm64Apk) {
+            androidArm64ExactApkUrl ??= downloadUrl;
+          } else if (assetName == expectedVersionedApk) {
             versionedUniversalApkUrl ??= downloadUrl;
           } else if (assetName == expectedArm64Apk) {
             arm64ExactApkUrl ??= downloadUrl;
@@ -97,7 +112,8 @@ class GitHubReleaseInfo {
           }
         }
       }
-      apkUrl ??= versionedUniversalApkUrl ??
+      apkUrl ??= androidArm64ExactApkUrl ??
+          versionedUniversalApkUrl ??
           arm64ExactApkUrl ??
           tintaAndroidApkUrl ??
           tintaArm64ApkUrl ??
@@ -130,20 +146,43 @@ class GitHubUpdaterService {
   static const String repoUrl = 'https://github.com/mlnlbrt10/tinta-naplo';
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/mlnlbrt10/tinta-naplo/releases/latest';
-  static const String fallbackAppVersion = '3.0.2';
-  static const String fallbackBuildNumber = '5000';
-  static const String defaultApkFileName = 'tinta-naplo-android-v3.0.2-arm64-v8a.apk';
+  static const String fallbackAppVersion = '3.1';
+  static const String fallbackBuildNumber = '7002';
+  static const String defaultApkFileName = 'tinta-naplo-android-v3.1-arm64-v8a.apk';
 
   static bool _hasCheckedOnStartup = false;
 
-  /// Resolves the target APK file name for a given release tag (`tinta-naplo-android-v3.0.2-arm64-v8a.apk`).
+  /// Formats any raw semantic version (`3.1.0`, `v3.1.0+7002`, `3.1.1`) using
+  /// the clean `X.Y` scheme when patch == 0 (`3.1`), keeping the third
+  /// segment only when patch > 0 (`3.1.1`).
+  static String formatDisplayVersion(String version) {
+    final stripped = _stripPrefix(version);
+    if (stripped.isEmpty) return fallbackAppVersion;
+    final dashIdx = stripped.indexOf('-');
+    final main = dashIdx == -1 ? stripped : stripped.substring(0, dashIdx);
+    final suffix = dashIdx == -1 ? '' : stripped.substring(dashIdx);
+    final parts = main.split('.').map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
+    if (parts.length == 3) {
+      final patch = int.tryParse(parts[2]);
+      if (patch == 0) {
+        return '${parts[0]}.${parts[1]}$suffix';
+      }
+    }
+    return '$main$suffix';
+  }
+
+  /// Formats any version string with a leading `v` prefix (e.g., `v3.1`, `v3.1.1`).
+  static String formatDisplayTag(String version) =>
+      'v${formatDisplayVersion(version)}';
+
+  /// Resolves the target APK file name for a given release tag (`tinta-naplo-android-v3.1-arm64-v8a.apk`).
   static String apkFileNameForTag(String tagName) {
-    final clean = _stripPrefix(tagName);
+    final clean = formatDisplayVersion(tagName);
     if (clean.isEmpty) return defaultApkFileName;
     return 'tinta-naplo-android-v$clean-arm64-v8a.apk';
   }
 
-  /// Queries GitHub Releases API for the latest tag name, falling back to `v3.0.2`.
+  /// Queries GitHub Releases API for the latest tag name, falling back to `v3.1`.
   static Future<String> fetchLatestReleaseTag({http.Client? httpClient}) async {
     final ownedClient = httpClient == null;
     final client = httpClient ?? http.Client();
@@ -185,7 +224,7 @@ class GitHubUpdaterService {
       final info = await PackageInfo.fromPlatform();
       final rawVer = info.version.trim();
       final ver = rawVer.isNotEmpty
-          ? _stripPrefix(rawVer)
+          ? formatDisplayVersion(rawVer)
           : fallbackAppVersion;
       final build = info.buildNumber.trim().isNotEmpty
           ? info.buildNumber.trim()
@@ -244,7 +283,8 @@ class GitHubUpdaterService {
       return false;
     }
 
-    for (int i = 0; i < 3; i++) {
+    final segmentCount = math.max(3, math.max(curParts.length, remParts.length));
+    for (int i = 0; i < segmentCount; i++) {
       final c = i < curParts.length ? curParts[i] : 0;
       final r = i < remParts.length ? remParts[i] : 0;
       if (r > c) return true;
@@ -346,17 +386,19 @@ class GitHubUpdaterService {
         }
 
         if (manual) {
+          final currentLabel = formatDisplayTag(currentVersion);
           TintaToast.success(
             context,
-            uwu('A legfrissebb verziót használod (v$currentVersion)!'),
+            uwu('A legfrissebb verziót használod ($currentLabel)!'),
           );
         }
       } else if (manual) {
+        final currentLabel = formatDisplayTag(currentVersion);
         TintaToast.info(
           context,
           uwu(
             response.statusCode == 404
-                ? 'Még nincs közzétett kiadás a GitHubon (v$currentVersion a legújabb).'
+                ? 'Még nincs közzétett kiadás a GitHubon ($currentLabel a legújabb).'
                 : 'Nem sikerült lekérdezni a frissítéseket (HTTP ${response.statusCode}).',
           ),
         );
@@ -693,38 +735,88 @@ class _FrostedUpdateDialogContentState
       context: context,
       builder: (ctx) {
         final theme = Theme.of(ctx);
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'Frissítés sikertelen',
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
+        final scheme = theme.colorScheme;
+        final closeMode = UserProfilePrefs.activeModalCloseMode;
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: FrostedBottomSheetSurface(
+                showDragHandle: false,
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 38,
+                            height: 38,
+                            decoration: BoxDecoration(
+                              color: scheme.error.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              Icons.error_outline_rounded,
+                              size: 20,
+                              color: scheme.error,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              uwu('Frissítés sikertelen'),
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                          if (closeMode.showTopX) ...[
+                            const SizedBox(width: 8),
+                            PopupTopCloseButton(
+                              onTap: () => Navigator.of(ctx).pop(false),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        '$message\n\nEngedélyezd az ismeretlen forrásból származó '
+                        'alkalmazások telepítését, vagy töltsd le az APK-t böngészővel.',
+                        style: theme.textTheme.bodyMedium?.copyWith(height: 1.42),
+                      ),
+                      const SizedBox(height: 18),
+                      Wrap(
+                        alignment: WrapAlignment.end,
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.of(ctx).pop(false),
+                            child: const Text('Bezár'),
+                          ),
+                          FilledButton(
+                            onPressed: () => Navigator.of(ctx).pop(true),
+                            child: const Text('Letöltés böngészőben'),
+                          ),
+                        ],
+                      ),
+                      if (closeMode.showBottomButton) ...[
+                        const SizedBox(height: 12),
+                        PopupBottomCloseButton(
+                          onTap: () => Navigator.of(ctx).pop(false),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
             ),
-            const SizedBox(height: 12),
-            Text(
-              '$message\n\nEngedélyezd az ismeretlen forrásból származó '
-              'alkalmazások telepítését, vagy töltsd le az APK-t böngészővel.',
-              style: theme.textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 18),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.of(ctx).pop(false),
-                  child: const Text('Bezár'),
-                ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  onPressed: () => Navigator.of(ctx).pop(true),
-                  child: const Text('Letöltés böngészőben'),
-                ),
-              ],
-            ),
-          ],
+          ),
         );
       },
     );
@@ -810,7 +902,7 @@ class _FrostedUpdateDialogContentState
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                'v${widget.currentVersion} → ${widget.release.tagName}',
+                                '${GitHubUpdaterService.formatDisplayTag(widget.currentVersion)} → ${GitHubUpdaterService.formatDisplayTag(widget.release.tagName)}',
                                 style: theme.textTheme.labelMedium?.copyWith(
                                   color: scheme.primary,
                                   fontWeight: FontWeight.w800,
@@ -819,13 +911,10 @@ class _FrostedUpdateDialogContentState
                             ],
                           ),
                         ),
-                        if (!_isDownloading)
-                          TactileBounce(
+                        if (!_isDownloading &&
+                            UserProfilePrefs.activeModalCloseMode.showTopX)
+                          PopupTopCloseButton(
                             onTap: () => Navigator.of(context).pop(),
-                            child: const Padding(
-                              padding: EdgeInsets.all(6.0),
-                              child: Icon(Icons.close_rounded),
-                            ),
                           ),
                       ],
                     ),

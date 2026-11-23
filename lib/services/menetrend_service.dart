@@ -517,7 +517,7 @@ class MenetrendService {
         'Content-Type': 'application/json; charset=utf-8',
         'Origin': 'https://mavplusz.hu',
         'Referer': 'https://mavplusz.hu/',
-        'User-Agent': 'MenetrendGO/3.0.2 (Android)',
+        'User-Agent': 'MenetrendGO/3.1 (Android)',
       };
 
   /// Snaps walking speed to continuous `0.5 km/h` steps within `3.0 - 8.0 km/h`.
@@ -1028,7 +1028,7 @@ class MenetrendService {
         'addressdetails': '1',
       });
       final response = await _http.get(uri, headers: const {
-        'User-Agent': 'TintaNaplo-Android/3.0.2',
+        'User-Agent': 'TintaNaplo-Android/3.1',
         'Accept': 'application/json',
       }).timeout(const Duration(seconds: 6));
       if (response.statusCode == 200) {
@@ -1066,7 +1066,7 @@ class MenetrendService {
         'limit': '6',
       });
       final res = await _http
-          .get(photonUri, headers: const {'User-Agent': 'TintaNaplo-Android/3.0.2'})
+          .get(photonUri, headers: const {'User-Agent': 'TintaNaplo-Android/3.1'})
           .timeout(const Duration(seconds: 6));
       if (res.statusCode == 200) {
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));

@@ -41,8 +41,12 @@ android {
         minSdk = flutter.minSdkVersion
         targetSdk = 36
         multiDexEnabled = true
+        val cleanVersionName = flutter.versionName.let { raw ->
+            val parts = raw.split(".")
+            if (parts.size == 3 && parts[2] == "0") "${parts[0]}.${parts[1]}" else raw
+        }
         versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        versionName = cleanVersionName
         resourceConfigurations += listOf("hu", "en")
         val targetPlatforms = (project.findProperty("target-platform") as? String)
             ?.split(",")
@@ -107,7 +111,7 @@ android {
 
     applicationVariants.all {
         val variant = this
-        val versionLabel = variant.versionName ?: "3.0.2"
+        val versionLabel = variant.versionName ?: "3.1"
         val customApkName = "tinta-naplo-v${versionLabel}.apk"
         val androidCustomApkName = "tinta-naplo-android-v${versionLabel}.apk"
         val androidArm64CustomApkName = "tinta-naplo-android-v${versionLabel}-arm64-v8a.apk"
@@ -169,6 +173,7 @@ dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     implementation("androidx.core:core-ktx:1.18.0")
     implementation("androidx.security:security-crypto:1.1.0")
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("com.google.android.gms:play-services-wearable:20.0.1")
 }
 

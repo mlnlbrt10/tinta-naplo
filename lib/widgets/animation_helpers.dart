@@ -460,9 +460,11 @@ class _LiquidInteractivePhysics {
   int _itemCount = 0;
   double _pageOffset = 0.0;
   bool _suppressExternalUntilScrollEnd = false;
+  bool _programmaticTapInFlight = false;
   int Function()? _selectedIndexProvider;
 
-  bool get isSuppressingExternal => _suppressExternalUntilScrollEnd;
+  bool get isSuppressingExternal =>
+      _suppressExternalUntilScrollEnd || _programmaticTapInFlight;
 
   bool isInteracting = false;
   bool _longPressActive = false;
@@ -565,8 +567,11 @@ class _LiquidInteractivePhysics {
   double get pressProgress =>
       Curves.easeOutCubic.transform(pressAnim.value.clamp(0.0, 1.0));
 
-  int activeHoverIndex(int selectedIndex) =>
-      isInteracting ? _hoverIndex : selectedIndex;
+  int activeHoverIndex(int selectedIndex) {
+    if (isInteracting) return _hoverIndex;
+    if (_pendingSnapTarget != null) return _pendingSnapTarget!;
+    return selectedIndex;
+  }
 
   static List<Rect> buildSlotRects({
     required double totalWidth,
@@ -699,6 +704,7 @@ class _LiquidInteractivePhysics {
       _tapSlidePeakProgress = 0.0;
       _arrivalReboundActive = false;
       _arrivalReboundT = 0.0;
+      _pendingSnapTarget = null;
       pillAnim.value = targetX;
       offsetYAnim.value = targetY;
       _stopPhysicsTicker();
@@ -786,8 +792,10 @@ class _LiquidInteractivePhysics {
     if (_disposed) return;
     final pos = _observedPosition;
     if (pos == null || pos.isScrollingNotifier.value) return;
-    final wasSuppressing = _suppressExternalUntilScrollEnd;
+    final wasSuppressing =
+        _suppressExternalUntilScrollEnd || _programmaticTapInFlight;
     _suppressExternalUntilScrollEnd = false;
+    _programmaticTapInFlight = false;
     if (_isExternalFollowing) {
       final leftoverVel = _pageDragVelocity.clamp(-8.0, 8.0);
       _isExternalFollowing = false;
@@ -802,16 +810,33 @@ class _LiquidInteractivePhysics {
       );
     } else if (wasSuppressing) {
       final targetIdx = (_selectedIndexProvider?.call() ?? 0).toDouble();
-      if ((_snapTargetPos - targetIdx).abs() > 0.001) {
+      if (!isInteracting &&
+          (_snapTargetPos - targetIdx).abs() > 0.001 &&
+          !_tapSlideActive) {
         launchSpringTo(targetIdx);
       }
     }
+  }
+
+  void _scheduleExternalSuppressionCleanupIfIdle() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_disposed) return;
+      final pc = _attachedPageController;
+      if (pc == null ||
+          !pc.hasClients ||
+          !pc.position.isScrollingNotifier.value) {
+        _suppressExternalUntilScrollEnd = false;
+        _programmaticTapInFlight = false;
+      }
+    });
   }
 
   void _onPageControllerChanged() {
     _attachScrollEndListener();
     if (_ignorePageController ||
         _suppressExternalUntilScrollEnd ||
+        _programmaticTapInFlight ||
+        _tapSlideActive ||
         isInteracting) {
       return;
     }
@@ -1130,7 +1155,7 @@ class _LiquidInteractivePhysics {
       _pendingSnapTarget = null;
       return;
     }
-    if (!isInteracting && !skipSpring) {
+    if (!isInteracting && (!skipSpring || _programmaticTapInFlight)) {
       launchSpringTo(newSelectedIndex.toDouble());
     }
   }
@@ -1141,6 +1166,7 @@ class _LiquidInteractivePhysics {
     final idx = indexAtX(dx);
     final wasInteracting = isInteracting;
     isInteracting = true;
+    _pendingSnapTarget = null;
     _isExternalFollowing = false;
     _externalVelocity = 0.0;
     _dragTargetPos = pos;
@@ -1229,23 +1255,42 @@ class _LiquidInteractivePhysics {
     final leftoverVelY = releaseVelocityY != null
         ? (releaseVelocityY * 0.25).clamp(-180.0, 180.0)
         : null;
+    final switchingTab = targetIdx != currentSelectedIndex && onSelected != null;
+
     isInteracting = false;
     _dragTargetPosY = 0.0;
     _lastPointerX = null;
     _lastPointerTimeUs = 0;
+    _isExternalFollowing = false;
+    _externalVelocity = 0.0;
+    _pageDragVelocity = 0.0;
+    _lastPageSample = null;
+    _lastPageSampleUs = 0;
+
+    if (switchingTab) {
+      _pendingSnapTarget = targetIdx;
+      _programmaticTapInFlight = true;
+      _suppressExternalUntilScrollEnd = true;
+    }
+
     if (_liquidGlassEnabled || pressAnim.value > 0.0) {
       pressAnim.reverse();
     }
-    onScheduleUpdate();
-    if (targetIdx != currentSelectedIndex && onSelected != null) {
-      _pendingSnapTarget = targetIdx;
-      onSelected(targetIdx);
-    }
+
+    // Launch the snap spring directly from the released drag position to
+    // targetIdx before notifying the parent/PageController so synchronous or
+    // ticker-first PageController updates cannot snap the pill backward.
     launchSpringTo(
       targetIdx.toDouble(),
       initialVelocity: _liquidGlassEnabled ? leftoverVel : null,
       initialVelocityY: _liquidGlassEnabled ? leftoverVelY : null,
     );
+    onScheduleUpdate();
+
+    if (switchingTab) {
+      onSelected(targetIdx);
+      _scheduleExternalSuppressionCleanupIfIdle();
+    }
   }
 
   Widget wrapGestureDetector({
@@ -1269,7 +1314,14 @@ class _LiquidInteractivePhysics {
                 final targetIdx = indexAtX(details.localPosition.dx);
                 HapticFeedback.selectionClick();
                 if (targetIdx != currentSelectedIndex && onSelected != null) {
+                  _programmaticTapInFlight = true;
+                  _suppressExternalUntilScrollEnd = true;
+                  _isExternalFollowing = false;
+                  _externalVelocity = 0.0;
+                  _pendingSnapTarget = null;
+                  launchSpringTo(targetIdx.toDouble());
                   onSelected(targetIdx);
+                  _scheduleExternalSuppressionCleanupIfIdle();
                 } else {
                   launchSpringTo(targetIdx.toDouble());
                 }
@@ -1331,7 +1383,14 @@ class _LiquidInteractivePhysics {
                 } else {
                   HapticFeedback.selectionClick();
                   if (targetIdx != currentSelectedIndex && onSelected != null) {
+                    _programmaticTapInFlight = true;
+                    _suppressExternalUntilScrollEnd = true;
+                    _isExternalFollowing = false;
+                    _externalVelocity = 0.0;
+                    _pendingSnapTarget = null;
+                    launchSpringTo(targetIdx.toDouble());
                     onSelected(targetIdx);
+                    _scheduleExternalSuppressionCleanupIfIdle();
                   } else {
                     launchSpringTo(targetIdx.toDouble());
                   }
@@ -1583,6 +1642,7 @@ class _LiquidSpringPillTrackState extends State<LiquidSpringPillTrack>
     if (oldWidget.selectedIndex != widget.selectedIndex) {
       final pc = widget.pageController;
       final isUserSwiping = !widget.ignorePageController &&
+          !_physics.isSuppressingExternal &&
           pc != null &&
           pc.hasClients &&
           pc.position.isScrollingNotifier.value;
@@ -1704,12 +1764,14 @@ class LiquidBubbleTabItem {
   final String? subLabel;
   final IconData? icon;
   final Key? key;
+  final bool isHighlighted;
 
   const LiquidBubbleTabItem({
     required this.label,
     this.subLabel,
     this.icon,
     this.key,
+    this.isHighlighted = false,
   });
 }
 
@@ -1963,6 +2025,48 @@ class _LiquidBubbleTabBarState extends State<LiquidBubbleTabBar>
                                 key: item.key,
                                 child: Container(
                                   height: pillHeight,
+                                  margin: item.isHighlighted
+                                      ? const EdgeInsets.symmetric(
+                                          horizontal: 1.5,
+                                          vertical: 1.0,
+                                        )
+                                      : null,
+                                  decoration: item.isHighlighted
+                                      ? BoxDecoration(
+                                          borderRadius:
+                                              BorderRadius.circular(999),
+                                          color: scheme.primary.withValues(
+                                            alpha: (0.09 *
+                                                    (1.0 -
+                                                        activeProgress * 0.6))
+                                                .clamp(0.0, 0.12),
+                                          ),
+                                          border: Border.all(
+                                            color: scheme.primary.withValues(
+                                              alpha: (0.50 *
+                                                      (1.0 -
+                                                          activeProgress *
+                                                              0.65))
+                                                  .clamp(0.14, 0.55),
+                                            ),
+                                            width: 1.15,
+                                          ),
+                                          boxShadow: activeProgress < 0.85
+                                              ? [
+                                                  BoxShadow(
+                                                    color: scheme.primary
+                                                        .withValues(
+                                                      alpha: 0.16 *
+                                                          (1.0 -
+                                                              activeProgress),
+                                                    ),
+                                                    blurRadius: 8,
+                                                    spreadRadius: 0,
+                                                  ),
+                                                ]
+                                              : null,
+                                        )
+                                      : null,
                                   padding: widget.itemPadding,
                                   alignment: Alignment.center,
                                   child: FittedBox(
@@ -2371,6 +2475,337 @@ extension StaggeredListEntrance on Widget {
       stepMs: stepMs,
       maxStaggerIndex: maxStaggerIndex,
       child: this,
+    );
+  }
+}
+
+/// Captures horizontal swipe gestures over an in-screen scroll view to switch
+/// between internal sub-tabs / filter categories without switching main bottom
+/// navigation destinations or fighting with vertical scrolling.
+///
+/// When [pageBuilder] is provided, renders a full continuous [PageView.builder]
+/// synced 1:1 with [pageController] (and any paired [LiquidBubbleTabBar]).
+class HorizontalSubTabSwipeDetector extends StatefulWidget {
+  final int currentIndex;
+  final int itemCount;
+  final ValueChanged<int> onIndexChanged;
+  final Widget child;
+  final bool enabled;
+  final PageController? pageController;
+  final IndexedWidgetBuilder? pageBuilder;
+  final ScrollPhysics? pagePhysics;
+
+  const HorizontalSubTabSwipeDetector({
+    super.key,
+    required this.currentIndex,
+    required this.itemCount,
+    required this.onIndexChanged,
+    this.child = const SizedBox.shrink(),
+    this.enabled = true,
+    this.pageController,
+    this.pageBuilder,
+    this.pagePhysics,
+  });
+
+  @override
+  State<HorizontalSubTabSwipeDetector> createState() =>
+      _HorizontalSubTabSwipeDetectorState();
+}
+
+class _HorizontalSubTabSwipeDetectorState
+    extends State<HorizontalSubTabSwipeDetector>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _snapCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+  );
+  PageController? _internalPageController;
+  bool _isSyncingFromPage = false;
+  bool _userDraggedPage = false;
+  bool _userSwipeInProgress = false;
+  double? _dragStartPixels;
+  int _dragStartPage = 0;
+  double _peakSignedDeltaPx = 0.0;
+  double _dragDx = 0.0;
+  double _snapStartDx = 0.0;
+
+  PageController? get _effectivePageController {
+    if (widget.pageBuilder == null) return null;
+    if (widget.pageController != null) return widget.pageController;
+    return _internalPageController ??= PageController(
+      initialPage: widget.currentIndex.clamp(0, math.max(0, widget.itemCount - 1)),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _snapCtrl.addListener(() {
+      if (!mounted) return;
+      final t = Curves.easeOutCubic.transform(_snapCtrl.value);
+      setState(() {
+        _dragDx = _snapStartDx * (1.0 - t);
+      });
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant HorizontalSubTabSwipeDetector oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.pageController != widget.pageController &&
+        widget.pageController != null) {
+      _internalPageController?.dispose();
+      _internalPageController = null;
+    }
+    final ctrl = _effectivePageController;
+    if (ctrl != null &&
+        ctrl.hasClients &&
+        oldWidget.currentIndex != widget.currentIndex &&
+        !_isSyncingFromPage) {
+      final int target = widget.currentIndex
+          .clamp(0, math.max<int>(0, widget.itemCount - 1))
+          .toInt();
+      final currentPage = ctrl.page?.round() ?? target;
+      if (currentPage != target) {
+        _userSwipeInProgress = false;
+        ctrl.animateToPage(
+          target,
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _internalPageController?.dispose();
+    _snapCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onDragStart(DragStartDetails details) {
+    if (_snapCtrl.isAnimating) {
+      _snapCtrl.stop();
+    }
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    if (!widget.enabled || widget.itemCount <= 1) return;
+    final nextRaw = _dragDx + details.delta.dx;
+    final atLeftEdge = widget.currentIndex <= 0 && nextRaw > 0.0;
+    final atRightEdge =
+        widget.currentIndex >= widget.itemCount - 1 && nextRaw < 0.0;
+    final damping = (atLeftEdge || atRightEdge) ? 0.22 : 0.82;
+    setState(() {
+      _dragDx = (_dragDx + details.delta.dx * damping).clamp(-160.0, 160.0);
+    });
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    if (widget.enabled && widget.itemCount > 1) {
+      final vx = details.velocity.pixelsPerSecond.dx;
+      if ((_dragDx <= -36.0 || vx <= -240.0) &&
+          widget.currentIndex < widget.itemCount - 1) {
+        HapticFeedback.selectionClick();
+        widget.onIndexChanged(widget.currentIndex + 1);
+      } else if ((_dragDx >= 36.0 || vx >= 240.0) &&
+          widget.currentIndex > 0) {
+        HapticFeedback.selectionClick();
+        widget.onIndexChanged(widget.currentIndex - 1);
+      }
+    }
+    _snapBack();
+  }
+
+  void _snapBack() {
+    if (_dragDx.abs() < 0.5) {
+      if (_dragDx != 0.0) {
+        setState(() => _dragDx = 0.0);
+      }
+      return;
+    }
+    _snapStartDx = _dragDx;
+    _snapCtrl.forward(from: 0.0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.enabled || widget.itemCount <= 1) {
+      return widget.pageBuilder != null
+          ? widget.pageBuilder!(context, widget.currentIndex)
+          : widget.child;
+    }
+    if (widget.pageBuilder != null) {
+      final ctrl = _effectivePageController!;
+      return NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          if (notification.depth != 0 ||
+              notification.metrics.axis != Axis.horizontal) {
+            return false;
+          }
+          if (notification is ScrollStartNotification) {
+            _userDraggedPage = notification.dragDetails != null;
+            if (notification.dragDetails != null) {
+              _userSwipeInProgress = true;
+            }
+            _dragStartPixels = notification.metrics.pixels;
+            _dragStartPage = widget.currentIndex;
+            _peakSignedDeltaPx = 0.0;
+          } else if (notification is ScrollUpdateNotification &&
+              _userDraggedPage &&
+              notification.dragDetails != null &&
+              _dragStartPixels != null) {
+            final signed = notification.metrics.pixels - _dragStartPixels!;
+            if (signed.abs() > _peakSignedDeltaPx.abs()) {
+              _peakSignedDeltaPx = signed;
+            }
+          } else if (notification is ScrollEndNotification) {
+            final wasUserDragged = _userDraggedPage;
+            _userDraggedPage = false;
+            _userSwipeInProgress = false;
+            if (wasUserDragged) {
+              final settledPage = ctrl.hasClients
+                  ? (ctrl.page?.round() ?? widget.currentIndex)
+                  : widget.currentIndex;
+              if (settledPage == _dragStartPage &&
+                  _peakSignedDeltaPx.abs() >= 48.0) {
+                final step = _peakSignedDeltaPx > 0 ? 1 : -1;
+                final nextPage = (_dragStartPage + step).clamp(
+                  0,
+                  math.max<int>(0, widget.itemCount - 1),
+                );
+                if (nextPage != _dragStartPage && ctrl.hasClients) {
+                  _userSwipeInProgress = true;
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (!mounted || !ctrl.hasClients) return;
+                    ctrl.animateToPage(
+                      nextPage,
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                    );
+                  });
+                }
+              }
+            }
+            _dragStartPixels = null;
+            _peakSignedDeltaPx = 0.0;
+          }
+          return false;
+        },
+        child: PageView.builder(
+          controller: ctrl,
+          itemCount: widget.itemCount,
+          physics: widget.pagePhysics ??
+              const PageScrollPhysics(parent: BouncingScrollPhysics()),
+          onPageChanged: (idx) {
+            if (idx == widget.currentIndex) return;
+            if (!_userSwipeInProgress) return;
+            _isSyncingFromPage = true;
+            HapticFeedback.selectionClick();
+            widget.onIndexChanged(idx);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _isSyncingFromPage = false;
+            });
+          },
+          itemBuilder: (ctx, idx) => widget.pageBuilder!(ctx, idx),
+        ),
+      );
+    }
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragStart: _onDragStart,
+      onHorizontalDragUpdate: _onDragUpdate,
+      onHorizontalDragEnd: _onDragEnd,
+      onHorizontalDragCancel: _snapBack,
+      child: Transform.translate(
+        offset: Offset(_dragDx, 0.0),
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+/// Shared predicate for [RefreshIndicator]s wrapping a [NestedScrollView] +
+/// [HorizontalSubTabSwipeDetector] (`PageView`), where the vertical inner
+/// list sits at scroll depth `2` (`0` = outer, `1` = horizontal PageView,
+/// `2` = active vertical tab feed).
+bool nestedScrollRefreshNotificationPredicate(ScrollNotification notification) {
+  return notification.metrics.axis == Axis.vertical &&
+      (notification.depth == 0 ||
+          notification.depth == 1 ||
+          notification.depth == 2);
+}
+
+/// Adds a smooth vertical elastic overscroll stretch transform (both top and
+/// bottom edges) to main scrollable screens using [BouncingScrollPhysics],
+/// compensating for Android scrollables inside [NestedScrollView] / [PageView]
+/// while preserving `RefreshIndicator` drag behavior.
+class ElasticOverscrollStretchWrapper extends StatefulWidget {
+  final Widget child;
+  final bool enabled;
+
+  const ElasticOverscrollStretchWrapper({
+    super.key,
+    required this.child,
+    this.enabled = true,
+  });
+
+  @override
+  State<ElasticOverscrollStretchWrapper> createState() =>
+      _ElasticOverscrollStretchWrapperState();
+}
+
+class _ElasticOverscrollStretchWrapperState
+    extends State<ElasticOverscrollStretchWrapper> {
+  double _topOverscroll = 0.0;
+  double _bottomOverscroll = 0.0;
+
+  bool _onScrollNotification(ScrollNotification notification) {
+    if (!widget.enabled || notification.metrics.axis != Axis.vertical) {
+      return false;
+    }
+    if (notification is ScrollEndNotification) {
+      if (_topOverscroll != 0.0 || _bottomOverscroll != 0.0) {
+        setState(() {
+          _topOverscroll = 0.0;
+          _bottomOverscroll = 0.0;
+        });
+      }
+      return false;
+    }
+    if (notification is ScrollUpdateNotification ||
+        notification is OverscrollNotification) {
+      final metrics = notification.metrics;
+      final topOver = (metrics.minScrollExtent - metrics.pixels).clamp(0.0, 260.0);
+      final bottomOver = (metrics.pixels - metrics.maxScrollExtent).clamp(0.0, 260.0);
+      if ((topOver - _topOverscroll).abs() > 0.5 ||
+          (bottomOver - _bottomOverscroll).abs() > 0.5 ||
+          (topOver == 0.0 && _topOverscroll != 0.0) ||
+          (bottomOver == 0.0 && _bottomOverscroll != 0.0)) {
+        setState(() {
+          _topOverscroll = topOver;
+          _bottomOverscroll = bottomOver;
+        });
+      }
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isTop = _topOverscroll >= _bottomOverscroll;
+    final activeOver = isTop ? _topOverscroll : _bottomOverscroll;
+    final stretchY = activeOver <= 0.5
+        ? 1.0
+        : 1.0 + ((activeOver / (activeOver + 240.0)) * 0.055);
+    return NotificationListener<ScrollNotification>(
+      onNotification: _onScrollNotification,
+      child: Transform(
+        alignment: isTop ? Alignment.topCenter : Alignment.bottomCenter,
+        transform: Matrix4.diagonal3Values(1.0, stretchY, 1.0),
+        child: widget.child,
+      ),
     );
   }
 }

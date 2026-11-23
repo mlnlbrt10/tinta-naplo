@@ -393,7 +393,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('Karácsonyi OLED'), findsOneWidget);
-    expect(find.text('v3.0.2'), findsOneWidget);
+    expect(find.text('v3.1'), findsOneWidget);
   });
 
   testWidgets(
@@ -1757,6 +1757,10 @@ void main() {
       );
       expect(
         find.byWidgetPredicate((w) => w is LiquidBubbleTabBar),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('home-subtab-swipe')),
         findsOneWidget,
       );
 

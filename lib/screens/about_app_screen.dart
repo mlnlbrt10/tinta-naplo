@@ -15,7 +15,7 @@ import '../widgets/privacy_legal_modal.dart';
 import '../widgets/tinta_toast.dart';
 
 /// Dedicated "Az alkalmazásról" (About App / Rendszer & Névjegy) screen with:
-/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v3.0.2'),
+/// - App icon (`AppBrandIconBadge`), name ('Tinta Napló'), semantic version ('v3.1'),
 ///   and developer credits.
 /// - Direct link to `https://github.com/mlnlbrt10/tinta-naplo`.
 /// - Manual "Frissítések keresése" button (GitHub Releases OTA updater).
@@ -190,6 +190,16 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
     unawaited(showPrivacyAndLegalModal(context, prefs: _currentPrefs));
   }
 
+  Future<void> _openLicenseUrl() async {
+    HapticFeedback.lightImpact();
+    try {
+      await launchUrl(
+        Uri.parse('https://creativecommons.org/licenses/by-nc-sa/4.0/'),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {}
+  }
+
   void _openOpenSourceLicenses() {
     HapticFeedback.selectionClick();
     showLicensePage(
@@ -203,7 +213,11 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
           size: 56,
         ),
       ),
-      applicationLegalese: '© Tinta Napló • GNU GPLv3 nyílt forráskódú projekt',
+      applicationLegalese:
+          '© Tinta Napló • Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)\n'
+          'https://creativecommons.org/licenses/by-nc-sa/4.0/\n\n'
+          'A Tinta Napló nem kereskedelmi célra szabadon használható, megosztható és átdolgozható forrásmegjelöléssel és azonos licenc feltételei mellett. '
+          'Az alábbiakban a harmadik féltől származó nyílt forráskódú függőségek saját licencei szerepelnek.',
     );
   }
 
@@ -586,6 +600,29 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
           ),
           Divider(height: 1, indent: 56, color: theme.dividerColor),
           ListTile(
+            leading: Icon(Icons.copyright_rounded, color: scheme.primary),
+            title: Text(
+              uwu('Licenc: CC BY-NC-SA 4.0'),
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            subtitle: Text(
+              uwu(
+                'Creative Commons Nevezd meg! – Ne add el! – Így add tovább! 4.0 (nem kereskedelmi)',
+              ),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurface.withValues(alpha: 0.62),
+              ),
+            ),
+            trailing: Icon(
+              Icons.open_in_new_rounded,
+              color: scheme.onSurface.withValues(alpha: 0.56),
+            ),
+            onTap: _openLicenseUrl,
+          ),
+          Divider(height: 1, indent: 56, color: theme.dividerColor),
+          ListTile(
             leading: Icon(Icons.description_outlined, color: scheme.primary),
             title: Text(
               uwu('Nyílt forráskódú licencek'),
@@ -594,7 +631,7 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
               ),
             ),
             subtitle: Text(
-              uwu('Függőségek és betűtípusok licencei'),
+              uwu('Harmadik féltől származó függőségek és betűtípusok licencei'),
               style: theme.textTheme.labelSmall?.copyWith(
                 color: scheme.onSurface.withValues(alpha: 0.62),
               ),
