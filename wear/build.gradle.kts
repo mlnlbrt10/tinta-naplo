@@ -25,7 +25,7 @@ android {
         applicationId = "hu.mlnlbrt.tintanaplo"
         minSdk = 30
         targetSdk = 34
-        versionCode = 7002
+        versionCode = 7003
         versionName = "3.1"
         resourceConfigurations += listOf("hu", "en")
     }

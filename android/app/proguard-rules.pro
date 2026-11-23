@@ -80,3 +80,19 @@
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn org.codehaus.mojo.animal_sniffer.**
 -dontwarn kotlinx.serialization.**
+
+# Room es WorkManager
+-keep class * extends androidx.room.RoomDatabase
+-keep @androidx.room.Dao class *
+-dontwarn androidx.room.paging.**
+-keep class androidx.work.** { *; }
+-keep class * extends androidx.work.Worker
+-keep class * extends androidx.work.CoroutineWorker
+
+# Room es WorkManager
+-keep class * extends androidx.room.RoomDatabase
+-keep @androidx.room.Dao class *
+-dontwarn androidx.room.paging.**
+-keep class androidx.work.** { *; }
+-keep class * extends androidx.work.Worker
+-keep class * extends androidx.work.CoroutineWorker
