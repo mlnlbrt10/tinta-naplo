@@ -1,7 +1,7 @@
 name: tinta_naplo
 description: Tinta Napló Mobile Flutter client using in-app WebView OAuth2 PKCE and kreta_api.
 publish_to: 'none'
-version: 3.1.0+7002
+version: 3.1.0+7003
 
 environment:
   sdk: ^3.11.0
