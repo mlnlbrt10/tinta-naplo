@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:kreta_api/kreta_api.dart';
 
 import '../theme/oled_theme.dart';
+import '../utils/platform_support.dart';
 import '../widgets/period_countdown_badge.dart';
 import 'demo_data_service.dart';
 import 'kreta_client.dart';
@@ -45,7 +46,7 @@ class HomeWidgetSyncService {
   /// Binds incoming native-to-Flutter callbacks (e.g., notification tap on a
   /// warm instance opening `Órarend`). Safe to call repeatedly.
   void initialize() {
-    if (_initialized || kIsWeb) return;
+    if (!isAndroidPlatform || _initialized) return;
     _initialized = true;
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'openTimetableTab') {
@@ -350,7 +351,7 @@ class HomeWidgetSyncService {
   }
 
   Future<bool> _pushTimetablePayload(Map<String, Object?> payload) async {
-    if (kIsWeb) return false;
+    if (!isAndroidPlatform) return false;
     try {
       final ok = await _channel.invokeMethod<bool>(
         'syncTimetableData',
@@ -376,7 +377,7 @@ class HomeWidgetSyncService {
     bool enabled, {
     bool requestPermissionIfNeeded = true,
   }) async {
-    if (kIsWeb) return enabled;
+    if (!isAndroidPlatform) return false;
     try {
       final result = await _channel.invokeMethod<bool>(
         'setLiveActivityEnabled',
@@ -395,7 +396,7 @@ class HomeWidgetSyncService {
 
   /// Triggers an immediate diagnostic refresh broadcast (`ACTION_TINTA_LIVE_UPDATE`).
   Future<bool> refreshLiveUpdateNow() async {
-    if (kIsWeb) return false;
+    if (!isAndroidPlatform) return false;
     try {
       final ok = await _channel.invokeMethod<bool>('refreshLiveUpdateNow');
       return ok ?? true;
@@ -409,7 +410,7 @@ class HomeWidgetSyncService {
   /// Checks whether the app may post Android 16+ promoted ongoing Live
   /// Updates / Samsung Now Bar notifications (`NotificationManager.canPostPromotedNotifications`).
   Future<bool> canPostPromotedNotifications() async {
-    if (kIsWeb) return true;
+    if (!isAndroidPlatform) return false;
     try {
       final ok = await _channel.invokeMethod<bool>(
         'canPostPromotedNotifications',
@@ -425,7 +426,7 @@ class HomeWidgetSyncService {
   /// Launches Android's per-app Live Notification / Now Bar promotion settings
   /// (`Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS`).
   Future<bool> openPromotedNotificationSettings() async {
-    if (kIsWeb) return false;
+    if (!isAndroidPlatform) return false;
     try {
       final ok = await _channel.invokeMethod<bool>(
         'openPromotedNotificationSettings',
@@ -441,7 +442,7 @@ class HomeWidgetSyncService {
   /// Checks whether the app was launched from a Home Widget or Live Activity
   /// notification to open the `Órarend` tab directly.
   Future<bool> consumePendingOpenTimetableTab() async {
-    if (kIsWeb) return false;
+    if (!isAndroidPlatform) return false;
     try {
       final pending = await _channel.invokeMethod<bool>(
         'consumePendingOpenTimetableTab',

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:kreta_api/kreta_api.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../utils/platform_support.dart';
 import 'kreta_client.dart';
 import 'token_storage_service.dart';
 
@@ -331,7 +332,7 @@ class CalendarSyncService {
   Future<List<CalendarEventColorOption>> getCalendarEventColors(
     String calendarId,
   ) async {
-    if (kIsWeb || calendarId.isEmpty) return const [];
+    if (!isAndroidPlatform || calendarId.isEmpty) return const [];
     try {
       final rawList = await _channel.invokeListMethod<dynamic>(
         'getCalendarEventColors',
@@ -359,7 +360,7 @@ class CalendarSyncService {
 
   /// Checks whether both `READ_CALENDAR` and `WRITE_CALENDAR` are granted.
   Future<bool> hasCalendarPermissions() async {
-    if (kIsWeb) return false;
+    if (!isAndroidPlatform) return false;
     try {
       final granted = await _channel.invokeMethod<bool>('hasCalendarPermissions');
       return granted == true;
@@ -372,7 +373,7 @@ class CalendarSyncService {
 
   /// Requests Android runtime calendar permissions via the native bridge.
   Future<bool> requestCalendarPermissions() async {
-    if (kIsWeb) return false;
+    if (!isAndroidPlatform) return false;
     try {
       final granted =
           await _channel.invokeMethod<bool>('requestCalendarPermissions');
@@ -386,7 +387,7 @@ class CalendarSyncService {
 
   /// Queries writable device calendars (prioritizing Google accounts).
   Future<List<DeviceCalendarInfo>> getAvailableCalendars() async {
-    if (kIsWeb) return const [];
+    if (!isAndroidPlatform) return const [];
     try {
       final rawList =
           await _channel.invokeListMethod<dynamic>('getAvailableCalendars');
@@ -999,7 +1000,7 @@ class CalendarSyncService {
 
     final eventIds = eventIdSet.toList();
     var removedCount = 0;
-    if (eventIds.isNotEmpty && !kIsWeb) {
+    if (eventIds.isNotEmpty && isAndroidPlatform) {
       try {
         final nativeCount = await _channel.invokeMethod<int>(
           'deleteEvents',
@@ -1605,7 +1606,7 @@ class CalendarSyncService {
   }
 
   Future<int> _deleteEventsBatchNative(List<String> eventIds) async {
-    if (eventIds.isEmpty || kIsWeb) return 0;
+    if (eventIds.isEmpty || !isAndroidPlatform) return 0;
     try {
       final nativeCount = await _channel.invokeMethod<int>(
         'deleteEvents',
@@ -1628,6 +1629,7 @@ class CalendarSyncService {
     required int fromMillis,
     required int toMillis,
   }) async {
+    if (!isAndroidPlatform) return null;
     try {
       final raw = await _channel.invokeListMethod<dynamic>(
         'findExistingEvents',
@@ -1661,6 +1663,7 @@ class CalendarSyncService {
     String? syncTag,
     int? eventColor,
   }) async {
+    if (!isAndroidPlatform) return null;
     try {
       final savedId = await _channel.invokeMethod<dynamic>(
         'upsertEvent',
@@ -1720,6 +1723,7 @@ class CalendarSyncService {
   }
 
   Future<bool> _deleteEventNative(String eventId) async {
+    if (!isAndroidPlatform) return false;
     try {
       final removed = await _channel.invokeMethod<bool>(
         'deleteEvent',

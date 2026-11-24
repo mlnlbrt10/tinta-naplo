@@ -5,6 +5,7 @@ analyzer:
     - kreta_api/**
     - build/**
     - android/**
+    - ios/**
 
 linter:
   rules:

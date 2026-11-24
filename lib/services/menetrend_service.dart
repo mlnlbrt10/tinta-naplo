@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../utils/html_sanitizer.dart';
+import '../utils/platform_support.dart';
 import 'token_storage_service.dart';
 
 enum MenetrendTransportMode {
@@ -1980,7 +1981,14 @@ class MenetrendService {
       if (invokeNativeChannel != null) {
         return invokeNativeChannel(method, args);
       }
+      if (!isAndroidPlatform) {
+        return Future<dynamic>.value(null);
+      }
       return _transitChannel.invokeMethod(method, args);
+    }
+
+    if (invokeNativeChannel == null && !isAndroidPlatform) {
+      return false;
     }
 
     var sentDelayNotification = false;
@@ -2059,6 +2067,7 @@ class MenetrendService {
   static Future<void> sendPreviewDepartureNotification({
     required CommuteEvaluation evaluation,
   }) async {
+    if (!isAndroidPlatform) return;
     try {
       await _transitChannel.invokeMethod('requestNotificationPermissions');
       await _transitChannel.invokeMethod('showTransitNotification', {
@@ -2070,12 +2079,14 @@ class MenetrendService {
   }
 
   static Future<void> requestNotificationPermissions() async {
+    if (!isAndroidPlatform) return;
     try {
       await _transitChannel.invokeMethod('requestNotificationPermissions');
     } catch (_) {}
   }
 
   static Future<void> cancelAlarms() async {
+    if (!isAndroidPlatform) return;
     try {
       await _transitChannel.invokeMethod('cancelDepartureAlarms');
     } catch (_) {}
@@ -2085,6 +2096,7 @@ class MenetrendService {
     required String title,
     required String body,
   }) async {
+    if (!isAndroidPlatform) return;
     try {
       await _transitChannel.invokeMethod('showTransitNotification', {
         'notificationId': 7090,
@@ -2104,6 +2116,7 @@ class MenetrendService {
     CommuteEvaluation? evaluation,
     UserProfilePrefs? prefs,
   }) async {
+    if (!isAndroidPlatform) return;
     final effectiveTrip = trip ?? evaluation?.recommendedTrip;
     final isMorning = evaluation?.isMorningMode ?? true;
     final fallbackFrom = prefs != null

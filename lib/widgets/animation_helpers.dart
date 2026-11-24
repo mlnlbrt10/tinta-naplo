@@ -1,14 +1,17 @@
 import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
+import 'package:flutter/cupertino.dart' show CupertinoRouteTransitionMixin;
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderProxyBox;
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../providers/app_providers.dart';
 import '../services/token_storage_service.dart';
+import '../utils/platform_support.dart';
 import 'animated_backdrops.dart';
 
 /// Solid Material 3 tonal indicator pill rendered inside segmented bars and
@@ -722,11 +725,25 @@ class _LiquidInteractivePhysics {
     required bool ignore,
     required int Function() selectedIndexProvider,
   }) {
+    final bool wasIgnoring = _ignorePageController;
     final bool pageOffsetChanged = (_pageOffset - pageOffset).abs() > 0.001;
     _itemCount = itemCount;
     _pageOffset = pageOffset;
     _ignorePageController = ignore;
     _selectedIndexProvider = selectedIndexProvider;
+    if (wasIgnoring && !ignore) {
+      _suppressExternalUntilScrollEnd = false;
+      _programmaticTapInFlight = false;
+      if (controller != null &&
+          controller.hasClients &&
+          controller.position.haveDimensions &&
+          controller.position.isScrollingNotifier.value) {
+        _tapSlideActive = false;
+        _tapSlidePeakProgress = 0.0;
+        _arrivalReboundActive = false;
+        _arrivalReboundT = 0.0;
+      }
+    }
     if (pageOffsetChanged &&
         !ignore &&
         controller != null &&
@@ -747,9 +764,13 @@ class _LiquidInteractivePhysics {
     detachPageController();
     _attachedPageController = controller;
     controller?.addListener(_onPageControllerChanged);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (controller != null && controller.hasClients) {
       _attachScrollEndListener();
-    });
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _attachScrollEndListener();
+      });
+    }
   }
 
   void clampPositionToMax(double maxIdx) {
@@ -808,11 +829,12 @@ class _LiquidInteractivePhysics {
         targetIdx.toDouble(),
         initialVelocity: leftoverVel,
       );
-    } else if (wasSuppressing) {
+    } else if (!isInteracting && !_tapSlideActive) {
       final targetIdx = (_selectedIndexProvider?.call() ?? 0).toDouble();
-      if (!isInteracting &&
-          (_snapTargetPos - targetIdx).abs() > 0.001 &&
-          !_tapSlideActive) {
+      if (wasSuppressing && (_snapTargetPos - targetIdx).abs() > 0.001) {
+        launchSpringTo(targetIdx);
+      } else if ((pillAnim.value - targetIdx).abs() > 0.001 ||
+          (_snapTargetPos - targetIdx).abs() > 0.001) {
         launchSpringTo(targetIdx);
       }
     }
@@ -1155,6 +1177,7 @@ class _LiquidInteractivePhysics {
       _pendingSnapTarget = null;
       return;
     }
+    _pendingSnapTarget = null;
     if (!isInteracting && (!skipSpring || _programmaticTapInFlight)) {
       launchSpringTo(newSelectedIndex.toDouble());
     }
@@ -1318,7 +1341,7 @@ class _LiquidInteractivePhysics {
                   _suppressExternalUntilScrollEnd = true;
                   _isExternalFollowing = false;
                   _externalVelocity = 0.0;
-                  _pendingSnapTarget = null;
+                  _pendingSnapTarget = targetIdx;
                   launchSpringTo(targetIdx.toDouble());
                   onSelected(targetIdx);
                   _scheduleExternalSuppressionCleanupIfIdle();
@@ -1387,7 +1410,7 @@ class _LiquidInteractivePhysics {
                     _suppressExternalUntilScrollEnd = true;
                     _isExternalFollowing = false;
                     _externalVelocity = 0.0;
-                    _pendingSnapTarget = null;
+                    _pendingSnapTarget = targetIdx;
                     launchSpringTo(targetIdx.toDouble());
                     onSelected(targetIdx);
                     _scheduleExternalSuppressionCleanupIfIdle();
@@ -2142,53 +2165,74 @@ class _LiquidBubbleTabBarState extends State<LiquidBubbleTabBar>
 }
 
 /// Custom 120Hz-ready Shared-Axis / Predictive-Back style page route transition
-/// using `Curves.easeOutCubic` / `Curves.easeInOutCubic` (280ms forward, 240ms reverse).
-class SmoothSharedAxisRoute<T> extends PageRouteBuilder<T> {
+/// using `Curves.easeOutCubic` / `Curves.easeInOutCubic` (280ms forward, 240ms
+/// reverse) on Android/desktop and native Cupertino interactive edge-swipe
+/// transitions on iOS.
+class SmoothSharedAxisRoute<T> extends PageRoute<T>
+    with CupertinoRouteTransitionMixin<T> {
   final Widget page;
 
   SmoothSharedAxisRoute({
     required this.page,
     super.settings,
-  }) : super(
-          transitionDuration: const Duration(milliseconds: 280),
-          reverseTransitionDuration: const Duration(milliseconds: 240),
-          pageBuilder: (context, animation, secondaryAnimation) => page,
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            final primaryCurved = CurvedAnimation(
-              parent: animation,
-              curve: Curves.easeOutCubic,
-              reverseCurve: Curves.easeInOutCubic,
-            );
-            final secondaryCurved = CurvedAnimation(
-              parent: secondaryAnimation,
-              curve: Curves.easeOutCubic,
-              reverseCurve: Curves.easeInOutCubic,
-            );
+  });
 
-            return SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0.06, 0.0),
-                end: Offset.zero,
-              ).animate(primaryCurved),
-              child: FadeTransition(
-                opacity: Tween<double>(begin: 0.0, end: 1.0).animate(
-                  primaryCurved,
-                ),
-                child: ScaleTransition(
-                  scale: Tween<double>(begin: 0.96, end: 1.0).animate(
-                    primaryCurved,
-                  ),
-                  child: ScaleTransition(
-                    scale: Tween<double>(begin: 1.0, end: 0.97).animate(
-                      secondaryCurved,
-                    ),
-                    child: child,
-                  ),
-                ),
-              ),
-            );
-          },
-        );
+  @override
+  String? get title => null;
+
+  @override
+  bool get maintainState => true;
+
+  @override
+  Color? get barrierColor => null;
+
+  @override
+  String? get barrierLabel => null;
+
+  @override
+  Duration get transitionDuration => isIOSPlatform
+      ? super.transitionDuration
+      : const Duration(milliseconds: 280);
+
+  @override
+  Duration get reverseTransitionDuration => isIOSPlatform
+      ? super.reverseTransitionDuration
+      : const Duration(milliseconds: 240);
+
+  @override
+  Widget buildContent(BuildContext context) => page;
+
+  @override
+  bool canTransitionTo(TransitionRoute<dynamic> nextRoute) {
+    if (isIOSPlatform) {
+      return super.canTransitionTo(nextRoute);
+    }
+    return nextRoute is PageRoute && !nextRoute.fullscreenDialog;
+  }
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    if (isIOSPlatform) {
+      return super.buildTransitions(
+        context,
+        animation,
+        secondaryAnimation,
+        child,
+      );
+    }
+    return const SmoothSharedAxisTransitionsBuilder().buildTransitions<T>(
+      this,
+      context,
+      animation,
+      secondaryAnimation,
+      child,
+    );
+  }
 }
 
 /// Custom PageTransitionsBuilder so all standard routes use smooth shared-axis
@@ -2479,12 +2523,129 @@ extension StaggeredListEntrance on Widget {
   }
 }
 
+class _SubTabDragTracker {
+  int dragStartPage = 0;
+  double? dragStartPixels;
+  bool userControlledScroll = false;
+  bool isUserDragging = false;
+}
+
+class _SubTabPageScrollPhysics extends PageScrollPhysics {
+  final _SubTabDragTracker tracker;
+  final double minSwipeDistancePx;
+
+  const _SubTabPageScrollPhysics({
+    required this.tracker,
+    this.minSwipeDistancePx = 48.0,
+    super.parent,
+  });
+
+  @override
+  _SubTabPageScrollPhysics applyTo(ScrollPhysics? ancestor) {
+    return _SubTabPageScrollPhysics(
+      tracker: tracker,
+      minSwipeDistancePx: minSwipeDistancePx,
+      parent: buildParent(ancestor),
+    );
+  }
+
+  @override
+  Simulation? createBallisticSimulation(
+    ScrollMetrics position,
+    double velocity,
+  ) {
+    if (!tracker.userControlledScroll ||
+        (velocity <= 0.0 && position.pixels <= position.minScrollExtent) ||
+        (velocity >= 0.0 && position.pixels >= position.maxScrollExtent)) {
+      return super.createBallisticSimulation(position, velocity);
+    }
+
+    final tolerance = toleranceFor(position);
+    final viewport =
+        position.viewportDimension > 0 ? position.viewportDimension : 1.0;
+    final maxPage = math.max(0, (position.maxScrollExtent / viewport).round());
+    final startPx = tracker.dragStartPixels;
+
+    if (velocity.abs() < tolerance.velocity && startPx != null) {
+      final deltaPx = position.pixels - startPx;
+      if (deltaPx.abs() >= minSwipeDistancePx &&
+          deltaPx.abs() < viewport * 0.95) {
+        final step = deltaPx > 0 ? 1 : -1;
+        final double targetPage =
+            (tracker.dragStartPage + step).clamp(0, maxPage).toDouble();
+        final double targetPixels = (targetPage * viewport)
+            .clamp(position.minScrollExtent, position.maxScrollExtent);
+        if ((targetPixels - position.pixels).abs() < tolerance.distance &&
+            velocity.abs() < tolerance.velocity) {
+          return null;
+        }
+        return ScrollSpringSimulation(
+          spring,
+          position.pixels,
+          targetPixels,
+          velocity,
+          tolerance: tolerance,
+        );
+      }
+    }
+
+    return super.createBallisticSimulation(position, velocity);
+  }
+}
+
+class _MeasureChildHeight extends SingleChildRenderObjectWidget {
+  final ValueChanged<double> onHeight;
+
+  const _MeasureChildHeight({
+    required this.onHeight,
+    required super.child,
+  });
+
+  @override
+  RenderObject createRenderObject(BuildContext context) {
+    return _RenderMeasureChildHeight(onHeight: onHeight);
+  }
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderMeasureChildHeight renderObject,
+  ) {
+    renderObject.onHeight = onHeight;
+  }
+}
+
+class _RenderMeasureChildHeight extends RenderProxyBox {
+  ValueChanged<double> onHeight;
+  double? _lastHeight;
+
+  _RenderMeasureChildHeight({required this.onHeight});
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    final h = child?.size.height ?? 0.0;
+    if (_lastHeight == null || (h - _lastHeight!).abs() > 0.5) {
+      _lastHeight = h;
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (attached) {
+          onHeight(h);
+        }
+      });
+    }
+  }
+}
+
 /// Captures horizontal swipe gestures over an in-screen scroll view to switch
 /// between internal sub-tabs / filter categories without switching main bottom
 /// navigation destinations or fighting with vertical scrolling.
 ///
 /// When [pageBuilder] is provided, renders a full continuous [PageView.builder]
 /// synced 1:1 with [pageController] (and any paired [LiquidBubbleTabBar]).
+///
+/// Set [autoHeight] to `true` when embedding inside a single unified vertical
+/// scroll view (e.g., Főoldal) so the [PageView] dynamically sizes itself to the
+/// active page's intrinsic height while smoothly interpolating height during swipes.
 class HorizontalSubTabSwipeDetector extends StatefulWidget {
   final int currentIndex;
   final int itemCount;
@@ -2494,6 +2655,9 @@ class HorizontalSubTabSwipeDetector extends StatefulWidget {
   final PageController? pageController;
   final IndexedWidgetBuilder? pageBuilder;
   final ScrollPhysics? pagePhysics;
+  final bool autoHeight;
+  final double minAutoHeight;
+  final VoidCallback? onUserDragStart;
 
   const HorizontalSubTabSwipeDetector({
     super.key,
@@ -2505,6 +2669,9 @@ class HorizontalSubTabSwipeDetector extends StatefulWidget {
     this.pageController,
     this.pageBuilder,
     this.pagePhysics,
+    this.autoHeight = false,
+    this.minAutoHeight = 320.0,
+    this.onUserDragStart,
   });
 
   @override
@@ -2520,12 +2687,10 @@ class _HorizontalSubTabSwipeDetectorState
     duration: const Duration(milliseconds: 220),
   );
   PageController? _internalPageController;
-  bool _isSyncingFromPage = false;
-  bool _userDraggedPage = false;
-  bool _userSwipeInProgress = false;
-  double? _dragStartPixels;
-  int _dragStartPage = 0;
-  double _peakSignedDeltaPx = 0.0;
+  final _SubTabDragTracker _dragTracker = _SubTabDragTracker();
+  final Map<int, double> _pageHeights = <int, double>{};
+  final ValueNotifier<int> _heightVersion = ValueNotifier<int>(0);
+  int? _lastEmittedIndex;
   double _dragDx = 0.0;
   double _snapStartDx = 0.0;
 
@@ -2533,7 +2698,8 @@ class _HorizontalSubTabSwipeDetectorState
     if (widget.pageBuilder == null) return null;
     if (widget.pageController != null) return widget.pageController;
     return _internalPageController ??= PageController(
-      initialPage: widget.currentIndex.clamp(0, math.max(0, widget.itemCount - 1)),
+      initialPage:
+          widget.currentIndex.clamp(0, math.max(0, widget.itemCount - 1)),
     );
   }
 
@@ -2557,17 +2723,22 @@ class _HorizontalSubTabSwipeDetectorState
       _internalPageController?.dispose();
       _internalPageController = null;
     }
+    if (widget.currentIndex == _lastEmittedIndex) {
+      _lastEmittedIndex = null;
+      return;
+    }
     final ctrl = _effectivePageController;
     if (ctrl != null &&
         ctrl.hasClients &&
         oldWidget.currentIndex != widget.currentIndex &&
-        !_isSyncingFromPage) {
+        !_dragTracker.userControlledScroll &&
+        !_dragTracker.isUserDragging &&
+        !ctrl.position.isScrollingNotifier.value) {
       final int target = widget.currentIndex
           .clamp(0, math.max<int>(0, widget.itemCount - 1))
           .toInt();
       final currentPage = ctrl.page?.round() ?? target;
       if (currentPage != target) {
-        _userSwipeInProgress = false;
         ctrl.animateToPage(
           target,
           duration: const Duration(milliseconds: 280),
@@ -2580,8 +2751,18 @@ class _HorizontalSubTabSwipeDetectorState
   @override
   void dispose() {
     _internalPageController?.dispose();
+    _heightVersion.dispose();
     _snapCtrl.dispose();
     super.dispose();
+  }
+
+  void _updatePageHeight(int index, double height) {
+    if (!mounted) return;
+    final prev = _pageHeights[index];
+    if (prev == null || (prev - height).abs() > 0.5) {
+      _pageHeights[index] = height;
+      _heightVersion.value++;
+    }
   }
 
   void _onDragStart(DragStartDetails details) {
@@ -2605,11 +2786,11 @@ class _HorizontalSubTabSwipeDetectorState
   void _onDragEnd(DragEndDetails details) {
     if (widget.enabled && widget.itemCount > 1) {
       final vx = details.velocity.pixelsPerSecond.dx;
-      if ((_dragDx <= -36.0 || vx <= -240.0) &&
+      if (((_dragDx <= -36.0 && vx <= 80.0) || vx <= -240.0) &&
           widget.currentIndex < widget.itemCount - 1) {
         HapticFeedback.selectionClick();
         widget.onIndexChanged(widget.currentIndex + 1);
-      } else if ((_dragDx >= 36.0 || vx >= 240.0) &&
+      } else if (((_dragDx >= 36.0 && vx >= -80.0) || vx >= 240.0) &&
           widget.currentIndex > 0) {
         HapticFeedback.selectionClick();
         widget.onIndexChanged(widget.currentIndex - 1);
@@ -2638,78 +2819,134 @@ class _HorizontalSubTabSwipeDetectorState
     }
     if (widget.pageBuilder != null) {
       final ctrl = _effectivePageController!;
-      return NotificationListener<ScrollNotification>(
+      final effectivePhysics = widget.pagePhysics ??
+          _SubTabPageScrollPhysics(
+            tracker: _dragTracker,
+            parent: const BouncingScrollPhysics(),
+          );
+      final pageView = NotificationListener<ScrollNotification>(
         onNotification: (notification) {
           if (notification.depth != 0 ||
               notification.metrics.axis != Axis.horizontal) {
             return false;
           }
           if (notification is ScrollStartNotification) {
-            _userDraggedPage = notification.dragDetails != null;
-            if (notification.dragDetails != null) {
-              _userSwipeInProgress = true;
+            final isUserDrag = notification.dragDetails != null;
+            _dragTracker.isUserDragging = isUserDrag;
+            if (isUserDrag) {
+              _dragTracker.userControlledScroll = true;
+              _dragTracker.dragStartPixels = notification.metrics.pixels;
+              final vp = notification.metrics.viewportDimension > 0
+                  ? notification.metrics.viewportDimension
+                  : 1.0;
+              _dragTracker.dragStartPage =
+                  (notification.metrics.pixels / vp)
+                      .round()
+                      .clamp(0, math.max(0, widget.itemCount - 1));
+              widget.onUserDragStart?.call();
+            } else {
+              _dragTracker.userControlledScroll = false;
+              _dragTracker.dragStartPixels = null;
             }
-            _dragStartPixels = notification.metrics.pixels;
-            _dragStartPage = widget.currentIndex;
-            _peakSignedDeltaPx = 0.0;
-          } else if (notification is ScrollUpdateNotification &&
-              _userDraggedPage &&
-              notification.dragDetails != null &&
-              _dragStartPixels != null) {
-            final signed = notification.metrics.pixels - _dragStartPixels!;
-            if (signed.abs() > _peakSignedDeltaPx.abs()) {
-              _peakSignedDeltaPx = signed;
+          } else if (notification is ScrollUpdateNotification) {
+            if (notification.dragDetails != null &&
+                !_dragTracker.userControlledScroll) {
+              _dragTracker.isUserDragging = true;
+              _dragTracker.userControlledScroll = true;
+              _dragTracker.dragStartPixels = notification.metrics.pixels;
+              final vp = notification.metrics.viewportDimension > 0
+                  ? notification.metrics.viewportDimension
+                  : 1.0;
+              _dragTracker.dragStartPage =
+                  (notification.metrics.pixels / vp)
+                      .round()
+                      .clamp(0, math.max(0, widget.itemCount - 1));
+              widget.onUserDragStart?.call();
+            } else if (notification.dragDetails == null) {
+              _dragTracker.isUserDragging = false;
             }
           } else if (notification is ScrollEndNotification) {
-            final wasUserDragged = _userDraggedPage;
-            _userDraggedPage = false;
-            _userSwipeInProgress = false;
-            if (wasUserDragged) {
-              final settledPage = ctrl.hasClients
-                  ? (ctrl.page?.round() ?? widget.currentIndex)
-                  : widget.currentIndex;
-              if (settledPage == _dragStartPage &&
-                  _peakSignedDeltaPx.abs() >= 48.0) {
-                final step = _peakSignedDeltaPx > 0 ? 1 : -1;
-                final nextPage = (_dragStartPage + step).clamp(
-                  0,
-                  math.max<int>(0, widget.itemCount - 1),
-                );
-                if (nextPage != _dragStartPage && ctrl.hasClients) {
-                  _userSwipeInProgress = true;
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (!mounted || !ctrl.hasClients) return;
-                    ctrl.animateToPage(
-                      nextPage,
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                    );
-                  });
-                }
+            final wasUserScroll = _dragTracker.userControlledScroll;
+            _dragTracker.isUserDragging = false;
+            _dragTracker.userControlledScroll = false;
+            _dragTracker.dragStartPixels = null;
+            if (wasUserScroll && ctrl.hasClients) {
+              final int maxIdx = math.max<int>(0, widget.itemCount - 1);
+              final int settled =
+                  (ctrl.page?.round() ?? widget.currentIndex).clamp(0, maxIdx).toInt();
+              if (settled != widget.currentIndex) {
+                _lastEmittedIndex = settled;
+                HapticFeedback.selectionClick();
+                widget.onIndexChanged(settled);
               }
             }
-            _dragStartPixels = null;
-            _peakSignedDeltaPx = 0.0;
           }
           return false;
         },
         child: PageView.builder(
           controller: ctrl,
           itemCount: widget.itemCount,
-          physics: widget.pagePhysics ??
-              const PageScrollPhysics(parent: BouncingScrollPhysics()),
+          pageSnapping: widget.pagePhysics != null,
+          physics: effectivePhysics,
           onPageChanged: (idx) {
+            if (!_dragTracker.userControlledScroll) return;
             if (idx == widget.currentIndex) return;
-            if (!_userSwipeInProgress) return;
-            _isSyncingFromPage = true;
+            _lastEmittedIndex = idx;
             HapticFeedback.selectionClick();
             widget.onIndexChanged(idx);
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              _isSyncingFromPage = false;
-            });
           },
-          itemBuilder: (ctx, idx) => widget.pageBuilder!(ctx, idx),
+          itemBuilder: (ctx, idx) {
+            if (!widget.autoHeight) {
+              return widget.pageBuilder!(ctx, idx);
+            }
+            return LayoutBuilder(
+              builder: (itemCtx, constraints) {
+                return Align(
+                  alignment: Alignment.topCenter,
+                  child: OverflowBox(
+                    minWidth: constraints.maxWidth,
+                    maxWidth: constraints.maxWidth,
+                    minHeight: 0.0,
+                    maxHeight: double.infinity,
+                    alignment: Alignment.topCenter,
+                    child: _MeasureChildHeight(
+                      onHeight: (h) => _updatePageHeight(idx, h),
+                      child: widget.pageBuilder!(itemCtx, idx),
+                    ),
+                  ),
+                );
+              },
+            );
+          },
         ),
+      );
+
+      if (!widget.autoHeight) {
+        return pageView;
+      }
+
+      return AnimatedBuilder(
+        animation: Listenable.merge([ctrl, _heightVersion]),
+        builder: (context, child) {
+          final p = (ctrl.hasClients && ctrl.position.haveDimensions)
+              ? (ctrl.page ?? widget.currentIndex.toDouble())
+              : widget.currentIndex.toDouble();
+          final maxIdx = math.max(0, widget.itemCount - 1);
+          final lo = p.floor().clamp(0, maxIdx);
+          final hi = p.ceil().clamp(0, maxIdx);
+          final t = (p - lo).clamp(0.0, 1.0);
+          final hLo = _pageHeights[lo] ?? widget.minAutoHeight;
+          final hHi = _pageHeights[hi] ?? hLo;
+          final h = math.max(
+            widget.minAutoHeight,
+            lerpDouble(hLo, hHi, t) ?? widget.minAutoHeight,
+          );
+          return SizedBox(
+            height: h,
+            child: child,
+          );
+        },
+        child: pageView,
       );
     }
     return GestureDetector(

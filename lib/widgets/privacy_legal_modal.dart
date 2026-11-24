@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../providers/app_providers.dart';
 import '../services/token_storage_service.dart';
+import '../utils/platform_support.dart';
 import '../utils/uwu_helper.dart';
 import 'frosted_inspection_modal.dart';
 import 'glass_card.dart';
@@ -134,7 +135,9 @@ Future<void> showPrivacyAndLegalModal(
                           icon: Icons.lock_person_rounded,
                           title: uwu('Adatkezelés & Biztonság'),
                           body: uwu(
-                            'KRÉTA bejelentkezési adataid, tokenjeid, jegyeid, órarended, üzeneteid és gyorsítótárazott adataid kizárólag helyileg, a saját készülékeden tárolódnak (valamint párosított Wear OS órád esetén közvetlenül oda szinkronizálódnak). Az alkalmazás közvetlenül a hivatalos KRÉTA végpontokkal kommunikál, köztes proxy vagy fejlesztői szerver nélkül.',
+                            isIOSPlatform
+                                ? 'KRÉTA bejelentkezési adataid, tokenjeid, jegyeid, órarended, üzeneteid és gyorsítótárazott adataid kizárólag helyileg, a saját készülékeden tárolódnak. Az alkalmazás közvetlenül a hivatalos KRÉTA végpontokkal kommunikál, köztes proxy vagy fejlesztői szerver nélkül.'
+                                : 'KRÉTA bejelentkezési adataid, tokenjeid, jegyeid, órarended, üzeneteid és gyorsítótárazott adataid kizárólag helyileg, a saját készülékeden tárolódnak (valamint párosított Wear OS órád esetén közvetlenül oda szinkronizálódnak). Az alkalmazás közvetlenül a hivatalos KRÉTA végpontokkal kommunikál, köztes proxy vagy fejlesztői szerver nélkül.',
                           ),
                           scheme: scheme,
                           dividerColor: theme.dividerColor,
@@ -145,7 +148,7 @@ Future<void> showPrivacyAndLegalModal(
                           icon: Icons.bug_report_outlined,
                           title: uwu('Hibajelentések'),
                           body: uwu(
-                            'Hibajelentés csak akkor kerül elküldésre, ha azt kifejezetten beküldöd. Ilyenkor kizárólag minimalizált technikai metaadatok (teljes név helyett monogram, alkalmazás- és Android-verzió, aktív téma), az általad írt leírás, valamint az opcionálisan csatolt képernyőkép vagy videó továbbítódik a https://ticket.tintanaplo.hu címre – KRÉTA jelszó, token vagy tanulói azonosító soha nem kerül bele.',
+                            'Hibajelentés csak akkor kerül elküldésre, ha azt kifejezetten beküldöd. Ilyenkor kizárólag minimalizált technikai metaadatok (teljes név helyett monogram, alkalmazás- és ${isIOSPlatform ? 'iOS-verzió' : 'Android-verzió'}, aktív téma), az általad írt leírás, valamint az opcionálisan csatolt képernyőkép vagy videó továbbítódik a https://ticket.tintanaplo.hu címre – KRÉTA jelszó, token vagy tanulói azonosító soha nem kerül bele.',
                           ),
                           scheme: scheme,
                           dividerColor: theme.dividerColor,
@@ -156,9 +159,12 @@ Future<void> showPrivacyAndLegalModal(
                           icon: Icons.extension_outlined,
                           title: uwu('Opcionális integrációk'),
                           body: uwu(
-                            '• Naptárszinkron: A kiválasztott számonkéréseket, házikat és órarendi eseményeket közvetlenül a készüléken választott helyi vagy Google-naptárba írja.\n'
-                            '• MenetrendGO & Tanév rendje: Útvonal- vagy iskolai naptárlekérdezést kizárólag akkor küld, ha ezeket a funkciókat aktívan használod.\n'
-                            '• GitHub OTA frissítő: Új verziók keresésekor a GitHub Releases felületét (github.com/mlnlbrt10/tinta-naplo) ellenőrzi.',
+                            isIOSPlatform
+                                ? '• MenetrendGO & Tanév rendje: Útvonal- vagy iskolai naptárlekérdezést kizárólag akkor küld, ha ezeket a funkciókat aktívan használod.\n'
+                                    '• GitHub frissítő: Új verziók keresésekor a GitHub Releases felületét (github.com/mlnlbrt10/tinta-naplo) ellenőrzi.'
+                                : '• Naptárszinkron: A kiválasztott számonkéréseket, házikat és órarendi eseményeket közvetlenül a készüléken választott helyi vagy Google-naptárba írja.\n'
+                                    '• MenetrendGO & Tanév rendje: Útvonal- vagy iskolai naptárlekérdezést kizárólag akkor küld, ha ezeket a funkciókat aktívan használod.\n'
+                                    '• GitHub OTA frissítő: Új verziók keresésekor a GitHub Releases felületét (github.com/mlnlbrt10/tinta-naplo) ellenőrzi.',
                           ),
                           scheme: scheme,
                           dividerColor: theme.dividerColor,
@@ -169,7 +175,9 @@ Future<void> showPrivacyAndLegalModal(
                           icon: Icons.delete_sweep_outlined,
                           title: uwu('Felhasználói kontroll és adattörlés'),
                           body: uwu(
-                            'Bármikor törölheted a gyorsítótárazott adatokat, visszavonhatod a naptár- vagy értesítési engedélyeket az Android beállításaiban, illetve kijelentkezéssel azonnal és véglegesen törölheted a készüléken tárolt helyi munkamenet-tokeneket.',
+                            isIOSPlatform
+                                ? 'Bármikor törölheted a gyorsítótárazott adatokat, módosíthatod a jogosultságokat az iOS Beállításokban, illetve kijelentkezéssel azonnal és véglegesen törölheted a készüléken tárolt helyi munkamenet-tokeneket.'
+                                : 'Bármikor törölheted a gyorsítótárazott adatokat, visszavonhatod a naptár- vagy értesítési engedélyeket az Android beállításaiban, illetve kijelentkezéssel azonnal és véglegesen törölheted a készüléken tárolt helyi munkamenet-tokeneket.',
                           ),
                           scheme: scheme,
                           dividerColor: theme.dividerColor,

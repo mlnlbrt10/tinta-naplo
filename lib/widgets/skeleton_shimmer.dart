@@ -79,8 +79,8 @@ class _HomeSkeletonFeedState extends State<HomeSkeletonFeed>
         builder: (context, _) {
           final sweep = Curves.easeInOutSine.transform(_shimmerController.value);
           return ListView(
-            physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics(),
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
             ),
             padding: const EdgeInsets.fromLTRB(0, 12, 0, 116),
             children: [

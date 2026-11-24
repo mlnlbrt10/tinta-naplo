@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../providers/app_providers.dart';
 import '../services/calendar_sync_service.dart';
@@ -22,6 +24,7 @@ import '../services/wear_sync_service.dart';
 import '../theme/minimalist_tokens.dart';
 import '../theme/oled_theme.dart';
 import '../utils/greeting_utils.dart';
+import '../utils/platform_support.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
@@ -1940,6 +1943,7 @@ class AppSettingsScreen extends StatefulWidget {
 }
 
 class _AppSettingsScreenState extends State<AppSettingsScreen> {
+  final GlobalKey _moreKey = GlobalKey(debugLabel: 'app_settings_more_screen');
   late UserProfilePrefs _prefs;
 
   @override
@@ -1980,6 +1984,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           title: uwu('Alkalmazás beállítások'),
         ),
         body: MoreScreen(
+          key: _moreKey,
           session: widget.session,
           student: widget.student,
           kretaClient: widget.kretaClient,
@@ -2082,11 +2087,13 @@ class _MoreScreenState extends State<MoreScreen>
   late final PageController _attendancePageController =
       PageController(initialPage: _attendanceFilter.index);
   bool _isAnimatingAttendancePage = false;
+  int _attendancePageAnimEpoch = 0;
   List<Lesson> _cachedWeekLessons = const <Lesson>[];
   bool _showSentMessages = false;
   late final PageController _messagesPageController =
       PageController(initialPage: _showSentMessages ? 1 : 0);
   bool _isAnimatingMessagesPage = false;
+  int _messagesPageAnimEpoch = 0;
   bool _isLoadingModules = false;
   bool _markingAllRead = false;
   String _appVersion = GitHubUpdaterService.fallbackAppVersion;
@@ -2137,9 +2144,11 @@ class _MoreScreenState extends State<MoreScreen>
       _entranceActive = false;
     }
     _loadPersistedReadIds();
-    _loadCalendarSyncSettings();
-    if (widget.settingsOnly) {
-      unawaited(_loadWearStatus());
+    if (isAndroidPlatform) {
+      _loadCalendarSyncSettings();
+      if (widget.settingsOnly) {
+        unawaited(_loadWearStatus());
+      }
     }
     _homeAddressController =
         TextEditingController(text: _currentPrefs.homeAddress);
@@ -2218,6 +2227,7 @@ class _MoreScreenState extends State<MoreScreen>
   }
 
   Future<void> _loadWearStatus() async {
+    if (!isAndroidPlatform) return;
     final status = await _wearService.getConnectionStatus();
     if (!mounted) return;
     setState(() => _wearStatus = status);
@@ -2332,13 +2342,14 @@ class _MoreScreenState extends State<MoreScreen>
   }
 
   Future<void> _loadCalendarSyncSettings() async {
+    if (!isAndroidPlatform) return;
     final loaded = await CalendarSyncService.instance.loadSettings();
     if (!mounted) return;
     setState(() => _calendarSyncSettings = loaded);
   }
 
   void _updatePrefs(UserProfilePrefs nextPrefs) {
-    var effectiveNext = nextPrefs;
+    var effectiveNext = nextPrefs.effectiveForPlatform();
     if (!_currentPrefs.transitConfigured &&
         effectiveNext.transitConfigured &&
         !effectiveNext.transitCardEnabled) {
@@ -2346,16 +2357,17 @@ class _MoreScreenState extends State<MoreScreen>
     }
     UserProfilePrefs.syncActiveGlobals(effectiveNext);
     _currentPrefsStorage = effectiveNext;
-    final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
-    if (scope != null) {
-      // Update SettingsProvider & ThemeProvider synchronously BEFORE disk IO.
-      unawaited(scope.settings.updatePrefs(effectiveNext));
-    } else {
-      TokenStorageService.saveProfilePrefsToSharedPrefs(effectiveNext);
-    }
     if (mounted) {
+      final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
+      if (scope != null) {
+        // Update SettingsProvider & ThemeProvider synchronously BEFORE disk IO.
+        unawaited(scope.settings.updatePrefs(effectiveNext));
+      } else {
+        TokenStorageService.saveProfilePrefsToSharedPrefs(effectiveNext);
+      }
       setState(() => _currentPrefsStorage = effectiveNext);
     } else {
+      TokenStorageService.saveProfilePrefsToSharedPrefs(effectiveNext);
       _stateVersion.value++;
     }
     widget.onPrefsChanged(effectiveNext);
@@ -2830,9 +2842,13 @@ class _MoreScreenState extends State<MoreScreen>
     String? savedFilePath;
 
     final candidateDirs = <String>[
-      '/storage/emulated/0/Download',
-      Directory.systemTemp.path,
+      if (Platform.isAndroid) '/storage/emulated/0/Download',
     ];
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      candidateDirs.add(docsDir.path);
+    } catch (_) {}
+    candidateDirs.add(Directory.systemTemp.path);
     for (final dirPath in candidateDirs) {
       try {
         final dir = Directory(dirPath);
@@ -3284,6 +3300,17 @@ class _MoreScreenState extends State<MoreScreen>
         await _fileChannel.invokeMethod<String>('openFile', {
           'filePath': file.path,
         });
+      } else {
+        final opened = await launchUrl(
+          Uri.file(file.path),
+          mode: LaunchMode.externalApplication,
+        );
+        if (!opened && feedbackContext.mounted) {
+          TintaToast.info(
+            feedbackContext,
+            uwu('Csatolmány mentve: ${file.path}'),
+          );
+        }
       }
     } catch (e) {
       if (feedbackContext.mounted) {
@@ -4202,6 +4229,7 @@ class _MoreScreenState extends State<MoreScreen>
           );
       final curPage = _attendancePageController.page?.round() ?? target;
       if (curPage != target) {
+        final epoch = ++_attendancePageAnimEpoch;
         _isAnimatingAttendancePage = true;
         _attendancePageController
             .animateToPage(
@@ -4210,10 +4238,9 @@ class _MoreScreenState extends State<MoreScreen>
               curve: Curves.easeOutCubic,
             )
             .whenComplete(() {
-          if (mounted && _isAnimatingAttendancePage) {
+          if (!mounted || epoch != _attendancePageAnimEpoch) return;
+          if (_isAnimatingAttendancePage) {
             setState(() => _isAnimatingAttendancePage = false);
-          } else {
-            _isAnimatingAttendancePage = false;
           }
         });
       }
@@ -4228,6 +4255,7 @@ class _MoreScreenState extends State<MoreScreen>
       final target = showSent ? 1 : 0;
       final curPage = _messagesPageController.page?.round() ?? target;
       if (curPage != target) {
+        final epoch = ++_messagesPageAnimEpoch;
         _isAnimatingMessagesPage = true;
         _messagesPageController
             .animateToPage(
@@ -4236,10 +4264,9 @@ class _MoreScreenState extends State<MoreScreen>
               curve: Curves.easeOutCubic,
             )
             .whenComplete(() {
-          if (mounted && _isAnimatingMessagesPage) {
+          if (!mounted || epoch != _messagesPageAnimEpoch) return;
+          if (_isAnimatingMessagesPage) {
             setState(() => _isAnimatingMessagesPage = false);
-          } else {
-            _isAnimatingMessagesPage = false;
           }
         });
       }
@@ -4276,6 +4303,11 @@ class _MoreScreenState extends State<MoreScreen>
                 currentIndex: _showSentMessages ? 1 : 0,
                 itemCount: 2,
                 pageController: _messagesPageController,
+                onUserDragStart: () {
+                  if (_isAnimatingMessagesPage && mounted) {
+                    setState(() => _isAnimatingMessagesPage = false);
+                  }
+                },
                 onIndexChanged: (idx) =>
                     _selectMessagesFolder(idx == 1, animatePage: false),
                 pageBuilder: (pageCtx, pageIdx) => _buildMessagesPageViewBody(
@@ -4310,6 +4342,11 @@ class _MoreScreenState extends State<MoreScreen>
                 .clamp(0, _AttendanceFilter.values.length - 1),
             itemCount: _AttendanceFilter.values.length,
             pageController: _attendancePageController,
+            onUserDragStart: () {
+              if (_isAnimatingAttendancePage && mounted) {
+                setState(() => _isAnimatingAttendancePage = false);
+              }
+            },
             onIndexChanged: (idx) => _selectAttendanceFilter(
               _AttendanceFilter.values[idx],
               animatePage: false,
@@ -4550,7 +4587,9 @@ class _MoreScreenState extends State<MoreScreen>
           _SettingsAccordionCard(
             icon: Icons.palette_rounded,
             title: 'Megjelenés és témák',
-            subtitle: 'Alaptéma, Liquid Glass, Elrendezés és Ikon',
+            subtitle: isIOSPlatform
+                ? 'Rendszertéma és Liquid Glass'
+                : 'Alaptéma, Liquid Glass, Elrendezés és Ikon',
             christmasCap: _currentPrefs.christmasModeEnabled,
             prefs: _currentPrefs,
             stateListenable: _stateVersion,
@@ -4654,8 +4693,10 @@ class _MoreScreenState extends State<MoreScreen>
           ),
           SizedBox(height: _currentPrefs.minimalistModeEnabled ? 6 : 12),
           _buildMenetrendSettingsAccordion(theme, scheme),
-          SizedBox(height: _currentPrefs.minimalistModeEnabled ? 6 : 12),
-          _buildCalendarSyncSettingsAccordion(theme, scheme),
+          if (isAndroidPlatform) ...[
+            SizedBox(height: _currentPrefs.minimalistModeEnabled ? 6 : 12),
+            _buildCalendarSyncSettingsAccordion(theme, scheme),
+          ],
           SizedBox(height: _currentPrefs.minimalistModeEnabled ? 6 : 12),
           _SettingsAccordionCard(
             icon: Icons.tune_rounded,
@@ -4718,137 +4759,153 @@ class _MoreScreenState extends State<MoreScreen>
     DateFormat expFormat,
   ) {
     final entries = <_SettingsSearchEntry>[
-      _SettingsSearchEntry(
-        icon: Icons.blur_on_rounded,
-        title: 'Liquid Glass effekt és módok',
-        category: 'Megjelenés és témák',
-        description: 'Classic Frost, Hydro Mercury, Optical Prism, Obsidian',
-        keywords: const [
-          'uveg',
-          'üveg',
-          'liquid',
-          'glass',
-          'frost',
-          'mercury',
-          'prism',
-          'obsidian',
-          'ripple',
-          'atlatszo',
-          'elmosas',
-          'blur',
-          'felulet',
-        ],
-        onTap: () => _pushSettingsSubScreen(
-          'Megjelenés és témák',
-          _buildAppearanceSettingsChildren,
+      if (!isIOSPlatform)
+        _SettingsSearchEntry(
+          icon: Icons.blur_on_rounded,
+          title: 'Liquid Glass effekt és módok',
+          category: 'Megjelenés és témák',
+          description: 'Classic Frost, Hydro Mercury, Optical Prism, Obsidian',
+          keywords: const [
+            'uveg',
+            'üveg',
+            'liquid',
+            'glass',
+            'frost',
+            'mercury',
+            'prism',
+            'obsidian',
+            'ripple',
+            'atlatszo',
+            'elmosas',
+            'blur',
+            'felulet',
+          ],
+          onTap: () => _pushSettingsSubScreen(
+            'Megjelenés és témák',
+            _buildAppearanceSettingsChildren,
+          ),
         ),
-      ),
       _SettingsSearchEntry(
         icon: Icons.palette_rounded,
-        title: 'Alaptéma, színek és OLED mód',
+        title: isIOSPlatform
+            ? 'Alaptéma és Liquid Glass'
+            : 'Alaptéma, színek és OLED mód',
         category: 'Megjelenés és témák',
-        description: 'OLED Fekete, Sötét M3, Világos, Material You',
-        keywords: const [
-          'tema',
-          'szin',
-          'oled',
-          'fekete',
-          'sotet',
-          'vilagos',
-          'material',
-          'dinamikus',
-          'hatter',
-        ],
+        description: isIOSPlatform
+            ? 'Rendszer, Sötét, Világos és natív Liquid Glass'
+            : 'OLED Fekete, Sötét M3, Világos, Material You',
+        keywords: isIOSPlatform
+            ? const [
+                'tema',
+                'rendszer',
+                'sotet',
+                'vilagos',
+                'liquid',
+                'glass',
+              ]
+            : const [
+                'tema',
+                'szin',
+                'oled',
+                'fekete',
+                'sotet',
+                'vilagos',
+                'material',
+                'dinamikus',
+                'hatter',
+              ],
         onTap: () => _pushSettingsSubScreen(
           'Megjelenés és témák',
           _buildAppearanceSettingsChildren,
         ),
       ),
-      _SettingsSearchEntry(
-        icon: Icons.view_quilt_rounded,
-        title: 'Kártyák, elrendezés és ablakbezárás',
-        category: 'Megjelenés és témák',
-        description: 'Felugró ablak bezárás, megjelenítési elrendezés',
-        keywords: const [
-          'kartya',
-          'elrendezes',
-          'felugro',
-          'modal',
-          'bezaras',
-          'betutipus',
-        ],
-        onTap: () => _pushSettingsSubScreen(
-          'Megjelenés és témák',
-          _buildAppearanceSettingsChildren,
+      if (!isIOSPlatform) ...[
+        _SettingsSearchEntry(
+          icon: Icons.view_quilt_rounded,
+          title: 'Kártyák, elrendezés és ablakbezárás',
+          category: 'Megjelenés és témák',
+          description: 'Felugró ablak bezárás, megjelenítési elrendezés',
+          keywords: const [
+            'kartya',
+            'elrendezes',
+            'felugro',
+            'modal',
+            'bezaras',
+            'betutipus',
+          ],
+          onTap: () => _pushSettingsSubScreen(
+            'Megjelenés és témák',
+            _buildAppearanceSettingsChildren,
+          ),
         ),
-      ),
-      _SettingsSearchEntry(
-        icon: Icons.apps_rounded,
-        title: 'Indítóikon stílusa és alkalmazás ikon',
-        category: 'Megjelenés és témák',
-        description: 'Alapértelmezett vagy Klasszikus ikon kiválasztása',
-        keywords: const [
-          'ikon',
-          'icon',
-          'inditoikon',
-          'alkalmazas ikon',
-          'klasszikus',
-          'logo',
-          'launcher',
-          'firka',
-        ],
-        onTap: () => _pushSettingsSubScreen(
-          'Megjelenés és témák',
-          _buildAppearanceSettingsChildren,
+        _SettingsSearchEntry(
+          icon: Icons.apps_rounded,
+          title: 'Indítóikon stílusa és alkalmazás ikon',
+          category: 'Megjelenés és témák',
+          description: 'Alapértelmezett vagy Klasszikus ikon kiválasztása',
+          keywords: const [
+            'ikon',
+            'icon',
+            'inditoikon',
+            'alkalmazas ikon',
+            'klasszikus',
+            'logo',
+            'launcher',
+            'firka',
+          ],
+          onTap: () => _pushSettingsSubScreen(
+            'Megjelenés és témák',
+            _buildAppearanceSettingsChildren,
+          ),
         ),
-      ),
-      _SettingsSearchEntry(
-        icon: Icons.sentiment_very_satisfied_rounded,
-        title: 'Fun üdvözlő üzenetek',
-        category: 'Megjelenés és témák',
-        description: 'Laza, vicces és napszakhoz illő köszönések a főoldalon',
-        keywords: const [
-          'fun',
-          'udvozlo',
-          'üdvözlő',
-          'koszones',
-          'köszönés',
-          'vicces',
-          'fooldal',
-          'főoldal',
-          'greeting',
-        ],
-        onTap: () => _pushSettingsSubScreen(
-          'Megjelenés és témák',
-          _buildAppearanceSettingsChildren,
+        _SettingsSearchEntry(
+          icon: Icons.sentiment_very_satisfied_rounded,
+          title: 'Fun üdvözlő üzenetek',
+          category: 'Megjelenés és témák',
+          description: 'Laza, vicces és napszakhoz illő köszönések a főoldalon',
+          keywords: const [
+            'fun',
+            'udvozlo',
+            'üdvözlő',
+            'koszones',
+            'köszönés',
+            'vicces',
+            'fooldal',
+            'főoldal',
+            'greeting',
+          ],
+          onTap: () => _pushSettingsSubScreen(
+            'Megjelenés és témák',
+            _buildAppearanceSettingsChildren,
+          ),
         ),
-      ),
-      _SettingsSearchEntry(
-        icon: Icons.subtitles_outlined,
-        title: 'Köszönés alatti szöveg',
-        category: 'Megjelenés és témák',
-        description:
-            'Mikor végzel ma, dátum, holnapi számonkérések, fun factek',
-        keywords: const [
-          'koszones',
-          'köszönés',
-          'alatti',
-          'szoveg',
-          'szöveg',
-          'vegzel',
-          'végzel',
-          'datum',
-          'dátum',
-          'fun fact',
-          'szamonkeres',
-          'számonkérés',
-          'iskola',
-        ],
-        onTap: () => _pushSettingsSubScreen(
-          'Megjelenés és témák',
-          _buildAppearanceSettingsChildren,
+        _SettingsSearchEntry(
+          icon: Icons.subtitles_outlined,
+          title: 'Köszönés alatti szöveg',
+          category: 'Megjelenés és témák',
+          description:
+              'Mikor végzel ma, dátum, holnapi számonkérések, fun factek',
+          keywords: const [
+            'koszones',
+            'köszönés',
+            'alatti',
+            'szoveg',
+            'szöveg',
+            'vegzel',
+            'végzel',
+            'datum',
+            'dátum',
+            'fun fact',
+            'szamonkeres',
+            'számonkérés',
+            'iskola',
+          ],
+          onTap: () => _pushSettingsSubScreen(
+            'Megjelenés és témák',
+            _buildAppearanceSettingsChildren,
+          ),
         ),
-      ),
+      ],
       _SettingsSearchEntry(
         icon: Icons.calculate_rounded,
         title: 'Átlagszámítás és kerekítési határok',
@@ -4912,20 +4969,31 @@ class _MoreScreenState extends State<MoreScreen>
       ),
       _SettingsSearchEntry(
         icon: Icons.manage_accounts_rounded,
-        title: 'Fiók, Okosóra (Wear OS) és munkamenet',
+        title: isIOSPlatform
+            ? 'Fiók és munkamenet'
+            : 'Fiók, Okosóra (Wear OS) és munkamenet',
         category: 'Fiók és munkamenet',
         description: 'Tanuló adatok, intézmény, becenév, kijelentkezés',
-        keywords: const [
-          'fiok',
-          'munkamenet',
-          'becenev',
-          'intezmeny',
-          'token',
-          'kijelentkezes',
-          'wear',
-          'okosora',
-          'ora',
-        ],
+        keywords: isIOSPlatform
+            ? const [
+                'fiok',
+                'munkamenet',
+                'becenev',
+                'intezmeny',
+                'token',
+                'kijelentkezes',
+              ]
+            : const [
+                'fiok',
+                'munkamenet',
+                'becenev',
+                'intezmeny',
+                'token',
+                'kijelentkezes',
+                'wear',
+                'okosora',
+                'ora',
+              ],
         onTap: () => _pushSettingsSubScreen(
           'Fiók és munkamenet',
           (subCtx) => _buildAccountSettingsChildren(subCtx, expFormat),
@@ -4983,28 +5051,29 @@ class _MoreScreenState extends State<MoreScreen>
           );
         },
       ),
-      _SettingsSearchEntry(
-        icon: Icons.event_available_rounded,
-        title: 'Naptár szinkronizálás',
-        category: 'Naptár',
-        description: 'Órarend és számonkérések naptárba mentése',
-        keywords: const ['naptar', 'calendar', 'szinkron'],
-        onTap: () => _pushSettingsSubScreen(
-          'Naptár szinkronizálás',
-          (subCtx) => [
-            _CalendarSyncSettingsSection(
-              session: widget.session,
-              kretaClient: widget.kretaClient,
-              dashboardData: widget.dashboardData,
-              profilePrefs: _currentPrefs,
-              onSettingsChanged: (updated) {
-                if (!mounted) return;
-                setState(() => _calendarSyncSettings = updated);
-              },
-            ),
-          ],
+      if (isAndroidPlatform)
+        _SettingsSearchEntry(
+          icon: Icons.event_available_rounded,
+          title: 'Naptár szinkronizálás',
+          category: 'Naptár',
+          description: 'Órarend és számonkérések naptárba mentése',
+          keywords: const ['naptar', 'calendar', 'szinkron'],
+          onTap: () => _pushSettingsSubScreen(
+            'Naptár szinkronizálás',
+            (subCtx) => [
+              _CalendarSyncSettingsSection(
+                session: widget.session,
+                kretaClient: widget.kretaClient,
+                dashboardData: widget.dashboardData,
+                profilePrefs: _currentPrefs,
+                onSettingsChanged: (updated) {
+                  if (!mounted) return;
+                  setState(() => _calendarSyncSettings = updated);
+                },
+              ),
+            ],
+          ),
         ),
-      ),
       _SettingsSearchEntry(
         icon: Icons.import_export_rounded,
         title: 'Beállítások exportálása és importálása',
@@ -5034,46 +5103,58 @@ class _MoreScreenState extends State<MoreScreen>
           _buildSystemAboutChildren,
         ),
       ),
-      _SettingsSearchEntry(
-        icon: Icons.auto_awesome_rounded,
-        title: 'Fityma Napló mód & Easter Egg témák',
-        category: 'Fejlesztői beállítások',
-        description: 'Fityma Napló, UwU, animált hátterek, CSS skin',
-        keywords: const [
-          'fityma',
-          'fityma naplo',
-          'uwu',
-          'easter',
-          'fejlesztoi',
-          'skin',
-          'css',
-          'animalt',
-        ],
-        onTap: () {
-          Navigator.of(context).push(
-            SmoothSharedAxisRoute(
-              page: DeveloperAppearanceSubPage(
-                initialPrefs: _currentPrefs,
-                onPrefsChanged: _updatePrefs,
+      if (!isIOSPlatform)
+        _SettingsSearchEntry(
+          icon: Icons.auto_awesome_rounded,
+          title: 'Fityma Napló mód & Easter Egg témák',
+          category: 'Fejlesztői beállítások',
+          description: 'Fityma Napló, UwU, animált hátterek, CSS skin',
+          keywords: const [
+            'fityma',
+            'fityma naplo',
+            'uwu',
+            'easter',
+            'fejlesztoi',
+            'skin',
+            'css',
+            'animalt',
+          ],
+          onTap: () {
+            Navigator.of(context).push(
+              SmoothSharedAxisRoute(
+                page: DeveloperAppearanceSubPage(
+                  initialPrefs: _currentPrefs,
+                  onPrefsChanged: _updatePrefs,
+                ),
               ),
-            ),
-          );
-        },
-      ),
+            );
+          },
+        ),
       _SettingsSearchEntry(
         icon: Icons.terminal_rounded,
         title: 'Fejlesztői beállítások központ',
         category: 'Fejlesztői beállítások',
-        description: 'Demó mód, minimalista nézet, KRÉTA auth, cache',
-        keywords: const [
-          'fejlesztoi',
-          'dev',
-          'demo',
-          'minimalista',
-          'debug',
-          'cache',
-          'auth',
-        ],
+        description: isIOSPlatform
+            ? 'Demó mód, KRÉTA auth, cache'
+            : 'Demó mód, minimalista nézet, KRÉTA auth, cache',
+        keywords: isIOSPlatform
+            ? const [
+                'fejlesztoi',
+                'dev',
+                'demo',
+                'debug',
+                'cache',
+                'auth',
+              ]
+            : const [
+                'fejlesztoi',
+                'dev',
+                'demo',
+                'minimalista',
+                'debug',
+                'cache',
+                'auth',
+              ],
         onTap: () {
           Navigator.of(context).push(
             SmoothSharedAxisRoute(
@@ -5185,7 +5266,7 @@ class _MoreScreenState extends State<MoreScreen>
         uwuLabel('Token lejárat', enabled: activePrefs.uwuModeEnabled),
         expFormat.format(displaySession.expiresAt.toLocal()),
       ),
-      if (_wearStatus.isConnected)
+      if (isAndroidPlatform && _wearStatus.isConnected)
         _buildRow(
           scheme,
           uwuLabel('Wear OS óra', enabled: activePrefs.uwuModeEnabled),
@@ -5717,6 +5798,220 @@ class _MoreScreenState extends State<MoreScreen>
         };
 
     final activeBackdrop = BackgroundPresetInfo.resolve(activePrefs);
+
+    if (isIOSPlatform) {
+      return [
+        buildSectionGroup(
+          icon: Icons.brightness_6_rounded,
+          title: 'Alaptéma',
+          cardChildren: [
+            Text(
+              uwuLabel(
+                'Alkalmazás megjelenési módja:',
+                enabled: activePrefs.uwuModeEnabled,
+              ),
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: scheme.onSurface.withValues(alpha: 0.72),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: KeyedSubtree(
+                    key: const ValueKey<String>('ios-theme-chip-system'),
+                    child: _buildThemeOptionChip(
+                      scheme: scheme,
+                      dividerColor: theme.dividerColor,
+                      label: uwuLabel(
+                        'Rendszer',
+                        enabled: activePrefs.uwuModeEnabled,
+                      ),
+                      icon: Icons.brightness_auto_rounded,
+                      selected: activePrefs.followSystemTheme,
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        _updatePrefs(
+                          _livePrefs(subCtx).withFollowSystemTheme(true),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: KeyedSubtree(
+                    key: const ValueKey<String>('ios-theme-chip-dark'),
+                    child: _buildThemeOptionChip(
+                      scheme: scheme,
+                      dividerColor: theme.dividerColor,
+                      label: uwuLabel(
+                        'Sötét',
+                        enabled: activePrefs.uwuModeEnabled,
+                      ),
+                      icon: Icons.dark_mode_rounded,
+                      selected: !activePrefs.followSystemTheme &&
+                          activePrefs.themeStyle != AppThemeStyle.light,
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        _updatePrefs(
+                          _livePrefs(subCtx)
+                              .withFollowSystemTheme(false)
+                              .copyWith(themeStyle: AppThemeStyle.oledPureBlack),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: KeyedSubtree(
+                    key: const ValueKey<String>('ios-theme-chip-light'),
+                    child: _buildThemeOptionChip(
+                      scheme: scheme,
+                      dividerColor: theme.dividerColor,
+                      label: uwuLabel(
+                        'Világos',
+                        enabled: activePrefs.uwuModeEnabled,
+                      ),
+                      icon: Icons.light_mode_rounded,
+                      selected: !activePrefs.followSystemTheme &&
+                          activePrefs.themeStyle == AppThemeStyle.light,
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        _updatePrefs(
+                          _livePrefs(subCtx)
+                              .withFollowSystemTheme(false)
+                              .copyWith(themeStyle: AppThemeStyle.light),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              uwuLabel(
+                activePrefs.followSystemTheme
+                    ? 'Automatikusan követi az iOS rendszer világos / sötét megjelenését.'
+                    : 'Kézi világos vagy sötét megjelenés aktív.',
+                enabled: activePrefs.uwuModeEnabled,
+              ),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurface.withValues(alpha: 0.65),
+              ),
+            ),
+          ],
+        ),
+        const _StandaloneSettingsChild(child: SizedBox(height: 16)),
+        buildSectionGroup(
+          icon: Icons.auto_awesome_rounded,
+          title: 'Liquid Glass',
+          cardChildren: [
+            Container(
+              key: const ValueKey<String>('ios-liquid-glass-locked-card'),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: scheme.primary.withValues(alpha: 0.30),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.auto_awesome_rounded,
+                    size: 20,
+                    color: scheme.primary,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          uwuLabel(
+                            'Natív Liquid Glass megjelenés',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
+                          style: theme.textTheme.labelLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          uwuLabel(
+                            'iOS-en az Apple natív Liquid Glass stílusa aktív és zárolt.',
+                            enabled: activePrefs.uwuModeEnabled,
+                          ),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurface.withValues(alpha: 0.68),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: scheme.primary.withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      'Aktív',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: scheme.primary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Divider(
+              height: 1,
+              color: theme.dividerColor.withValues(alpha: 0.45),
+            ),
+            const SizedBox(height: 4),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.color_lens_outlined, color: scheme.primary),
+              title: Text(
+                uwuLabel(
+                  'Érdemjegyek színpalettája',
+                  enabled: activePrefs.uwuModeEnabled,
+                ),
+                style:
+                    const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+              ),
+              subtitle: Text(
+                uwuLabel(
+                  '1-5 jegyek színének és HEX kódjának módosítása',
+                  enabled: activePrefs.uwuModeEnabled,
+                ),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: scheme.onSurface.withValues(alpha: 0.65),
+                ),
+              ),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => _pushSettingsSubScreen(
+                'Érdemjegyek Színeinek Testreszabása',
+                _buildGradeColorsChildren,
+              ),
+            ),
+          ],
+        ),
+      ];
+    }
 
     return [
       // Section 1: Alaptéma & Színek
@@ -7029,7 +7324,9 @@ class _MoreScreenState extends State<MoreScreen>
                       const SizedBox(height: 2),
                       Text(
                         uwuLabel(
-                          'Megjelenés, Demó mód, KRÉTA Auth, Wear OS és Cache',
+                          isIOSPlatform
+                              ? 'Demó mód, KRÉTA Auth és Cache'
+                              : 'Megjelenés, Demó mód, KRÉTA Auth, Wear OS és Cache',
                           enabled: activePrefs.uwuModeEnabled,
                         ),
                         maxLines: 1,
@@ -7580,52 +7877,54 @@ class _MoreScreenState extends State<MoreScreen>
               activePrefs.copyWith(transitAlertBufferMinutes: v.round()),
             ),
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () async {
-                    HapticFeedback.lightImpact();
-                    await MenetrendService.requestNotificationPermissions();
-                    final mins = _currentPrefs.transitAlertBufferMinutes > 0
-                        ? _currentPrefs.transitAlertBufferMinutes
-                        : 5;
-                    await MenetrendService.showImmediateNotification(
-                      title: 'Indulás $mins perc múlva • S150',
-                      body:
-                          '07:09-es járat (Bodajk -> Székesfehérvár) • ${_currentPrefs.walkingDurationMinutes}p séta az állomásra',
-                    );
-                  },
-                  icon: const Icon(Icons.notifications_active_rounded, size: 17),
-                  label: Text(
-                    uwuLabel(
-                      'Teszt értesítés',
-                      enabled: activePrefs.uwuModeEnabled,
+          if (isAndroidPlatform) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      HapticFeedback.lightImpact();
+                      await MenetrendService.requestNotificationPermissions();
+                      final mins = _currentPrefs.transitAlertBufferMinutes > 0
+                          ? _currentPrefs.transitAlertBufferMinutes
+                          : 5;
+                      await MenetrendService.showImmediateNotification(
+                        title: 'Indulás $mins perc múlva • S150',
+                        body:
+                            '07:09-es járat (Bodajk -> Székesfehérvár) • ${_currentPrefs.walkingDurationMinutes}p séta az állomásra',
+                      );
+                    },
+                    icon: const Icon(Icons.notifications_active_rounded, size: 17),
+                    label: Text(
+                      uwuLabel(
+                        'Teszt értesítés',
+                        enabled: activePrefs.uwuModeEnabled,
+                      ),
+                      style: const TextStyle(fontSize: 12),
                     ),
-                    style: const TextStyle(fontSize: 12),
                   ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: FilledButton.tonalIcon(
-                  onPressed: () {
-                    HapticFeedback.lightImpact();
-                    MenetrendService.openInMenetrendGo();
-                  },
-                  icon: const Icon(Icons.open_in_new_rounded, size: 17),
-                  label: Text(
-                    uwuLabel(
-                      'MenetrendGO',
-                      enabled: activePrefs.uwuModeEnabled,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton.tonalIcon(
+                    onPressed: () {
+                      HapticFeedback.lightImpact();
+                      MenetrendService.openInMenetrendGo();
+                    },
+                    icon: const Icon(Icons.open_in_new_rounded, size: 17),
+                    label: Text(
+                      uwuLabel(
+                        'MenetrendGO',
+                        enabled: activePrefs.uwuModeEnabled,
+                      ),
+                      style: const TextStyle(fontSize: 12),
                     ),
-                    style: const TextStyle(fontSize: 12),
                   ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ],
       ),
     ];
@@ -8729,6 +9028,7 @@ class _AllOmissionsScreenState extends State<AllOmissionsScreen> {
   late final PageController _omissionPageController =
       PageController(initialPage: _filter.index);
   bool _isAnimatingFilterPage = false;
+  int _filterPageAnimEpoch = 0;
   final DateFormat _dateFormat = DateFormat('yyyy. MM. dd.');
 
   @override
@@ -8748,6 +9048,7 @@ class _AllOmissionsScreenState extends State<AllOmissionsScreen> {
           );
       final curPage = _omissionPageController.page?.round() ?? target;
       if (curPage != target) {
+        final epoch = ++_filterPageAnimEpoch;
         _isAnimatingFilterPage = true;
         _omissionPageController
             .animateToPage(
@@ -8756,10 +9057,9 @@ class _AllOmissionsScreenState extends State<AllOmissionsScreen> {
               curve: Curves.easeOutCubic,
             )
             .whenComplete(() {
-          if (mounted && _isAnimatingFilterPage) {
+          if (!mounted || epoch != _filterPageAnimEpoch) return;
+          if (_isAnimatingFilterPage) {
             setState(() => _isAnimatingFilterPage = false);
-          } else {
-            _isAnimatingFilterPage = false;
           }
         });
       }
@@ -8868,6 +9168,11 @@ class _AllOmissionsScreenState extends State<AllOmissionsScreen> {
                             .clamp(0, _AttendanceFilter.values.length - 1),
                         itemCount: _AttendanceFilter.values.length,
                         pageController: _omissionPageController,
+                        onUserDragStart: () {
+                          if (_isAnimatingFilterPage && mounted) {
+                            setState(() => _isAnimatingFilterPage = false);
+                          }
+                        },
                         onIndexChanged: (idx) => _selectFilter(
                           _AttendanceFilter.values[idx],
                           animatePage: false,

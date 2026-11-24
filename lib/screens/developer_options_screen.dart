@@ -20,6 +20,7 @@ import '../services/token_storage_service.dart';
 import '../services/wear_sync_service.dart';
 import '../theme/custom_skin_config.dart';
 import '../theme/oled_theme.dart';
+import '../utils/platform_support.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
@@ -146,7 +147,11 @@ class DeveloperOptionsMenuList extends StatelessWidget {
           icon: Icons.palette_outlined,
           accent: scheme.primary,
           title: uwu('Megjelenés és UI'),
-          subtitle: uwu('Saját háttérkép, egyéni CSS skin és kísérleti módok'),
+          subtitle: uwu(
+            isIOSPlatform
+                ? 'Kísérleti szöveg és elnevezés opciók'
+                : 'Saját háttérkép, egyéni CSS skin és kísérleti módok',
+          ),
           statusBadge: appearanceActive ? 'Aktív' : null,
           onTap: () => _pushSubPage(
             context,
@@ -195,25 +200,27 @@ class DeveloperOptionsMenuList extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 10),
-        _DeveloperCategoryCard(
-          key: const ValueKey<String>('dev-hub-tile-integrations'),
-          prefs: prefs,
-          icon: Icons.watch_rounded,
-          accent: const Color(0xFFF59E0B),
-          title: uwu('Wear OS és Külső Integrációk'),
-          subtitle: uwu('Okosóra szinkron állapot, Now Bar és MenetrendGO'),
-          statusBadge: prefs.liveActivityEnabled ? 'Aktív' : null,
-          onTap: () => _pushSubPage(
-            context,
-            DeveloperIntegrationsSubPage(
-              initialPrefs: prefs,
-              onPrefsChanged: onPrefsChanged,
-              tokenStorage: tokenStorage,
-              wearSyncService: wearSyncService,
+        if (isAndroidPlatform) ...[
+          const SizedBox(height: 10),
+          _DeveloperCategoryCard(
+            key: const ValueKey<String>('dev-hub-tile-integrations'),
+            prefs: prefs,
+            icon: Icons.watch_rounded,
+            accent: const Color(0xFFF59E0B),
+            title: uwu('Wear OS és Külső Integrációk'),
+            subtitle: uwu('Okosóra szinkron állapot, Now Bar és MenetrendGO'),
+            statusBadge: prefs.liveActivityEnabled ? 'Aktív' : null,
+            onTap: () => _pushSubPage(
+              context,
+              DeveloperIntegrationsSubPage(
+                initialPrefs: prefs,
+                onPrefsChanged: onPrefsChanged,
+                tokenStorage: tokenStorage,
+                wearSyncService: wearSyncService,
+              ),
             ),
           ),
-        ),
+        ],
         const SizedBox(height: 16),
         const _DevSectionHeader('Rendszer és Karbantartás', icon: Icons.memory_rounded),
         _DeveloperCategoryCard(
@@ -596,86 +603,88 @@ class _DeveloperAppearanceSubPageState
             36,
           ),
           children: [
-            const _DevSectionHeader('Háttér és Atmoszféra', icon: Icons.wallpaper_rounded),
-            SoftGlassCard(
-              prefs: activePrefs,
-              padding: const EdgeInsets.all(18),
-              borderRadius: OledTheme.largeRadius,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    uwu('Saját háttérkép'),
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      color: scheme.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 8,
-                    children: [
-                      FilledButton.tonalIcon(
-                        onPressed: _isPickingBackdrop
-                            ? null
-                            : () => _pickCustomBackdropImage(activePrefs),
-                        icon: _isPickingBackdrop
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.photo_library_rounded, size: 18),
-                        label: Text(uwu('Saját háttérkép kiválasztása')),
+            if (!isIOSPlatform) ...[
+              const _DevSectionHeader('Háttér és Atmoszféra', icon: Icons.wallpaper_rounded),
+              SoftGlassCard(
+                prefs: activePrefs,
+                padding: const EdgeInsets.all(18),
+                borderRadius: OledTheme.largeRadius,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      uwu('Saját háttérkép'),
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w900,
+                        color: scheme.onSurface,
                       ),
-                      if (activePrefs.hasCustomBackdrop)
-                        OutlinedButton.icon(
-                          onPressed: () =>
-                              _clearCustomBackdropImage(activePrefs),
-                          icon: const Icon(Icons.delete_outline_rounded,
-                              size: 18),
-                          label: Text(uwu('Háttérkép törlése')),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 8,
+                      children: [
+                        FilledButton.tonalIcon(
+                          onPressed: _isPickingBackdrop
+                              ? null
+                              : () => _pickCustomBackdropImage(activePrefs),
+                          icon: _isPickingBackdrop
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.photo_library_rounded, size: 18),
+                          label: Text(uwu('Saját háttérkép kiválasztása')),
                         ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          uwu('Háttér sötétítés / kontraszt'),
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
+                        if (activePrefs.hasCustomBackdrop)
+                          OutlinedButton.icon(
+                            onPressed: () =>
+                                _clearCustomBackdropImage(activePrefs),
+                            icon: const Icon(Icons.delete_outline_rounded,
+                                size: 18),
+                            label: Text(uwu('Háttérkép törlése')),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            uwu('Háttér sötétítés / kontraszt'),
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${(activePrefs.customBackdropDim.clamp(0.0, 0.75) * 100).round()}%',
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          fontWeight: FontWeight.w900,
-                          color: scheme.primary,
+                        const SizedBox(width: 8),
+                        Text(
+                          '${(activePrefs.customBackdropDim.clamp(0.0, 0.75) * 100).round()}%',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w900,
+                            color: scheme.primary,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                  Slider(
-                    value: activePrefs.customBackdropDim.clamp(0.0, 0.75),
-                    min: 0.0,
-                    max: 0.75,
-                    divisions: 15,
-                    onChanged: (v) => _update(
-                      activePrefs.copyWith(customBackdropDim: v),
+                      ],
                     ),
-                  ),
-                ],
+                    Slider(
+                      value: activePrefs.customBackdropDim.clamp(0.0, 0.75),
+                      min: 0.0,
+                      max: 0.75,
+                      divisions: 15,
+                      onChanged: (v) => _update(
+                        activePrefs.copyWith(customBackdropDim: v),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
+              const SizedBox(height: 16),
+            ],
             const _DevSectionHeader('Kísérleti Stílusok és Easter Eggek', icon: Icons.auto_fix_high_rounded),
             Material(
               color: OledTheme.uwuPastelPink.withValues(alpha: 0.14),
@@ -720,75 +729,27 @@ class _DeveloperAppearanceSubPageState
                 ),
               ),
             ),
-            const SizedBox(height: 10),
-            Material(
-              color: const Color(0xFFFFB74D).withValues(alpha: 0.14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(22),
-                side: BorderSide(
-                  color: const Color(0xFFFFB74D).withValues(alpha: 0.45),
-                ),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                child: SwitchListTile.adaptive(
-                  key: const ValueKey<String>('dev-fityma-mode-switch'),
-                  contentPadding: EdgeInsets.zero,
-                  activeThumbColor: const Color(0xFFFFB74D),
-                  title: Text(
-                    uwuLabel(
-                      'Fityma Napló mód',
-                      enabled: activePrefs.uwuModeEnabled,
-                    ),
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 15,
-                    ),
+            if (!isIOSPlatform) ...[
+              const SizedBox(height: 10),
+              Material(
+                color: const Color(0xFFFFB74D).withValues(alpha: 0.14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(22),
+                  side: BorderSide(
+                    color: const Color(0xFFFFB74D).withValues(alpha: 0.45),
                   ),
-                  subtitle: Text(
-                    uwuLabel(
-                      'Lecseréli az alkalmazás nevét és logóját a játékos „Fityma Napló” kiadásra.',
-                      enabled: activePrefs.uwuModeEnabled,
-                    ),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onSurface.withValues(alpha: 0.75),
-                    ),
-                  ),
-                  value: activePrefs.fitymaModeEnabled,
-                  onChanged: (val) {
-                    HapticFeedback.mediumImpact();
-                    final next = activePrefs.withFitymaMode(val);
-                    _update(next);
-                    unawaited(DynamicIconService.syncIconWithPrefs(next));
-                    TintaToast.info(
-                      context,
-                      val
-                          ? 'Fityma Napló mód aktiválva (indítóikon frissítve)'
-                          : 'Tinta Napló alapállapot visszaállítva',
-                    );
-                  },
                 ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const _DevSectionHeader('Haladó CSS Skin Szerkesztő', icon: Icons.code_rounded),
-            SoftGlassCard(
-              prefs: activePrefs,
-              padding: const EdgeInsets.all(18),
-              borderRadius: OledTheme.largeRadius,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SwitchListTile.adaptive(
-                    key: const ValueKey<String>('dev-custom-skin-switch'),
+                clipBehavior: Clip.antiAlias,
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  child: SwitchListTile.adaptive(
+                    key: const ValueKey<String>('dev-fityma-mode-switch'),
                     contentPadding: EdgeInsets.zero,
-                    activeThumbColor: scheme.primary,
+                    activeThumbColor: const Color(0xFFFFB74D),
                     title: Text(
                       uwuLabel(
-                        'Egyéni CSS Skin',
+                        'Fityma Napló mód',
                         enabled: activePrefs.uwuModeEnabled,
                       ),
                       style: const TextStyle(
@@ -798,139 +759,189 @@ class _DeveloperAppearanceSubPageState
                     ),
                     subtitle: Text(
                       uwuLabel(
-                        'Élő CSS-változó alapú felület- és témaszerkesztő (:root { --bg, --surface, --accent, --card-radius... }).',
+                        'Lecseréli az alkalmazás nevét és logóját a játékos „Fityma Napló” kiadásra.',
                         enabled: activePrefs.uwuModeEnabled,
                       ),
                       style: TextStyle(
                         fontSize: 12,
-                        color: scheme.onSurface.withValues(alpha: 0.72),
+                        color: scheme.onSurface.withValues(alpha: 0.75),
                       ),
                     ),
-                    value: activePrefs.customSkinEnabled,
+                    value: activePrefs.fitymaModeEnabled,
                     onChanged: (val) {
-                      HapticFeedback.selectionClick();
-                      _update(
-                        activePrefs.withCustomSkin(
-                          enabled: val,
-                          css: _cssSkinController.text,
-                        ),
+                      HapticFeedback.mediumImpact();
+                      final next = activePrefs.withFitymaMode(val);
+                      _update(next);
+                      unawaited(DynamicIconService.syncIconWithPrefs(next));
+                      TintaToast.info(
+                        context,
+                        val
+                            ? 'Fityma Napló mód aktiválva (indítóikon frissítve)'
+                            : 'Tinta Napló alapállapot visszaállítva',
                       );
                     },
                   ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    key: const ValueKey<String>('dev-custom-skin-editor'),
-                    controller: _cssSkinController,
-                    minLines: 7,
-                    maxLines: 12,
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      height: 1.38,
-                    ),
-                    decoration: InputDecoration(
-                      hintText: CustomSkinConfig.defaultTemplateCss,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      contentPadding: const EdgeInsets.all(12),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      FilledButton.icon(
-                        key: const ValueKey<String>('dev-custom-skin-apply'),
-                        onPressed: () {
-                          HapticFeedback.lightImpact();
-                          _update(
-                            activePrefs.withCustomSkin(
-                              enabled: true,
-                              css: _cssSkinController.text,
-                            ),
-                          );
-                          TintaToast.success(
-                            context,
-                            'Egyéni CSS Skin alkalmazva',
-                          );
-                        },
-                        icon: const Icon(Icons.check_rounded, size: 17),
-                        label: Text(
-                          uwuLabel(
-                            'Alkalmaz',
-                            enabled: activePrefs.uwuModeEnabled,
-                          ),
-                        ),
-                      ),
-                      OutlinedButton.icon(
-                        key: const ValueKey<String>('dev-custom-skin-reset'),
-                        onPressed: () {
-                          HapticFeedback.lightImpact();
-                          _cssSkinController.text =
-                              CustomSkinConfig.defaultTemplateCss;
-                          _update(
-                            activePrefs.withCustomSkin(
-                              enabled: false,
-                              css: CustomSkinConfig.defaultTemplateCss,
-                            ),
-                          );
-                          TintaToast.info(
-                            context,
-                            'Egyéni CSS Skin alaphelyzetbe állítva',
-                          );
-                        },
-                        icon: const Icon(Icons.restart_alt_rounded, size: 17),
-                        label: Text(
-                          uwuLabel(
-                            'Alaphelyzet',
-                            enabled: activePrefs.uwuModeEnabled,
-                          ),
-                        ),
-                      ),
-                      TextButton.icon(
-                        onPressed: () async {
-                          try {
-                            await Clipboard.setData(
-                              ClipboardData(text: _cssSkinController.text),
-                            );
-                            if (!context.mounted) return;
-                            TintaToast.info(context, 'CSS vágólapra másolva');
-                          } catch (_) {}
-                        },
-                        icon: const Icon(Icons.copy_rounded, size: 16),
-                        label: Text(
-                          uwuLabel(
-                            'Másolás',
-                            enabled: activePrefs.uwuModeEnabled,
-                          ),
-                        ),
-                      ),
-                      TextButton.icon(
-                        onPressed: () async {
-                          try {
-                            final clip = await Clipboard.getData('text/plain');
-                            if (!mounted || !context.mounted) return;
-                            final pasted = clip?.text;
-                            if (pasted == null || pasted.trim().isEmpty) return;
-                            _cssSkinController.text = pasted;
-                            TintaToast.info(context, 'CSS beillesztve');
-                          } catch (_) {}
-                        },
-                        icon: const Icon(Icons.paste_rounded, size: 16),
-                        label: Text(
-                          uwuLabel(
-                            'Beillesztés',
-                            enabled: activePrefs.uwuModeEnabled,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                ),
               ),
-            ),
+              const SizedBox(height: 16),
+              const _DevSectionHeader('Haladó CSS Skin Szerkesztő', icon: Icons.code_rounded),
+              SoftGlassCard(
+                prefs: activePrefs,
+                padding: const EdgeInsets.all(18),
+                borderRadius: OledTheme.largeRadius,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SwitchListTile.adaptive(
+                      key: const ValueKey<String>('dev-custom-skin-switch'),
+                      contentPadding: EdgeInsets.zero,
+                      activeThumbColor: scheme.primary,
+                      title: Text(
+                        uwuLabel(
+                          'Egyéni CSS Skin',
+                          enabled: activePrefs.uwuModeEnabled,
+                        ),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 15,
+                        ),
+                      ),
+                      subtitle: Text(
+                        uwuLabel(
+                          'Élő CSS-változó alapú felület- és témaszerkesztő (:root { --bg, --surface, --accent, --card-radius... }).',
+                          enabled: activePrefs.uwuModeEnabled,
+                        ),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: scheme.onSurface.withValues(alpha: 0.72),
+                        ),
+                      ),
+                      value: activePrefs.customSkinEnabled,
+                      onChanged: (val) {
+                        HapticFeedback.selectionClick();
+                        _update(
+                          activePrefs.withCustomSkin(
+                            enabled: val,
+                            css: _cssSkinController.text,
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      key: const ValueKey<String>('dev-custom-skin-editor'),
+                      controller: _cssSkinController,
+                      minLines: 7,
+                      maxLines: 12,
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                        height: 1.38,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: CustomSkinConfig.defaultTemplateCss,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        contentPadding: const EdgeInsets.all(12),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        FilledButton.icon(
+                          key: const ValueKey<String>('dev-custom-skin-apply'),
+                          onPressed: () {
+                            HapticFeedback.lightImpact();
+                            _update(
+                              activePrefs.withCustomSkin(
+                                enabled: true,
+                                css: _cssSkinController.text,
+                              ),
+                            );
+                            TintaToast.success(
+                              context,
+                              'Egyéni CSS Skin alkalmazva',
+                            );
+                          },
+                          icon: const Icon(Icons.check_rounded, size: 17),
+                          label: Text(
+                            uwuLabel(
+                              'Alkalmaz',
+                              enabled: activePrefs.uwuModeEnabled,
+                            ),
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          key: const ValueKey<String>('dev-custom-skin-reset'),
+                          onPressed: () {
+                            HapticFeedback.lightImpact();
+                            _cssSkinController.text =
+                                CustomSkinConfig.defaultTemplateCss;
+                            _update(
+                              activePrefs.withCustomSkin(
+                                enabled: false,
+                                css: CustomSkinConfig.defaultTemplateCss,
+                              ),
+                            );
+                            TintaToast.info(
+                              context,
+                              'Egyéni CSS Skin alaphelyzetbe állítva',
+                            );
+                          },
+                          icon: const Icon(Icons.restart_alt_rounded, size: 17),
+                          label: Text(
+                            uwuLabel(
+                              'Alaphelyzet',
+                              enabled: activePrefs.uwuModeEnabled,
+                            ),
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () async {
+                            try {
+                              await Clipboard.setData(
+                                ClipboardData(text: _cssSkinController.text),
+                              );
+                              if (!context.mounted) return;
+                              TintaToast.info(context, 'CSS vágólapra másolva');
+                            } catch (_) {}
+                          },
+                          icon: const Icon(Icons.copy_rounded, size: 16),
+                          label: Text(
+                            uwuLabel(
+                              'Másolás',
+                              enabled: activePrefs.uwuModeEnabled,
+                            ),
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () async {
+                            try {
+                              final clip = await Clipboard.getData('text/plain');
+                              if (!mounted || !context.mounted) return;
+                              final pasted = clip?.text;
+                              if (pasted == null || pasted.trim().isEmpty) return;
+                              _cssSkinController.text = pasted;
+                              TintaToast.info(context, 'CSS beillesztve');
+                            } catch (_) {}
+                          },
+                          icon: const Icon(Icons.paste_rounded, size: 16),
+                          label: Text(
+                            uwuLabel(
+                              'Beillesztés',
+                              enabled: activePrefs.uwuModeEnabled,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       );
@@ -1716,8 +1727,12 @@ class _DeveloperIntegrationsSubPageState
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _localPrefs = widget.initialPrefs;
-    _refreshWear();
-    unawaited(_refreshPromotionStatus());
+    if (isAndroidPlatform) {
+      _refreshWear();
+      unawaited(_refreshPromotionStatus());
+    } else {
+      _loading = false;
+    }
   }
 
   @override
@@ -1728,7 +1743,7 @@ class _DeveloperIntegrationsSubPageState
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && mounted) {
+    if (isAndroidPlatform && state == AppLifecycleState.resumed && mounted) {
       unawaited(_refreshPromotionStatus(refreshIfGranted: true));
     }
   }
@@ -1764,7 +1779,7 @@ class _DeveloperIntegrationsSubPageState
   }
 
   Future<void> _manualWearSync(UserProfilePrefs activePrefs) async {
-    if (_syncing) return;
+    if (!isAndroidPlatform || _syncing) return;
     setState(() => _syncing = true);
     try {
       final realSession = await _storage.loadSession();
@@ -1801,7 +1816,7 @@ class _DeveloperIntegrationsSubPageState
     UserProfilePrefs activePrefs,
     bool enabled,
   ) async {
-    if (_togglingLiveActivity) return;
+    if (!isAndroidPlatform || _togglingLiveActivity) return;
     HapticFeedback.mediumImpact();
     final primaryColor = Theme.of(context).colorScheme.primary;
     setState(() => _togglingLiveActivity = true);
@@ -1971,7 +1986,7 @@ class _DeveloperIntegrationsSubPageState
   }
 
   Future<void> _refreshLiveNow(UserProfilePrefs activePrefs) async {
-    if (_refreshingLiveActivity) return;
+    if (!isAndroidPlatform || _refreshingLiveActivity) return;
     HapticFeedback.lightImpact();
     final primaryColor = Theme.of(context).colorScheme.primary;
     setState(() => _refreshingLiveActivity = true);
@@ -1998,6 +2013,41 @@ class _DeveloperIntegrationsSubPageState
     final scope = AppProvidersScope.maybeOf(context);
 
     Widget buildBody(UserProfilePrefs activePrefs) {
+      if (isIOSPlatform) {
+        return AdaptiveBackgroundScaffold(
+          prefs: activePrefs,
+          appBar: buildAdaptiveTransparentAppBar(
+            context,
+            title: uwu('Integrációk'),
+          ),
+          body: ListView(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
+            padding: EdgeInsets.fromLTRB(
+              16,
+              adaptiveAppBarTopPadding(context),
+              16,
+              36,
+            ),
+            children: [
+              SoftGlassCard(
+                prefs: activePrefs,
+                padding: const EdgeInsets.all(18),
+                borderRadius: OledTheme.largeRadius,
+                child: Text(
+                  uwu(
+                    'A Wear OS, Android zárolási képernyő értesítés és MenetrendGO alkalmazásindítás funkciók iOS rendszeren nem érhetők el.',
+                  ),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        height: 1.4,
+                      ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }
       final theme = Theme.of(context);
       final scheme = theme.colorScheme;
       final timeFmt = DateFormat('yyyy. MM. dd. HH:mm');
@@ -2308,22 +2358,24 @@ class _DeveloperIntegrationsSubPageState
                     'Séta tempó',
                     '${activePrefs.walkingSpeedKmh.toStringAsFixed(1)} km/h',
                   ),
-                  const SizedBox(height: 12),
-                  FilledButton.tonalIcon(
-                    onPressed: () {
-                      HapticFeedback.lightImpact();
-                      unawaited(
-                        MenetrendService.openInMenetrendGo(prefs: activePrefs),
-                      );
-                    },
-                    icon: const Icon(Icons.open_in_new_rounded, size: 18),
-                    label: Text(
-                      uwuLabel(
-                        'MenetrendGO mélyhivatkozás teszt',
-                        enabled: activePrefs.uwuModeEnabled,
+                  if (isAndroidPlatform) ...[
+                    const SizedBox(height: 12),
+                    FilledButton.tonalIcon(
+                      onPressed: () {
+                        HapticFeedback.lightImpact();
+                        unawaited(
+                          MenetrendService.openInMenetrendGo(prefs: activePrefs),
+                        );
+                      },
+                      icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                      label: Text(
+                        uwuLabel(
+                          'MenetrendGO mélyhivatkozás teszt',
+                          enabled: activePrefs.uwuModeEnabled,
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -2501,15 +2553,19 @@ class _DeveloperSystemCacheSubPageState
                       currentVersion: _version,
                       release: GitHubReleaseInfo(
                         tagName: 'v$_version',
-                        title: 'Tinta Napló v$_version - OTA Frissítő Előnézet',
-                        releaseNotes:
-                            '• 120Hz-es fizikai animációk és Hero átmenetek\n'
-                            '• MenetrendGO reggeli/délutáni helyreállítás és Szünet visszaszámláló\n'
-                            '• Többoldalas Fejlesztői Központ, elszigetelt Demó mód és Minimalista javítások\n'
-                            '• Közvetlen GitHub Releases APK letöltés és telepítés ($apkName)',
+                        title: 'Tinta Napló v$_version - Frissítő Előnézet',
+                        releaseNotes: isIOSPlatform
+                            ? '• 120Hz-es fizikai animációk és Hero átmenetek\n'
+                                '• MenetrendGO reggeli/délutáni helyreállítás és Szünet visszaszámláló\n'
+                                '• iOS Liquid Glass megjelenés és GitHub Releases kiadásfigyelő'
+                            : '• 120Hz-es fizikai animációk és Hero átmenetek\n'
+                                '• MenetrendGO reggeli/délutáni helyreállítás és Szünet visszaszámláló\n'
+                                '• Többoldalas Fejlesztői Központ, elszigetelt Demó mód és Minimalista javítások\n'
+                                '• Közvetlen GitHub Releases APK letöltés és telepítés ($apkName)',
                         htmlUrl: GitHubUpdaterService.repoUrl,
-                        apkDownloadUrl:
-                            '${GitHubUpdaterService.repoUrl}/releases/latest/download/$apkName',
+                        apkDownloadUrl: isIOSPlatform
+                            ? null
+                            : '${GitHubUpdaterService.repoUrl}/releases/latest/download/$apkName',
                       ),
                     );
                   },

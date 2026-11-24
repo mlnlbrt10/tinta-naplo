@@ -7,6 +7,7 @@ import '../services/menetrend_service.dart';
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
 import '../utils/html_sanitizer.dart';
+import '../utils/platform_support.dart';
 import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
 import 'edge_fade_horizontal_scroll.dart';
@@ -275,23 +276,25 @@ class MenetrendHeroCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  TactileBounce(
-                    pressedScale: 0.92,
-                    onTap: () => MenetrendService.openInMenetrendGo(
-                      trip: trip,
-                      evaluation: evaluation,
-                      prefs: activePrefs,
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(2),
-                      child: Icon(
-                        Icons.open_in_new_rounded,
-                        size: 16,
-                        color: onSurface.withValues(alpha: 0.54),
+                  if (isAndroidPlatform) ...[
+                    const SizedBox(width: 8),
+                    TactileBounce(
+                      pressedScale: 0.92,
+                      onTap: () => MenetrendService.openInMenetrendGo(
+                        trip: trip,
+                        evaluation: evaluation,
+                        prefs: activePrefs,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(2),
+                        child: Icon(
+                          Icons.open_in_new_rounded,
+                          size: 16,
+                          color: onSurface.withValues(alpha: 0.54),
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
               if (trip.isFavorite) ...[
@@ -1007,42 +1010,44 @@ class _MenetrendDetailsModalSheetState
                                         accentColor: secondaryText,
                                         isLast: true,
                                       ),
-                                    const SizedBox(height: 18),
-                                    SizedBox(
-                                      width: double.infinity,
-                                      height: 47,
-                                      child: FilledButton.icon(
-                                        onPressed: () =>
-                                            MenetrendService.openInMenetrendGo(
-                                          trip: trip,
-                                          evaluation: activeEval,
-                                          prefs: activePrefs,
-                                        ),
-                                        icon: const Icon(
-                                          Icons.open_in_new_rounded,
-                                          size: 17,
-                                        ),
-                                        label: Text(
-                                          uwuLabel(
-                                            'Megnyitás MenetrendGO-ban',
-                                            enabled: activePrefs.uwuModeEnabled,
+                                    if (isAndroidPlatform) ...[
+                                      const SizedBox(height: 18),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        height: 47,
+                                        child: FilledButton.icon(
+                                          onPressed: () =>
+                                              MenetrendService.openInMenetrendGo(
+                                            trip: trip,
+                                            evaluation: activeEval,
+                                            prefs: activePrefs,
                                           ),
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 13.5,
+                                          icon: const Icon(
+                                            Icons.open_in_new_rounded,
+                                            size: 17,
                                           ),
-                                        ),
-                                        style: FilledButton.styleFrom(
-                                          backgroundColor: primary,
-                                          foregroundColor:
-                                              theme.colorScheme.onPrimary,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(14),
+                                          label: Text(
+                                            uwuLabel(
+                                              'Megnyitás MenetrendGO-ban',
+                                              enabled: activePrefs.uwuModeEnabled,
+                                            ),
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 13.5,
+                                            ),
+                                          ),
+                                          style: FilledButton.styleFrom(
+                                            backgroundColor: primary,
+                                            foregroundColor:
+                                                theme.colorScheme.onPrimary,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(14),
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
+                                    ],
                                     if (closeMode.showBottomButton) ...[
                                       const SizedBox(height: 8),
                                       SizedBox(

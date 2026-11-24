@@ -7,6 +7,7 @@ import '../providers/app_providers.dart';
 import '../services/kreta_notification_service.dart';
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
+import '../utils/platform_support.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 import '../widgets/glass_card.dart';
@@ -131,7 +132,9 @@ class _NotificationsSettingsScreenState
 
   Future<void> _load() async {
     final loaded = await _service.loadConfig();
-    final perm = await _service.hasNotificationPermissions();
+    final perm = isAndroidPlatform
+        ? await _service.hasNotificationPermissions()
+        : true;
     if (!mounted) return;
     setState(() {
       _config = loaded;
@@ -363,7 +366,35 @@ class _NotificationsSettingsScreenState
                 ),
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 36),
                 children: [
-                if (!_hasPermission) ...[
+                if (isIOSPlatform) ...[
+                  SoftGlassCard(
+                    key: const ValueKey<String>('notifications-ios-info-card'),
+                    prefs: activePrefs,
+                    padding: const EdgeInsets.all(14),
+                    border: Border.all(
+                      color: scheme.primary.withValues(alpha: 0.35),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.info_outline_rounded,
+                          color: scheme.primary,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            uwu(
+                              'A háttér-értesítések és értesítési csatornák Androidon érhetők el. A sablon-testreszabás és előnézet itt is teljes értékűen szerkeszthető.',
+                              enabled: uwuOn,
+                            ),
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ] else if (!_hasPermission) ...[
                   SoftGlassCard(
                     prefs: activePrefs,
                     padding: const EdgeInsets.all(14),
@@ -440,55 +471,57 @@ class _NotificationsSettingsScreenState
                           _commitConfig(_config.copyWith(masterEnabled: val));
                         },
                       ),
-                      const Divider(height: 20),
-                      Text(
-                        uwuLabel(
-                          'Háttér szinkronizálási gyakoriság',
-                          enabled: uwuOn,
-                        ),
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          color: scheme.primary,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
-                        children: [15, 30, 60].map((mins) {
-                          final selected =
-                              _config.backgroundIntervalMinutes == mins;
-                          return ChoiceChip(
-                            label: Text('$mins perc'),
-                            selected: selected,
-                            onSelected: _config.masterEnabled
-                                ? (_) {
-                                    HapticFeedback.selectionClick();
-                                    _commitConfig(
-                                      _config.copyWith(
-                                        backgroundIntervalMinutes: mins,
-                                      ),
-                                    );
-                                  }
-                                : null,
-                          );
-                        }).toList(),
-                      ),
-                      const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                        key: const ValueKey<String>(
-                          'notifications-global-test-btn',
-                        ),
-                        onPressed: () =>
-                            _sendTest(KretaNotificationCategory.newGrade),
-                        icon: const Icon(Icons.send_rounded, size: 17),
-                        label: Text(
+                      if (!isIOSPlatform) ...[
+                        const Divider(height: 20),
+                        Text(
                           uwuLabel(
-                            'Teszt értesítés küldése',
+                            'Háttér szinkronizálási gyakoriság',
                             enabled: uwuOn,
                           ),
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: scheme.primary,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 6,
+                          children: [15, 30, 60].map((mins) {
+                            final selected =
+                                _config.backgroundIntervalMinutes == mins;
+                            return ChoiceChip(
+                              label: Text('$mins perc'),
+                              selected: selected,
+                              onSelected: _config.masterEnabled
+                                  ? (_) {
+                                      HapticFeedback.selectionClick();
+                                      _commitConfig(
+                                        _config.copyWith(
+                                          backgroundIntervalMinutes: mins,
+                                        ),
+                                      );
+                                    }
+                                  : null,
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          key: const ValueKey<String>(
+                            'notifications-global-test-btn',
+                          ),
+                          onPressed: () =>
+                              _sendTest(KretaNotificationCategory.newGrade),
+                          icon: const Icon(Icons.send_rounded, size: 17),
+                          label: Text(
+                            uwuLabel(
+                              'Teszt értesítés küldése',
+                              enabled: uwuOn,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),

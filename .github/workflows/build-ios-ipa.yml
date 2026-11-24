@@ -1,0 +1,69 @@
+name: Build Unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_name:
+        description: 'Optional Flutter build name override (e.g. 3.2.0)'
+        required: false
+        default: ''
+      build_number:
+        description: 'Optional Flutter build number override (e.g. 35)'
+        required: false
+        default: ''
+
+jobs:
+  build-ios-ipa:
+    name: Build unsigned tinta-naplo-ios.ipa
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Verify Flutter toolchain
+        run: flutter --version
+
+      - name: Fetch Dart & Flutter dependencies
+        run: flutter pub get
+
+      - name: Install CocoaPods dependencies
+        working-directory: ios
+        run: pod install
+
+      - name: Build unsigned iOS Release app
+        env:
+          BUILD_NAME: ${{ github.event.inputs.build_name }}
+          BUILD_NUMBER: ${{ github.event.inputs.build_number }}
+        run: |
+          EXTRA_ARGS=()
+          if [[ -n "$BUILD_NAME" ]]; then
+            EXTRA_ARGS+=(--build-name="$BUILD_NAME")
+          fi
+          if [[ -n "$BUILD_NUMBER" ]]; then
+            EXTRA_ARGS+=(--build-number="$BUILD_NUMBER")
+          fi
+          flutter build ios --release --no-codesign "${EXTRA_ARGS[@]}"
+
+      - name: Package unsigned .ipa for AltStore / SideStore
+        run: |
+          mkdir -p build/ios/ipa_staging/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ios/ipa_staging/Payload/Runner.app
+          cd build/ios/ipa_staging
+          zip -qry ../../../tinta-naplo-ios.ipa Payload
+          cd ../../..
+          ls -lh tinta-naplo-ios.ipa
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tinta-naplo-ios-unsigned-ipa
+          path: tinta-naplo-ios.ipa
+          if-no-files-found: error
+          retention-days: 30

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -77,6 +78,8 @@ class _SchoolYearScheduleScreenState extends State<SchoolYearScheduleScreen> {
   _ScheduleFilter _selectedFilter = _ScheduleFilter.all;
   late final PageController _filterPageController =
       PageController(initialPage: 0);
+  bool _isAnimatingFilterPage = false;
+  int _filterPageAnimEpoch = 0;
 
   @override
   void dispose() {
@@ -95,11 +98,20 @@ class _SchoolYearScheduleScreenState extends State<SchoolYearScheduleScreen> {
           );
       final cur = _filterPageController.page?.round() ?? target;
       if (cur != target) {
-        _filterPageController.animateToPage(
-          target,
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.easeOutCubic,
-        );
+        final epoch = ++_filterPageAnimEpoch;
+        _isAnimatingFilterPage = true;
+        _filterPageController
+            .animateToPage(
+              target,
+              duration: const Duration(milliseconds: 280),
+              curve: Curves.easeOutCubic,
+            )
+            .whenComplete(() {
+          if (!mounted || epoch != _filterPageAnimEpoch) return;
+          if (_isAnimatingFilterPage) {
+            setState(() => _isAnimatingFilterPage = false);
+          }
+        });
       }
     }
   }
@@ -582,51 +594,115 @@ class _SchoolYearScheduleScreenState extends State<SchoolYearScheduleScreen> {
             .where((cat) => schedule.events.any((e) => e.category == cat))
             .toList();
 
-    return AdaptiveBackgroundScaffold(
-      prefs: activePrefs,
-      appBar: buildAdaptiveTransparentAppBar(
-        context,
-        title: uwu('Tanév rendje', enabled: uwuOn),
-        actions: [
-          IconButton(
-            key: const ValueKey<String>('school-year-refresh-btn'),
-            tooltip: uwu('Frissítés', enabled: uwuOn),
-            onPressed: _refreshing
-                ? null
-                : () {
-                    HapticFeedback.lightImpact();
-                    _refreshSchedule(forceRefresh: true, showFeedback: true);
-                  },
-            icon: _refreshing
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.refresh_rounded),
+    final hasAmbientBackdrop = ChristmasAndBackgroundOverlay.hasAmbientBackdrop(
+      context,
+      activePrefs,
+    );
+    final liquidGlass = resolveLiquidGlassEnabled(activePrefs);
+    final isDark = theme.brightness == Brightness.dark;
+    final blurSigma = resolveSoftBlurBackdropSigma(activePrefs);
+    final appBarBorderColor = scheme.outlineVariant.withValues(
+      alpha: isDark ? 0.24 : 0.36,
+    );
+
+    final Widget appBarFlexibleSpace;
+    if (liquidGlass) {
+      final tintColor = (isDark
+              ? scheme.surfaceContainerHigh
+              : theme.scaffoldBackgroundColor)
+          .withValues(alpha: isDark ? 0.68 : 0.78);
+      appBarFlexibleSpace = RepaintBoundary(
+        child: ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: tintColor,
+                border: Border(
+                  bottom: BorderSide(color: appBarBorderColor, width: 0.7),
+                ),
+              ),
+              child: const SizedBox.expand(),
+            ),
           ),
-        ],
-      ),
-      body: _loading || schedule == null
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              notificationPredicate: nestedScrollRefreshNotificationPredicate,
-              onRefresh: () =>
-                  _refreshSchedule(forceRefresh: true, showFeedback: true),
-              child: ElasticOverscrollStretchWrapper(
-                child: NestedScrollView(
-                  physics: const BouncingScrollPhysics(
-                    parent: AlwaysScrollableScrollPhysics(),
-                  ),
-                  headerSliverBuilder: (context, _) => [
-                    SliverPadding(
-                      padding: EdgeInsets.fromLTRB(
-                        16,
-                        adaptiveAppBarTopPadding(context),
-                        16,
-                        10,
-                      ),
-                      sliver: SliverToBoxAdapter(
+        ),
+      );
+    } else {
+      appBarFlexibleSpace = DecoratedBox(
+        decoration: BoxDecoration(
+          color: hasAmbientBackdrop
+              ? theme.scaffoldBackgroundColor.withValues(alpha: 0.94)
+              : theme.scaffoldBackgroundColor,
+          border: Border(
+            bottom: BorderSide(color: appBarBorderColor, width: 0.7),
+          ),
+        ),
+        child: const SizedBox.expand(),
+      );
+    }
+
+    return ChristmasAndBackgroundOverlay(
+      prefs: activePrefs,
+      child: Scaffold(
+        backgroundColor: hasAmbientBackdrop ? Colors.transparent : null,
+        extendBodyBehindAppBar: false,
+        appBar: AppBar(
+          title: Text(uwu('Tanév rendje', enabled: uwuOn)),
+          backgroundColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
+          scrolledUnderElevation: 0,
+          elevation: 0,
+          foregroundColor: scheme.onSurface,
+          systemOverlayStyle: OledTheme.systemOverlayStyleForBrightness(
+            theme.brightness,
+          ),
+          flexibleSpace: appBarFlexibleSpace,
+          actions: [
+            IconButton(
+              key: const ValueKey<String>('school-year-refresh-btn'),
+              tooltip: uwu('Frissítés', enabled: uwuOn),
+              onPressed: _refreshing
+                  ? null
+                  : () {
+                      HapticFeedback.lightImpact();
+                      _refreshSchedule(forceRefresh: true, showFeedback: true);
+                    },
+              icon: _refreshing
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh_rounded),
+            ),
+          ],
+        ),
+        body: ClipRect(
+          child: MediaQuery.removePadding(
+            context: context,
+            removeTop: true,
+            child: _loading || schedule == null
+                ? const Center(child: CircularProgressIndicator())
+                : VerticalScrollEdgeFades(
+                    prefs: activePrefs,
+                    topHeaderHeight: 0.0,
+                    topFeatherHeight: 16.0,
+                    bottomFadeHeight: 28.0,
+                    scrollDrivenTopFeather: true,
+                    child: RefreshIndicator(
+                      notificationPredicate:
+                          nestedScrollRefreshNotificationPredicate,
+                      onRefresh: () =>
+                          _refreshSchedule(forceRefresh: true, showFeedback: true),
+                      child: ElasticOverscrollStretchWrapper(
+                        child: NestedScrollView(
+                          physics: const BouncingScrollPhysics(
+                            parent: AlwaysScrollableScrollPhysics(),
+                          ),
+                          headerSliverBuilder: (context, _) => [
+                            SliverPadding(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+                              sliver: SliverToBoxAdapter(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
@@ -773,6 +849,11 @@ class _SchoolYearScheduleScreenState extends State<SchoolYearScheduleScreen> {
                         .clamp(0, _ScheduleFilter.values.length - 1),
                     itemCount: _ScheduleFilter.values.length,
                     pageController: _filterPageController,
+                    onUserDragStart: () {
+                      if (_isAnimatingFilterPage && mounted) {
+                        setState(() => _isAnimatingFilterPage = false);
+                      }
+                    },
                     onIndexChanged: (idx) => _selectFilter(
                       _ScheduleFilter.values[idx],
                       animatePage: false,
@@ -873,6 +954,10 @@ class _SchoolYearScheduleScreenState extends State<SchoolYearScheduleScreen> {
                 ),
               ),
             ),
+          ),
+        ),
+      ),
+      ),
     );
   }
 
@@ -1252,6 +1337,394 @@ class _SchoolYearScheduleScreenState extends State<SchoolYearScheduleScreen> {
     );
   }
 
+  String _formatDetailedRange(SchoolYearEvent event) {
+    const weekdays = [
+      '',
+      'Hétfő',
+      'Kedd',
+      'Szerda',
+      'Csütörtök',
+      'Péntek',
+      'Szombat',
+      'Vasárnap',
+    ];
+    final s = event.startDate.toLocal();
+    final e = event.endDate.toLocal();
+    final sDay = weekdays[s.weekday.clamp(1, 7)];
+    final eDay = weekdays[e.weekday.clamp(1, 7)];
+    if (DateUtils.dateOnly(s) == DateUtils.dateOnly(e)) {
+      return '${_dateFormat.format(s)} ($sDay)';
+    }
+    return '${_dateFormat.format(s)} ($sDay) – ${_dateFormat.format(e)} ($eDay) • ${event.durationDays} nap';
+  }
+
+  Future<void> _openEventDetailSheet({
+    required SchoolYearEvent event,
+    required DateTime now,
+    required UserProfilePrefs prefs,
+    required bool isPast,
+  }) async {
+    HapticFeedback.lightImpact();
+    final cat = event.category;
+    final ongoing = event.isOngoingOn(now);
+    final daysUntil = event.daysUntil(now);
+    final uwuOn = prefs.uwuModeEnabled;
+    final closeMode = prefs.modalCloseMode;
+
+    final String daysRemainingText;
+    if (ongoing) {
+      daysRemainingText = 'Folyamatban • Még ${event.daysRemaining(now)} nap hátra';
+    } else if (isPast) {
+      daysRemainingText = 'Elmúlt';
+    } else if (daysUntil == 0) {
+      daysRemainingText = 'Ma';
+    } else {
+      daysRemainingText = '$daysUntil nap múlva';
+    }
+
+    await showFloatingGlassSheet<void>(
+      context: context,
+      prefs: prefs,
+      barrierColor: resolveSoftBlurBarrierColor(context, prefs: prefs),
+      builder: (sheetCtx) {
+        var localPinned = _pinnedCountdownEventId == event.id;
+        return StatefulBuilder(
+          builder: (innerCtx, setSheetState) {
+            final theme = Theme.of(innerCtx);
+            final scheme = theme.colorScheme;
+            final isDark = theme.brightness == Brightness.dark;
+            final tint = OledTheme.semanticForeground(cat.color, theme.brightness);
+
+            return ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: 520,
+                maxHeight: MediaQuery.sizeOf(innerCtx).height * 0.84,
+              ),
+              child: FrostedBottomSheetSurface(
+                key: ValueKey<String>('school-year-event-detail-sheet-${event.id}'),
+                prefs: prefs,
+                topRadius: 26.0,
+                showDragHandle: true,
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                child: SingleChildScrollView(
+                  physics: const FloatingSheetScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              color: tint.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(13),
+                              border: Border.all(
+                                color: tint.withValues(alpha: 0.35),
+                              ),
+                            ),
+                            child: Icon(cat.icon, color: tint, size: 21),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 4,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: tint.withValues(alpha: 0.14),
+                                        borderRadius: BorderRadius.circular(999),
+                                      ),
+                                      child: Text(
+                                        uwuLabel(cat.label, enabled: uwuOn),
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w800,
+                                          color: tint,
+                                        ),
+                                      ),
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: scheme.onSurface.withValues(alpha: 0.07),
+                                        borderRadius: BorderRadius.circular(999),
+                                      ),
+                                      child: Text(
+                                        uwuLabel(
+                                          event.sourceBadgeLabel,
+                                          enabled: uwuOn,
+                                        ),
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                          color: scheme.onSurface
+                                              .withValues(alpha: 0.72),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  uwuLabel(event.title, enabled: uwuOn),
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: -0.2,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (closeMode.showTopX) ...[
+                            const SizedBox(width: 8),
+                            PopupTopCloseButton(
+                              onTap: () => Navigator.of(sheetCtx).pop(),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: scheme.onSurface.withValues(
+                            alpha: isDark ? 0.05 : 0.035,
+                          ),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: scheme.outlineVariant.withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.calendar_month_rounded,
+                                  size: 16,
+                                  color: scheme.primary,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    uwuLabel(
+                                      _formatDetailedRange(event),
+                                      enabled: uwuOn,
+                                    ),
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      fontFeatures: const [
+                                        FontFeature.tabularFigures(),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.timelapse_rounded,
+                                  size: 16,
+                                  color: tint,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    uwuLabel(daysRemainingText, enabled: uwuOn),
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      fontWeight: FontWeight.w800,
+                                      color: tint,
+                                      fontFeatures: const [
+                                        FontFeature.tabularFigures(),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (event.description != null &&
+                                event.description!.trim().isNotEmpty) ...[
+                              const SizedBox(height: 10),
+                              Divider(
+                                height: 1,
+                                color: scheme.outlineVariant
+                                    .withValues(alpha: 0.3),
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                uwuLabel(
+                                  event.description!.trim(),
+                                  enabled: uwuOn,
+                                ),
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color:
+                                      scheme.onSurface.withValues(alpha: 0.78),
+                                  height: 1.38,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TactileBounce(
+                        key: const ValueKey<String>(
+                          'school-year-detail-pin-toggle',
+                        ),
+                        pressedScale: 0.985,
+                        onTap: isPast
+                            ? null
+                            : () async {
+                                final nextId = localPinned ? null : event.id;
+                                setSheetState(() => localPinned = !localPinned);
+                                await _setPinnedCountdownEvent(nextId);
+                              },
+                        child: Opacity(
+                          opacity: isPast ? 0.55 : 1.0,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 12,
+                            ),
+                            decoration: BoxDecoration(
+                              color: localPinned
+                                  ? tint.withValues(alpha: isDark ? 0.18 : 0.12)
+                                  : scheme.onSurface.withValues(
+                                      alpha: isDark ? 0.05 : 0.035,
+                                    ),
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: localPinned
+                                    ? tint.withValues(alpha: 0.65)
+                                    : scheme.outlineVariant
+                                        .withValues(alpha: 0.35),
+                                width: localPinned ? 1.3 : 1.0,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  localPinned
+                                      ? Icons.push_pin_rounded
+                                      : Icons.push_pin_outlined,
+                                  size: 19,
+                                  color: localPinned
+                                      ? tint
+                                      : scheme.onSurface.withValues(alpha: 0.72),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        uwuLabel(
+                                          isPast
+                                              ? 'Elmúlt esemény nem tűzhető ki'
+                                              : (localPinned
+                                                  ? 'Kitűzve a visszaszámlálóra'
+                                                  : 'Kitűzés visszaszámlálónak'),
+                                          enabled: uwuOn,
+                                        ),
+                                        style: theme.textTheme.labelLarge
+                                            ?.copyWith(
+                                          fontWeight: FontWeight.w800,
+                                          color: localPinned
+                                              ? tint
+                                              : scheme.onSurface,
+                                        ),
+                                      ),
+                                      if (!isPast)
+                                        Text(
+                                          uwuLabel(
+                                            localPinned
+                                                ? 'Koppints a kitűzés feloldásához'
+                                                : 'Megjelenítés a fő kártyán és a profilban',
+                                            enabled: uwuOn,
+                                          ),
+                                          style: theme.textTheme.labelSmall
+                                              ?.copyWith(
+                                            color: scheme.onSurface
+                                                .withValues(alpha: 0.64),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                if (!isPast)
+                                  Switch.adaptive(
+                                    value: localPinned,
+                                    onChanged: (val) async {
+                                      final nextId = val ? event.id : null;
+                                      setSheetState(() => localPinned = val);
+                                      await _setPinnedCountdownEvent(nextId);
+                                    },
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (event.isCustom) ...[
+                        const SizedBox(height: 10),
+                        OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: scheme.error,
+                            side: BorderSide(
+                              color: scheme.error.withValues(alpha: 0.4),
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          onPressed: () {
+                            Navigator.of(sheetCtx).pop();
+                            unawaited(_deleteCustomEvent(event));
+                          },
+                          icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                          label: Text(
+                            uwuLabel('Saját esemény törlése', enabled: uwuOn),
+                          ),
+                        ),
+                      ],
+                      if (closeMode.showBottomButton) ...[
+                        const SizedBox(height: 14),
+                        PopupBottomCloseButton(
+                          onTap: () => Navigator.of(sheetCtx).pop(),
+                          uwuEnabled: uwuOn,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildEventCard({
     required ThemeData theme,
     required ColorScheme scheme,
@@ -1276,17 +1749,26 @@ class _SchoolYearScheduleScreenState extends State<SchoolYearScheduleScreen> {
       padding: const EdgeInsets.only(bottom: 6),
       child: Opacity(
         opacity: isPast ? 0.58 : 1.0,
-        child: SoftGlassCard(
-          prefs: prefs,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8.5),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: (ongoing || isPinned)
-                ? tint.withValues(alpha: 0.72)
-                : theme.dividerColor,
-            width: (ongoing || isPinned) ? 1.3 : 0.9,
+        child: TactileBounce(
+          key: ValueKey<String>('school-year-event-card-${event.id}'),
+          pressedScale: 0.985,
+          onTap: () => _openEventDetailSheet(
+            event: event,
+            now: now,
+            prefs: prefs,
+            isPast: isPast,
           ),
-          child: Row(
+          child: SoftGlassCard(
+            prefs: prefs,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8.5),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: (ongoing || isPinned)
+                  ? tint.withValues(alpha: 0.72)
+                  : theme.dividerColor,
+              width: (ongoing || isPinned) ? 1.3 : 0.9,
+            ),
+            child: Row(
             children: [
               Container(
                 width: 32,
@@ -1431,6 +1913,7 @@ class _SchoolYearScheduleScreenState extends State<SchoolYearScheduleScreen> {
               ],
             ],
           ),
+        ),
         ),
       ),
     );

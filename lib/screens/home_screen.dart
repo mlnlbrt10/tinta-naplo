@@ -19,6 +19,7 @@ import '../services/wear_sync_service.dart';
 import '../theme/minimalist_tokens.dart';
 import '../theme/oled_theme.dart';
 import '../utils/greeting_utils.dart';
+import '../utils/platform_support.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
@@ -542,6 +543,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final PageController _feedPageController =
       PageController(initialPage: _feedFilter.index);
   bool _isAnimatingFeedPage = false;
+  int _feedPageAnimEpoch = 0;
   bool _isImmersiveWeeklyMode = false;
 
   late StoredSession _session;
@@ -632,8 +634,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     TokenStorageService.sessionNotifier.addListener(_onGlobalSessionChanged);
     DemoDataService.instance.revision.addListener(_onDemoRevisionChanged);
-    HomeWidgetSyncService.instance.openTimetableSignal
-        .addListener(_onOpenTimetableSignal);
+    if (isAndroidPlatform) {
+      HomeWidgetSyncService.instance.openTimetableSignal
+          .addListener(_onOpenTimetableSignal);
+    }
     _hydrateFallbackCompletedHomeworkIds();
     _loadDismissedUnexcusedOmissionIds();
     if (_data != null) {
@@ -733,7 +737,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _applyDemoModeTransition(bool enabled) {
-    HomeWidgetSyncService.instance.clearMemoryCache();
+    if (isAndroidPlatform) {
+      HomeWidgetSyncService.instance.clearMemoryCache();
+    }
     if (enabled) {
       if (!DemoDataService.isDemoSession(_session)) {
         _realSessionBackup = _session;
@@ -778,6 +784,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _checkPendingOpenTimetableTab() async {
+    if (!isAndroidPlatform) return;
     try {
       final openTimetable =
           await HomeWidgetSyncService.instance.consumePendingOpenTimetableTab();
@@ -796,7 +803,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     DashboardData data, {
     bool forceUpcomingRefresh = false,
   }) {
-    if (!mounted) return;
+    if (!isAndroidPlatform || !mounted) return;
     unawaited(
       HomeWidgetSyncService.instance
           .syncFromDashboard(
@@ -900,7 +907,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   UserProfilePrefs get _activePrefs {
     final scope = context.getInheritedWidgetOfExactType<AppProvidersScope>();
-    return scope?.settings.prefs ?? widget.prefs;
+    return (scope?.settings.prefs ?? widget.prefs).effectiveForPlatform();
   }
 
   Future<void> _hydrateFallbackCompletedHomeworkIds() async {
@@ -1098,8 +1105,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     TokenStorageService.sessionNotifier.removeListener(_onGlobalSessionChanged);
     DemoDataService.instance.revision.removeListener(_onDemoRevisionChanged);
-    HomeWidgetSyncService.instance.openTimetableSignal
-        .removeListener(_onOpenTimetableSignal);
+    if (isAndroidPlatform) {
+      HomeWidgetSyncService.instance.openTimetableSignal
+          .removeListener(_onOpenTimetableSignal);
+    }
     _settingsProvider?.removeListener(_onSettingsChangedForDemo);
     _countdownTimer?.cancel();
     _countdownTick.dispose();
@@ -1358,49 +1367,51 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         });
       }
       unawaited(_refreshCommute());
-      unawaited(
-        WearSyncService.instance
-            .cacheSessionSnapshot(
-              session: result.activeSession,
-              student: result.student,
-              nickname: _activePrefs.nickname,
-              recentGrades: result.allGrades,
-              upcomingExams: result.tests,
-            )
-            .catchError((_) => false),
-      );
-      if (result.activeSession.refreshToken != previousRefreshToken) {
+      if (isAndroidPlatform) {
         unawaited(
           WearSyncService.instance
-              .syncSessionToWatch(
+              .cacheSessionSnapshot(
                 session: result.activeSession,
                 student: result.student,
                 nickname: _activePrefs.nickname,
-                forceSync: false,
                 recentGrades: result.allGrades,
                 upcomingExams: result.tests,
               )
               .catchError((_) => false),
         );
+        if (result.activeSession.refreshToken != previousRefreshToken) {
+          unawaited(
+            WearSyncService.instance
+                .syncSessionToWatch(
+                  session: result.activeSession,
+                  student: result.student,
+                  nickname: _activePrefs.nickname,
+                  forceSync: false,
+                  recentGrades: result.allGrades,
+                  upcomingExams: result.tests,
+                )
+                .catchError((_) => false),
+          );
+        }
+        final dashboardDigest =
+            '${WearSyncService.serializeRecentGradesJson(result.allGrades)}|${WearSyncService.serializeUpcomingExamsJson(result.tests)}';
+        if ((result.student != null && !_hasPushedWearProfileMetadata) ||
+            dashboardDigest != _lastWearDashboardDigest) {
+          _hasPushedWearProfileMetadata = true;
+          _lastWearDashboardDigest = dashboardDigest;
+          unawaited(_syncWearStudentMetadataIfConnected(result));
+        }
+        unawaited(
+          CalendarSyncService.instance
+              .syncFromDashboardIfEnabled(
+                result,
+                prefs: _activePrefs,
+                fetchLessonsForRange: (from, to) => widget.kretaClient
+                    .fetchTimetableForRange(result.activeSession, from: from, to: to),
+              )
+              .then<void>((_) {}, onError: (_, _) {}),
+        );
       }
-      final dashboardDigest =
-          '${WearSyncService.serializeRecentGradesJson(result.allGrades)}|${WearSyncService.serializeUpcomingExamsJson(result.tests)}';
-      if ((result.student != null && !_hasPushedWearProfileMetadata) ||
-          dashboardDigest != _lastWearDashboardDigest) {
-        _hasPushedWearProfileMetadata = true;
-        _lastWearDashboardDigest = dashboardDigest;
-        unawaited(_syncWearStudentMetadataIfConnected(result));
-      }
-      unawaited(
-        CalendarSyncService.instance
-            .syncFromDashboardIfEnabled(
-              result,
-              prefs: _activePrefs,
-              fetchLessonsForRange: (from, to) => widget.kretaClient
-                  .fetchTimetableForRange(result.activeSession, from: from, to: to),
-            )
-            .then<void>((_) {}, onError: (_, _) {}),
-      );
       unawaited(
         KretaNotificationService.instance
             .processDashboardDiff(
@@ -1456,6 +1467,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _syncWearStudentMetadataIfConnected(DashboardData data) async {
+    if (!isAndroidPlatform) return;
     try {
       final status = await WearSyncService.instance.getConnectionStatus();
       if (!status.isConnected || !mounted) return;
@@ -2277,6 +2289,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final target = filter.index;
       final curPage = _feedPageController.page?.round() ?? target;
       if (curPage != target) {
+        final animEpoch = ++_feedPageAnimEpoch;
         _isAnimatingFeedPage = true;
         _feedPageController
             .animateToPage(
@@ -2285,10 +2298,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               curve: Curves.easeOutCubic,
             )
             .whenComplete(() {
-          if (mounted && _isAnimatingFeedPage) {
+          if (!mounted || animEpoch != _feedPageAnimEpoch) return;
+          if (_isAnimatingFeedPage) {
             setState(() => _isAnimatingFeedPage = false);
-          } else {
-            _isAnimatingFeedPage = false;
           }
         });
       }
@@ -2347,12 +2359,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           )
           .toList();
 
-      tabChild = NestedScrollView(
+      final minPageHeight =
+          (MediaQuery.sizeOf(context).height * 0.56).clamp(260.0, 760.0);
+      tabChild = CustomScrollView(
         key: const ValueKey<String>('home-loaded-content'),
-        physics: const BouncingScrollPhysics(
-          parent: AlwaysScrollableScrollPhysics(),
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
         ),
-        headerSliverBuilder: (context, innerBoxIsScrolled) => [
+        slivers: [
           SliverPadding(
             padding: EdgeInsets.only(top: min.enabled ? 4 : 12),
             sliver: SliverToBoxAdapter(
@@ -2451,39 +2465,48 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ),
           ),
-        ],
-        body: HorizontalSubTabSwipeDetector(
-          key: const ValueKey<String>('home-subtab-swipe'),
-          currentIndex: ActivityFeedFilter.values.indexOf(_feedFilter).clamp(
-            0,
-            ActivityFeedFilter.values.length - 1,
-          ),
-          itemCount: ActivityFeedFilter.values.length,
-          pageController: _feedPageController,
-          onIndexChanged: (idx) => _selectFeedFilter(
-            ActivityFeedFilter.values[idx],
-            animatePage: false,
-          ),
-          pageBuilder: (pageCtx, pageIndex) {
-            final pageFilter = ActivityFeedFilter.values[pageIndex];
-            final isActivePage = pageFilter == _feedFilter;
-            return HeroMode(
-              enabled: isActivePage,
-              child: _buildHomeFeedPageForFilter(
-                theme,
-                scheme,
-                min: min,
-                pageFilter: pageFilter,
-                today: today,
-                upcomingExamItems: upcomingExamItems,
-                allDayGroups: allDayGroups,
-                recentEquipments: recentEquipments,
-                gradeImpacts: gradeImpacts,
-                isActivePage: isActivePage,
+          SliverToBoxAdapter(
+            child: HorizontalSubTabSwipeDetector(
+              key: const ValueKey<String>('home-subtab-swipe'),
+              autoHeight: true,
+              minAutoHeight: minPageHeight,
+              currentIndex: ActivityFeedFilter.values.indexOf(_feedFilter).clamp(
+                0,
+                ActivityFeedFilter.values.length - 1,
               ),
-            );
-          },
-        ),
+              itemCount: ActivityFeedFilter.values.length,
+              pageController: _feedPageController,
+              onUserDragStart: () {
+                if (_isAnimatingFeedPage && mounted) {
+                  setState(() => _isAnimatingFeedPage = false);
+                }
+              },
+              onIndexChanged: (idx) => _selectFeedFilter(
+                ActivityFeedFilter.values[idx],
+                animatePage: false,
+              ),
+              pageBuilder: (pageCtx, pageIndex) {
+                final pageFilter = ActivityFeedFilter.values[pageIndex];
+                final isActivePage = pageFilter == _feedFilter;
+                return HeroMode(
+                  enabled: isActivePage,
+                  child: _buildHomeFeedPageForFilter(
+                    theme,
+                    scheme,
+                    min: min,
+                    pageFilter: pageFilter,
+                    today: today,
+                    upcomingExamItems: upcomingExamItems,
+                    allDayGroups: allDayGroups,
+                    recentEquipments: recentEquipments,
+                    gradeImpacts: gradeImpacts,
+                    isActivePage: isActivePage,
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       );
     }
 
@@ -2491,7 +2514,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       displacement: 44,
       edgeOffset: 8,
       strokeWidth: 2.6,
-      notificationPredicate: nestedScrollRefreshNotificationPredicate,
+      notificationPredicate: (notification) =>
+          notification.depth == 0 && notification.metrics.axis == Axis.vertical,
       onRefresh: _handleHomePullToRefresh,
       child: ElasticOverscrollStretchWrapper(
         child: AnimatedSwitcher(
@@ -2594,60 +2618,53 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     }
 
-    const int animatedPreviewLimit = 18;
     final hasAnyMatching = visibleGroupOrdinal > 0;
-    final previewRows = feedRows.take(animatedPreviewLimit).toList();
-    final tailRows = feedRows.length > animatedPreviewLimit
-        ? feedRows.sublist(animatedPreviewLimit)
-        : const <_HomeFeedRow>[];
 
-    return CustomScrollView(
+    return KeyedSubtree(
       key: isActivePage
           ? const ValueKey<String>('home-live-feed')
           : PageStorageKey<String>('home-live-feed-${pageFilter.name}'),
-      physics: const BouncingScrollPhysics(
-        parent: AlwaysScrollableScrollPhysics(),
-      ),
-      slivers: [
-        if (pageFilter == ActivityFeedFilter.homeworks &&
-            (_data?.homeworks.isNotEmpty ?? false))
-          SliverToBoxAdapter(
-            key: isActivePage
-                ? const ValueKey<String>('home-mark-all-hw-action')
-                : null,
-            child: _buildMarkAllHomeworksButton(
-              theme,
-              scheme,
-              (_data?.homeworks ?? const <Homework>[])
-                  .where((h) => !_isHomeworkCompleted(h))
-                  .toList(),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (pageFilter == ActivityFeedFilter.homeworks &&
+              (_data?.homeworks.isNotEmpty ?? false))
+            KeyedSubtree(
+              key: isActivePage
+                  ? const ValueKey<String>('home-mark-all-hw-action')
+                  : null,
+              child: _buildMarkAllHomeworksButton(
+                theme,
+                scheme,
+                (_data?.homeworks ?? const <Homework>[])
+                    .where((h) => !_isHomeworkCompleted(h))
+                    .toList(),
+              ),
             ),
-          ),
-        if (pageFilter == ActivityFeedFilter.all && recentEquipments.isNotEmpty)
-          SliverPadding(
-            padding: EdgeInsets.fromLTRB(
-              min.horizontalPagePadding,
-              0,
-              min.horizontalPagePadding,
-              min.enabled ? 6 : 10,
-            ),
-            sliver: SliverToBoxAdapter(
+          if (pageFilter == ActivityFeedFilter.all && recentEquipments.isNotEmpty)
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                min.horizontalPagePadding,
+                0,
+                min.horizontalPagePadding,
+                min.enabled ? 6 : 10,
+              ),
               child: _buildMissingEquipmentHighlightCard(
                 theme,
                 scheme,
                 recentEquipments,
               ),
             ),
-          ),
-        SliverPadding(
-          padding: EdgeInsets.fromLTRB(
-            min.horizontalPagePadding,
-            min.enabled ? 2 : 6,
-            min.horizontalPagePadding,
-            tailRows.isEmpty ? (min.enabled ? 76 : 116) : 0,
-          ),
-          sliver: SliverToBoxAdapter(
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              min.horizontalPagePadding,
+              min.enabled ? 2 : 6,
+              min.horizontalPagePadding,
+              min.enabled ? 76 : 116,
+            ),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 if (!hasAnyMatching)
@@ -2659,7 +2676,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       'Nincs megjeleníthető elem ebben a kategóriában.',
                     ),
                   ),
-                for (final row in previewRows)
+                for (final row in feedRows)
                   _buildFeedRowWidget(
                     theme,
                     scheme,
@@ -2670,29 +2687,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ],
             ),
           ),
-        ),
-        if (tailRows.isNotEmpty)
-          SliverPadding(
-            padding: EdgeInsets.fromLTRB(
-              min.horizontalPagePadding,
-              0,
-              min.horizontalPagePadding,
-              min.enabled ? 76 : 116,
-            ),
-            sliver: SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (context, index) => _buildFeedRowWidget(
-                  theme,
-                  scheme,
-                  tailRows[index],
-                  today,
-                  gradeImpacts: gradeImpacts,
-                ),
-                childCount: tailRows.length,
-              ),
-            ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 

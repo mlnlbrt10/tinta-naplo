@@ -17,6 +17,7 @@ import 'services/kreta_notification_service.dart';
 import 'services/token_storage_service.dart';
 import 'services/wear_sync_service.dart';
 import 'theme/oled_theme.dart';
+import 'utils/platform_support.dart';
 import 'utils/uwu_helper.dart';
 import 'widgets/tinta_splash_overlay.dart';
 import 'widgets/tinta_toast.dart';
@@ -40,7 +41,8 @@ class TintaNaploApp extends StatefulWidget {
   State<TintaNaploApp> createState() => _TintaNaploAppState();
 }
 
-class _TintaNaploAppState extends State<TintaNaploApp> {
+class _TintaNaploAppState extends State<TintaNaploApp>
+    with WidgetsBindingObserver {
   late final TokenStorageService _tokenStorage =
       widget.tokenStorage ?? const TokenStorageService();
   late final KretaClient _kretaClient =
@@ -87,25 +89,36 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _settingsProvider.addListener(_onProviderPrefsChanged);
     TokenStorageService.sessionNotifier.addListener(_onGlobalSessionChanged);
-    TokenStorageService.externalSessionFallbackLoader =
-        WearSyncService.instance.loadCachedSessionFromNative;
-    HomeWidgetSyncService.instance.initialize();
-    unawaited(
-      KretaNotificationService.instance
-          .syncBackgroundSchedule()
-          .catchError((_) {}),
-    );
-    WearSyncService.instance.initialize(
-      onWatchAuthRequested: () {
-        unawaited(_handleWatchAuthRequested());
-      },
-      onSessionUpdatedFromWatch: (rotated) {
-        unawaited(_ingestRotatedWatchSession(rotated));
-      },
-    );
+    if (isAndroidPlatform) {
+      TokenStorageService.externalSessionFallbackLoader =
+          WearSyncService.instance.loadCachedSessionFromNative;
+      HomeWidgetSyncService.instance.initialize();
+      unawaited(
+        KretaNotificationService.instance
+            .syncBackgroundSchedule()
+            .catchError((_) {}),
+      );
+      WearSyncService.instance.initialize(
+        onWatchAuthRequested: () {
+          unawaited(_handleWatchAuthRequested());
+        },
+        onSessionUpdatedFromWatch: (rotated) {
+          unawaited(_ingestRotatedWatchSession(rotated));
+        },
+      );
+    }
     _restoreSavedSessionAndPrefs();
+  }
+
+  @override
+  void didChangePlatformBrightness() {
+    super.didChangePlatformBrightness();
+    if (mounted && isIOSPlatform) {
+      _set(() {});
+    }
   }
 
   Future<void> _ingestRotatedWatchSession(StoredSession rotated) async {
@@ -163,12 +176,15 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     TokenStorageService.sessionNotifier.removeListener(_onGlobalSessionChanged);
-    if (TokenStorageService.externalSessionFallbackLoader ==
-        WearSyncService.instance.loadCachedSessionFromNative) {
-      TokenStorageService.externalSessionFallbackLoader = null;
+    if (isAndroidPlatform) {
+      if (TokenStorageService.externalSessionFallbackLoader ==
+          WearSyncService.instance.loadCachedSessionFromNative) {
+        TokenStorageService.externalSessionFallbackLoader = null;
+      }
+      WearSyncService.instance.disposeListener();
     }
-    WearSyncService.instance.disposeListener();
     _settingsProvider.removeListener(_onProviderPrefsChanged);
     _commuteProvider.dispose();
     _themeProvider.dispose();
@@ -218,17 +234,19 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
         } catch (_) {
           restoredCache = null;
         }
-        unawaited(
-          WearSyncService.instance
-              .cacheSessionSnapshot(
-                session: restoredSession,
-                student: restoredCache?.student,
-                nickname: restoredPrefs.nickname,
-                recentGrades: restoredCache?.allGrades,
-                upcomingExams: restoredCache?.tests,
-              )
-              .catchError((_) => false),
-        );
+        if (isAndroidPlatform) {
+          unawaited(
+            WearSyncService.instance
+                .cacheSessionSnapshot(
+                  session: restoredSession,
+                  student: restoredCache?.student,
+                  nickname: restoredPrefs.nickname,
+                  recentGrades: restoredCache?.allGrades,
+                  upcomingExams: restoredCache?.tests,
+                )
+                .catchError((_) => false),
+          );
+        }
       } else if (restoredPrefs.demoModeEnabled) {
         restoredCache = DemoDataService.instance.buildDashboardData();
       } else if (await TokenStorageService.hadPreviousLogin()) {
@@ -383,14 +401,15 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
     if (!identical(_settingsProvider.prefs, nextPrefs)) {
       await _settingsProvider.updatePrefs(nextPrefs);
     }
-    if (nextPrefs.appIconPreset != prevPrefs.appIconPreset ||
-        nextPrefs.fitymaModeEnabled != prevPrefs.fitymaModeEnabled) {
+    if (isAndroidPlatform &&
+        (nextPrefs.appIconPreset != prevPrefs.appIconPreset ||
+            nextPrefs.fitymaModeEnabled != prevPrefs.fitymaModeEnabled)) {
       unawaited(
         DynamicIconService.syncIconWithPrefs(nextPrefs).catchError((_) {}),
       );
     }
-    final affectsWidgets =
-        nextPrefs.seedColorValue != prevPrefs.seedColorValue ||
+    final affectsWidgets = isAndroidPlatform &&
+        (nextPrefs.seedColorValue != prevPrefs.seedColorValue ||
             nextPrefs.themeStyle != prevPrefs.themeStyle ||
             nextPrefs.uwuModeEnabled != prevPrefs.uwuModeEnabled ||
             nextPrefs.liveActivityEnabled != prevPrefs.liveActivityEnabled ||
@@ -403,7 +422,7 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
             !mapEquals(
               nextPrefs.teacherCustomNames,
               prevPrefs.teacherCustomNames,
-            );
+            ));
     if (affectsWidgets) {
       unawaited(
         HomeWidgetSyncService.instance
@@ -458,23 +477,25 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
             _cachedDashboard = null;
           }
         });
-        unawaited(
-          WearSyncService.instance
-              .syncSessionToWatch(
-                session: session,
-                student: _cachedDashboard?.student,
-                nickname: _prefs.nickname,
-                forceSync: true,
-                recentGrades: _cachedDashboard?.allGrades,
-                upcomingExams: _cachedDashboard?.tests,
-              )
-              .then((pushed) {
-                if (pushed && mounted) {
-                  _showWatchSyncFeedback('Munkamenet elküldve az órára');
-                }
-              })
-              .catchError((_) {}),
-        );
+        if (isAndroidPlatform) {
+          unawaited(
+            WearSyncService.instance
+                .syncSessionToWatch(
+                  session: session,
+                  student: _cachedDashboard?.student,
+                  nickname: _prefs.nickname,
+                  forceSync: true,
+                  recentGrades: _cachedDashboard?.allGrades,
+                  upcomingExams: _cachedDashboard?.tests,
+                )
+                .then((pushed) {
+                  if (pushed && mounted) {
+                    _showWatchSyncFeedback('Munkamenet elküldve az órára');
+                  }
+                })
+                .catchError((_) {}),
+          );
+        }
       }
       return session;
     } finally {
@@ -507,10 +528,12 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
       } catch (_) {}
     }
     _kretaClient.clearLocalState();
-    HomeWidgetSyncService.instance.clearMemoryCache();
-    unawaited(
-      WearSyncService.instance.clearWatchSession().catchError((_) => false),
-    );
+    if (isAndroidPlatform) {
+      HomeWidgetSyncService.instance.clearMemoryCache();
+      unawaited(
+        WearSyncService.instance.clearWatchSession().catchError((_) => false),
+      );
+    }
     if (!mounted) return;
     _set(() {
       _session = null;
@@ -530,14 +553,18 @@ class _TintaNaploAppState extends State<TintaNaploApp> {
         builder: (context, _) {
           return DynamicColorBuilder(
             builder: (ColorScheme? lightDynamic, ColorScheme? darkDynamic) {
-              final isLight = _prefs.themeStyle == AppThemeStyle.light;
+              final effectivePrefs = _prefs.effectiveForPlatform();
+              final isLight = effectivePrefs.themeStyle == AppThemeStyle.light;
               final activeTheme = OledTheme.buildTheme(
-                prefs: _prefs,
-                dynamicScheme: isLight ? lightDynamic : darkDynamic,
+                prefs: effectivePrefs,
+                dynamicScheme: isIOSPlatform
+                    ? null
+                    : (isLight ? lightDynamic : darkDynamic),
+                platformBrightness: MediaQuery.platformBrightnessOf(context),
               );
               final isShowingLoginScreen = !_isRestoringSession &&
                   _session == null &&
-                  !_prefs.demoModeEnabled;
+                  !effectivePrefs.demoModeEnabled;
               final effectiveOverlayBrightness = isShowingLoginScreen
                   ? Brightness.dark
                   : activeTheme.brightness;

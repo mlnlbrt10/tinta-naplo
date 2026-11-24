@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:kreta_api/kreta_api.dart';
 
+import '../utils/platform_support.dart';
 import 'token_storage_service.dart';
 
 class WearDeviceNode {
@@ -128,7 +129,7 @@ class WearSyncService {
   }) {
     _onWatchAuthRequested = onWatchAuthRequested;
     _onSessionUpdatedFromWatch = onSessionUpdatedFromWatch;
-    if (_handlerRegistered) return;
+    if (!isAndroidPlatform || _handlerRegistered) return;
     try {
       _channel.setMethodCallHandler((call) async {
         try {
@@ -159,6 +160,7 @@ class WearSyncService {
   }
 
   Future<StoredSession?> loadCachedSessionFromNative() async {
+    if (!isAndroidPlatform) return null;
     try {
       final raw = await _channel.invokeMethod<Object?>(
         'getCachedSessionForPhone',
@@ -170,6 +172,7 @@ class WearSyncService {
   }
 
   Future<bool> consumePendingWatchAuthRequest() async {
+    if (!isAndroidPlatform) return false;
     try {
       final result = await _channel.invokeMethod<bool>(
         'consumePendingWatchAuthRequest',
@@ -181,6 +184,7 @@ class WearSyncService {
   }
 
   Future<WearConnectionStatus> getConnectionStatus() async {
+    if (!isAndroidPlatform) return WearConnectionStatus.disconnected;
     try {
       final raw = await _channel.invokeMethod<Object?>(
         'getWearConnectionStatus',
@@ -263,6 +267,7 @@ class WearSyncService {
     List<Grade>? recentGrades,
     List<Test>? upcomingExams,
   }) async {
+    if (!isAndroidPlatform) return false;
     try {
       final ok = await _channel.invokeMethod<bool>(
         'cacheSessionForWear',
@@ -288,6 +293,7 @@ class WearSyncService {
     List<Grade>? recentGrades,
     List<Test>? upcomingExams,
   }) async {
+    if (!isAndroidPlatform) return false;
     try {
       final ok = await _channel.invokeMethod<bool>(
         'pushSessionToWatch',
@@ -313,6 +319,7 @@ class WearSyncService {
     required List<Grade> recentGrades,
     required List<Test> upcomingExams,
   }) async {
+    if (!isAndroidPlatform) return false;
     try {
       final ok = await _channel.invokeMethod<bool>(
         'pushDashboardToWatch',
@@ -331,6 +338,7 @@ class WearSyncService {
   }
 
   Future<void> clearWatchSession() async {
+    if (!isAndroidPlatform) return;
     try {
       await _channel.invokeMethod<bool>('clearWearSession');
     } catch (_) {}

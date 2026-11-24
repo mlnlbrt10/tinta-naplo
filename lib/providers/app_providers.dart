@@ -33,18 +33,18 @@ class SettingsProvider extends ChangeNotifier {
     UserProfilePrefs initialPrefs = const UserProfilePrefs(),
     Set<String> initialCompletedHomeworkIds = const <String>{},
     TokenStorageService? storage,
-  })  : _prefs = initialPrefs,
+  })  : _prefs = initialPrefs.effectiveForPlatform(),
         _completedHomeworkIds = Set<String>.from(initialCompletedHomeworkIds),
         _storage = storage ?? const TokenStorageService() {
     UserProfilePrefs.syncActiveGlobals(_prefs);
     _gradePrefsLoadFuture = _loadGradeGlowStateFromPrefs();
   }
 
-  UserProfilePrefs get prefs => _prefs;
-  bool get demoModeEnabled => _prefs.demoModeEnabled;
-  bool get minimalistModeEnabled => _prefs.minimalistModeEnabled;
-  bool get funGreetingsEnabled => _prefs.funGreetingsEnabled;
-  String get activeAppIconAsset => _prefs.activeAppIconAsset;
+  UserProfilePrefs get prefs => _prefs.effectiveForPlatform();
+  bool get demoModeEnabled => prefs.demoModeEnabled;
+  bool get minimalistModeEnabled => prefs.minimalistModeEnabled;
+  bool get funGreetingsEnabled => prefs.funGreetingsEnabled;
+  String get activeAppIconAsset => prefs.activeAppIconAsset;
   Set<String> get completedHomeworkIds =>
       Set<String>.unmodifiable(_completedHomeworkIds);
   Set<String> get glowingGradeIds => Set<String>.unmodifiable(_glowingGradeIds);
@@ -228,13 +228,14 @@ class SettingsProvider extends ChangeNotifier {
     final completed = await loadCompletedHomeworkIdsFromPrefs();
     await (_gradePrefsLoadFuture ??= _loadGradeGlowStateFromPrefs());
     if (_disposed) return loaded;
-    _prefs = loaded;
+    final normalizedLoaded = loaded.effectiveForPlatform();
+    _prefs = normalizedLoaded;
     if (completed.isNotEmpty) {
       _completedHomeworkIds = completed;
     }
-    UserProfilePrefs.syncActiveGlobals(loaded);
+    UserProfilePrefs.syncActiveGlobals(normalizedLoaded);
     _safeNotifyListeners();
-    return loaded;
+    return normalizedLoaded;
   }
 
   @override
@@ -300,12 +301,13 @@ class SettingsProvider extends ChangeNotifier {
   /// Synchronously updates in-memory state, notifies all listeners immediately,
   /// writes to `SharedPreferences` right away, and serializes full persistence.
   Future<void> updatePrefs(UserProfilePrefs nextPrefs) {
-    _prefs = nextPrefs;
-    UserProfilePrefs.syncActiveGlobals(nextPrefs);
+    final normalized = nextPrefs.effectiveForPlatform();
+    _prefs = normalized;
+    UserProfilePrefs.syncActiveGlobals(normalized);
     notifyListeners();
 
     final queued = _saveQueue.then((_) async {
-      await _storage.saveProfilePrefs(nextPrefs);
+      await _storage.saveProfilePrefs(normalized);
     }).catchError((_) {});
     _saveQueue = queued;
     return queued;

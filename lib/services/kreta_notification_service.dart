@@ -1,12 +1,12 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:kreta_api/kreta_api.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../utils/platform_support.dart';
 import '../widgets/period_countdown_badge.dart';
 import 'demo_data_service.dart';
 import 'kreta_client.dart';
@@ -1380,7 +1380,7 @@ class KretaNotificationService {
   Future<void> syncBackgroundSchedule({
     KretaNotificationConfig? configOverride,
   }) async {
-    if (kIsWeb) return;
+    if (!isAndroidPlatform) return;
     final config = configOverride ?? await loadConfig();
     try {
       await _channel.invokeMethod<bool>(
@@ -1396,7 +1396,7 @@ class KretaNotificationService {
   }
 
   Future<bool> hasNotificationPermissions() async {
-    if (kIsWeb) return false;
+    if (!isAndroidPlatform) return false;
     try {
       final granted =
           await _channel.invokeMethod<bool>('hasNotificationPermissions');
@@ -1409,7 +1409,7 @@ class KretaNotificationService {
   }
 
   Future<bool> requestNotificationPermissions() async {
-    if (kIsWeb) return false;
+    if (!isAndroidPlatform) return false;
     try {
       final granted =
           await _channel.invokeMethod<bool>('requestNotificationPermissions');
@@ -1427,7 +1427,7 @@ class KretaNotificationService {
     required String title,
     required String body,
   }) async {
-    if (kIsWeb) return;
+    if (!isAndroidPlatform) return;
     try {
       await _channel.invokeMethod<bool>(
         'showNotification',

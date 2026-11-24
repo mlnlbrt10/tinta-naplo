@@ -16,6 +16,7 @@ import '../services/token_storage_service.dart';
 import '../services/wear_sync_service.dart';
 import '../theme/oled_theme.dart';
 import '../utils/greeting_utils.dart';
+import '../utils/platform_support.dart';
 import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
 import 'bug_report_sheet.dart';
@@ -55,6 +56,8 @@ class ProfileTopBarAvatar extends StatelessWidget {
     final isMinimalist = prefs.minimalistModeEnabled;
     final avatarRadius = isMinimalist ? 14.0 : 19.0;
 
+    final avatarDiameter = (avatarRadius + (isMinimalist ? 1.5 : 2.0)) * 2;
+
     return Padding(
       padding: EdgeInsets.only(right: isMinimalist ? 10 : 14),
       child: TactileBounce(
@@ -68,33 +71,40 @@ class ProfileTopBarAvatar extends StatelessWidget {
               flightShuttleBuilder: buildBoomerangBadgeHeroShuttle,
               child: Material(
                 type: MaterialType.transparency,
-                child: Container(
-                  padding: EdgeInsets.all(isMinimalist ? 1.5 : 2),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: avatarAccent.withValues(alpha: 0.9),
-                      width: isMinimalist ? 1.5 : 2,
+                child: SizedBox.square(
+                  dimension: avatarDiameter,
+                  child: FittedBox(
+                    fit: BoxFit.contain,
+                    child: Container(
+                      padding: EdgeInsets.all(isMinimalist ? 1.5 : 2),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: avatarAccent.withValues(alpha: 0.9),
+                          width: isMinimalist ? 1.5 : 2,
+                        ),
+                      ),
+                      child: isDemo
+                          ? DemoStudentAvatar(
+                              size: avatarRadius * 2,
+                              accentColor: avatarAccent,
+                            )
+                          : CircleAvatar(
+                              radius: avatarRadius,
+                              backgroundColor:
+                                  avatarAccent.withValues(alpha: 0.2),
+                              backgroundImage:
+                                  photoFile != null ? FileImage(photoFile) : null,
+                              child: photoFile == null
+                                  ? Icon(
+                                      Icons.person_rounded,
+                                      color: avatarAccent,
+                                      size: isMinimalist ? 16 : 20,
+                                    )
+                                  : null,
+                            ),
                     ),
                   ),
-                  child: isDemo
-                      ? DemoStudentAvatar(
-                          size: avatarRadius * 2,
-                          accentColor: avatarAccent,
-                        )
-                      : CircleAvatar(
-                          radius: avatarRadius,
-                          backgroundColor: avatarAccent.withValues(alpha: 0.2),
-                          backgroundImage:
-                              photoFile != null ? FileImage(photoFile) : null,
-                          child: photoFile == null
-                              ? Icon(
-                                  Icons.person_rounded,
-                                  color: avatarAccent,
-                                  size: isMinimalist ? 16 : 20,
-                                )
-                              : null,
-                        ),
                 ),
               ),
             ),
@@ -207,7 +217,9 @@ class _StreamlinedProfileModalSheetState
   void initState() {
     super.initState();
     _prefs = widget.initialPrefs;
-    unawaited(_loadWearStatus());
+    if (isAndroidPlatform) {
+      unawaited(_loadWearStatus());
+    }
     unawaited(_loadSchoolYearPreview());
   }
 
@@ -227,6 +239,7 @@ class _StreamlinedProfileModalSheetState
   }
 
   Future<void> _loadWearStatus() async {
+    if (!isAndroidPlatform) return;
     final status = await _wearService.getConnectionStatus();
     if (!mounted) return;
     setState(() => _wearStatus = status);
@@ -758,36 +771,42 @@ class _StreamlinedProfileModalSheetState
                                   buildBoomerangBadgeHeroShuttle,
                               child: Material(
                                 type: MaterialType.transparency,
-                                child: Container(
-                                  padding: const EdgeInsets.all(3),
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: avatarAccent,
-                                      width: 2.5,
+                                child: SizedBox.square(
+                                  dimension: 91,
+                                  child: FittedBox(
+                                    fit: BoxFit.contain,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(3),
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: avatarAccent,
+                                          width: 2.5,
+                                        ),
+                                      ),
+                                      child: isDemo
+                                          ? DemoStudentAvatar(
+                                              size: 80,
+                                              accentColor: avatarAccent,
+                                              showClassBadge: true,
+                                            )
+                                          : CircleAvatar(
+                                              radius: 40,
+                                              backgroundColor: avatarAccent
+                                                  .withValues(alpha: 0.2),
+                                              backgroundImage: photoFile != null
+                                                  ? FileImage(photoFile)
+                                                  : null,
+                                              child: photoFile == null
+                                                  ? Icon(
+                                                      Icons.person_rounded,
+                                                      color: avatarAccent,
+                                                      size: 40,
+                                                    )
+                                                  : null,
+                                            ),
                                     ),
                                   ),
-                                  child: isDemo
-                                      ? DemoStudentAvatar(
-                                          size: 80,
-                                          accentColor: avatarAccent,
-                                          showClassBadge: true,
-                                        )
-                                      : CircleAvatar(
-                                          radius: 40,
-                                          backgroundColor: avatarAccent
-                                              .withValues(alpha: 0.2),
-                                          backgroundImage: photoFile != null
-                                              ? FileImage(photoFile)
-                                              : null,
-                                          child: photoFile == null
-                                              ? Icon(
-                                                  Icons.person_rounded,
-                                                  color: avatarAccent,
-                                                  size: 40,
-                                                )
-                                              : null,
-                                        ),
                                 ),
                               ),
                             ),
@@ -883,7 +902,7 @@ class _StreamlinedProfileModalSheetState
                   ),
                 ],
                 const SizedBox(height: 16),
-              if (_wearStatus.isConnected) ...[
+              if (isAndroidPlatform && _wearStatus.isConnected) ...[
                 Container(
                   key: const ValueKey<String>('profile-wear-sync-card'),
                   padding: const EdgeInsets.symmetric(
@@ -1182,10 +1201,10 @@ class _StreamlinedProfileModalSheetState
   }
 }
 
-/// Fades/scales in the small camera icon badge only once the Hero profile
-/// avatar has landed, and hides it immediately on route reverse so it never
-/// glitches or overlaps during the Hero flight animation.
-class _DeferredCameraBadge extends StatelessWidget {
+/// Fades/scales in the small camera icon badge ONLY after the route transition
+/// (and Hero profile avatar flight) completes, and hides it immediately on
+/// route reverse so it never glitches, detaches, or distorts during Hero flight.
+class _DeferredCameraBadge extends StatefulWidget {
   final Color backgroundColor;
   final Color iconColor;
   final Color borderColor;
@@ -1197,44 +1216,105 @@ class _DeferredCameraBadge extends StatelessWidget {
   });
 
   @override
+  State<_DeferredCameraBadge> createState() => _DeferredCameraBadgeState();
+}
+
+class _DeferredCameraBadgeState extends State<_DeferredCameraBadge>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _revealCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 160),
+  );
+  Animation<double>? _routeAnim;
+  bool _routeOffstage = false;
+
+  bool get _isRouteReady {
+    if (_routeOffstage) return false;
+    final anim = _routeAnim;
+    if (anim == null) return true;
+    return anim.status == AnimationStatus.completed && anim.value >= 0.9999;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    final nextAnim = route?.animation;
+    _routeOffstage = route?.offstage ?? false;
+    if (_routeAnim != nextAnim) {
+      _routeAnim?.removeStatusListener(_onRouteStatusChanged);
+      _routeAnim?.removeListener(_onRouteValueChanged);
+      _routeAnim = nextAnim;
+      _routeAnim?.addStatusListener(_onRouteStatusChanged);
+      _routeAnim?.addListener(_onRouteValueChanged);
+    }
+    _syncRevealToRoute();
+  }
+
+  void _onRouteStatusChanged(AnimationStatus _) => _syncRevealToRoute();
+
+  void _onRouteValueChanged() => _syncRevealToRoute();
+
+  void _syncRevealToRoute() {
+    if (!mounted) return;
+    if (_isRouteReady) {
+      if (_routeAnim == null) {
+        _revealCtrl.value = 1.0;
+      } else if (!_revealCtrl.isCompleted && !_revealCtrl.isAnimating) {
+        _revealCtrl.forward(from: 0.0);
+      }
+    } else if (_revealCtrl.isAnimating || _revealCtrl.value != 0.0) {
+      _revealCtrl.reset();
+    }
+  }
+
+  @override
+  void dispose() {
+    _routeAnim?.removeStatusListener(_onRouteStatusChanged);
+    _routeAnim?.removeListener(_onRouteValueChanged);
+    _revealCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final routeAnim = ModalRoute.of(context)?.animation;
     final badge = Container(
       key: const ValueKey<String>('profile-avatar-camera-badge'),
       padding: const EdgeInsets.all(6),
       decoration: BoxDecoration(
-        color: backgroundColor,
+        color: widget.backgroundColor,
         shape: BoxShape.circle,
         border: Border.all(
-          color: borderColor,
+          color: widget.borderColor,
           width: 2,
         ),
       ),
       child: Icon(
         Icons.photo_camera_rounded,
         size: 14,
-        color: iconColor,
+        color: widget.iconColor,
       ),
     );
+    final route = ModalRoute.of(context);
+    _routeOffstage = route?.offstage ?? false;
+    final routeAnim = _routeAnim;
     if (routeAnim == null) {
       return badge;
     }
     return AnimatedBuilder(
-      animation: routeAnim,
+      animation: Listenable.merge([routeAnim, _revealCtrl]),
       builder: (context, child) {
-        if (routeAnim.status == AnimationStatus.reverse) {
+        if (!_isRouteReady) {
           return const SizedBox.shrink();
         }
-        final raw = routeAnim.value.clamp(0.0, 1.0);
-        final progress = ((raw - 0.72) / 0.28).clamp(0.0, 1.0);
-        if (progress <= 0.0) {
+        final t = _revealCtrl.value.clamp(0.0, 1.0);
+        if (t <= 0.001) {
           return const SizedBox.shrink();
         }
-        final scale = Curves.easeOutBack.transform(progress);
         return Opacity(
-          opacity: Curves.easeOutCubic.transform(progress),
+          opacity: Curves.easeOutCubic.transform(t),
           child: Transform.scale(
-            scale: scale,
+            scale: Curves.easeOutBack.transform(t),
             child: child,
           ),
         );

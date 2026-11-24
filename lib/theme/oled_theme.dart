@@ -1,9 +1,11 @@
 import 'dart:ui' as ui;
 
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/token_storage_service.dart';
+import '../utils/platform_support.dart';
 import '../widgets/animation_helpers.dart';
 
 /// Architectural studio and vector backdrop presets supported in Tinta Napló.
@@ -439,25 +441,41 @@ class OledTheme {
   static ThemeData buildTheme({
     UserProfilePrefs prefs = const UserProfilePrefs(),
     ColorScheme? dynamicScheme,
+    Brightness? platformBrightness,
   }) {
-    final activePreset = BackgroundPresetInfo.resolve(prefs);
-    final hasAnimated = prefs.hasAnimatedBackdrop;
+    var effectivePrefs = prefs.effectiveForPlatform();
+    if (isIOSPlatform && effectivePrefs.followSystemTheme) {
+      final sysBrightness = platformBrightness ??
+          ui.PlatformDispatcher.instance.platformBrightness;
+      effectivePrefs = effectivePrefs.copyWith(
+        themeStyle: sysBrightness == Brightness.light
+            ? AppThemeStyle.light
+            : AppThemeStyle.oledPureBlack,
+      );
+    }
+    final activePreset = BackgroundPresetInfo.resolve(effectivePrefs);
+    final hasAnimated = effectivePrefs.hasAnimatedBackdrop;
     final hasStudioOrCustomBackdrop =
-        hasAnimated || prefs.hasCustomBackdrop || activePreset.id != 'pure_oled';
-    final contrast = AdaptiveContrastTokens.resolve(prefs);
+        hasAnimated ||
+        effectivePrefs.hasCustomBackdrop ||
+        activePreset.id != 'pure_oled';
+    final contrast = AdaptiveContrastTokens.resolve(effectivePrefs);
     final isLight = hasStudioOrCustomBackdrop
         ? contrast.isLightBackdrop
-        : (prefs.themeStyle == AppThemeStyle.light);
-    final isOled = !isLight && prefs.themeStyle == AppThemeStyle.oledPureBlack;
+        : (effectivePrefs.themeStyle == AppThemeStyle.light);
+    final isOled =
+        !isLight && effectivePrefs.themeStyle == AppThemeStyle.oledPureBlack;
     final brightness = isLight ? Brightness.light : Brightness.dark;
-    final skin = prefs.customSkinConfig;
+    final skin = effectivePrefs.customSkinConfig;
     final seedColor = skin.enabled && skin.accent != null
         ? skin.accent!
-        : (prefs.uwuModeEnabled ? uwuPastelPink : Color(prefs.seedColorValue));
+        : (effectivePrefs.uwuModeEnabled
+            ? uwuPastelPink
+            : Color(effectivePrefs.seedColorValue));
 
     ColorScheme baseScheme;
-    if (!prefs.uwuModeEnabled &&
-        prefs.useDynamicColor &&
+    if (!effectivePrefs.uwuModeEnabled &&
+        effectivePrefs.useDynamicColor &&
         dynamicScheme != null &&
         dynamicScheme.brightness == brightness) {
       baseScheme = dynamicScheme;
@@ -473,10 +491,11 @@ class OledTheme {
     final Color elevatedBg;
     final Color borderColor;
 
-    final isNavy = !hasAnimated && isOled && prefs.backgroundPreset == 'brand_navy';
+    final isNavy =
+        !hasAnimated && isOled && effectivePrefs.backgroundPreset == 'brand_navy';
     if (hasStudioOrCustomBackdrop && !isNavy) {
       scaffoldBg = hasAnimated
-          ? prefs.animatedBackdropPreset.baseColor
+          ? effectivePrefs.animatedBackdropPreset.baseColor
           : activePreset.gradientColors.first;
       cardBg = contrast.cardFill.withValues(alpha: 1.0);
       elevatedBg = isLight
@@ -488,11 +507,12 @@ class OledTheme {
         onSurface: contrast.primaryText,
         onSurfaceVariant: contrast.secondaryText,
         outlineVariant: contrast.cardBorder,
-        primary: prefs.uwuModeEnabled
+        primary: effectivePrefs.uwuModeEnabled
             ? (isLight ? const Color(0xFFD81B60) : uwuPastelPink)
             : baseScheme.primary,
-        secondary:
-            prefs.uwuModeEnabled ? uwuPastelLavender : baseScheme.secondary,
+        secondary: effectivePrefs.uwuModeEnabled
+            ? uwuPastelLavender
+            : baseScheme.secondary,
         surfaceContainerLowest: scaffoldBg,
         surfaceContainerLow: cardBg,
         surfaceContainer: cardBg,
@@ -501,21 +521,21 @@ class OledTheme {
       );
     } else if (isOled) {
       scaffoldBg = isNavy ? const Color(0xFF0B1E28) : pureBlack;
-      cardBg = prefs.uwuModeEnabled
+      cardBg = effectivePrefs.uwuModeEnabled
           ? const Color(0xFF19121B)
           : (isNavy ? const Color(0xFF112A37) : surfaceDark);
-      elevatedBg = prefs.uwuModeEnabled
+      elevatedBg = effectivePrefs.uwuModeEnabled
           ? const Color(0xFF241928)
           : (isNavy ? const Color(0xFF173545) : surfaceElevated);
-      borderColor = prefs.uwuModeEnabled
+      borderColor = effectivePrefs.uwuModeEnabled
           ? uwuPastelPink.withValues(alpha: 0.42)
           : borderSubtle;
       baseScheme = baseScheme.copyWith(
         surface: scaffoldBg,
         onSurface: Colors.white,
-        primary: prefs.uwuModeEnabled ? uwuPastelPink : baseScheme.primary,
+        primary: effectivePrefs.uwuModeEnabled ? uwuPastelPink : baseScheme.primary,
         secondary:
-            prefs.uwuModeEnabled ? uwuPastelLavender : baseScheme.secondary,
+            effectivePrefs.uwuModeEnabled ? uwuPastelLavender : baseScheme.secondary,
         surfaceContainerLowest: scaffoldBg,
         surfaceContainerLow: cardBg,
         surfaceContainer: cardBg,
@@ -524,20 +544,23 @@ class OledTheme {
       );
     } else if (!isLight) {
       // Standard Material 3 Dark
-      scaffoldBg =
-          prefs.uwuModeEnabled ? const Color(0xFF1A141F) : const Color(0xFF14161A);
-      cardBg =
-          prefs.uwuModeEnabled ? const Color(0xFF251C2C) : const Color(0xFF1E2128);
-      elevatedBg =
-          prefs.uwuModeEnabled ? const Color(0xFF31253B) : const Color(0xFF282C35);
-      borderColor = prefs.uwuModeEnabled
+      scaffoldBg = effectivePrefs.uwuModeEnabled
+          ? const Color(0xFF1A141F)
+          : const Color(0xFF14161A);
+      cardBg = effectivePrefs.uwuModeEnabled
+          ? const Color(0xFF251C2C)
+          : const Color(0xFF1E2128);
+      elevatedBg = effectivePrefs.uwuModeEnabled
+          ? const Color(0xFF31253B)
+          : const Color(0xFF282C35);
+      borderColor = effectivePrefs.uwuModeEnabled
           ? uwuPastelPink.withValues(alpha: 0.45)
           : const Color(0xFF363B47);
       baseScheme = baseScheme.copyWith(
         surface: scaffoldBg,
-        primary: prefs.uwuModeEnabled ? uwuPastelPink : baseScheme.primary,
+        primary: effectivePrefs.uwuModeEnabled ? uwuPastelPink : baseScheme.primary,
         secondary:
-            prefs.uwuModeEnabled ? uwuPastelLavender : baseScheme.secondary,
+            effectivePrefs.uwuModeEnabled ? uwuPastelLavender : baseScheme.secondary,
         surfaceContainerLow: cardBg,
         surfaceContainer: cardBg,
         surfaceContainerHigh: elevatedBg,
@@ -545,18 +568,20 @@ class OledTheme {
       );
     } else {
       // Material 3 Light
-      scaffoldBg =
-          prefs.uwuModeEnabled ? const Color(0xFFFFF5FA) : const Color(0xFFF4F6F8);
+      scaffoldBg = effectivePrefs.uwuModeEnabled
+          ? const Color(0xFFFFF5FA)
+          : const Color(0xFFF4F6F8);
       cardBg = Colors.white;
-      elevatedBg =
-          prefs.uwuModeEnabled ? const Color(0xFFFCE8F3) : const Color(0xFFEFF2F6);
-      borderColor = prefs.uwuModeEnabled
+      elevatedBg = effectivePrefs.uwuModeEnabled
+          ? const Color(0xFFFCE8F3)
+          : const Color(0xFFEFF2F6);
+      borderColor = effectivePrefs.uwuModeEnabled
           ? uwuPastelPink.withValues(alpha: 0.45)
           : Colors.black.withValues(alpha: 0.06);
       const lightInk = Color(0xFF0F172A);
       const lightSlate = Color(0xFF64748B);
       final effectivePrimary =
-          prefs.uwuModeEnabled ? const Color(0xFFD81B60) : baseScheme.primary;
+          effectivePrefs.uwuModeEnabled ? const Color(0xFFD81B60) : baseScheme.primary;
       final lightSecondaryContainer = Color.alphaBlend(
         effectivePrimary.withValues(alpha: 0.14),
         Colors.white,
@@ -574,7 +599,7 @@ class OledTheme {
         outline: Colors.black.withValues(alpha: 0.14),
         primary: effectivePrimary,
         secondary:
-            prefs.uwuModeEnabled ? uwuPastelLavender : baseScheme.secondary,
+            effectivePrefs.uwuModeEnabled ? uwuPastelLavender : baseScheme.secondary,
         secondaryContainer: lightSecondaryContainer,
         onSecondaryContainer: lightOnSecondaryContainer,
         surfaceContainerLowest: scaffoldBg,
@@ -594,7 +619,7 @@ class OledTheme {
         skin.enabled ? (skin.surface ?? elevatedBg) : elevatedBg;
     final Color resolvedBorderColor =
         skin.enabled ? (skin.borderColor ?? borderColor) : borderColor;
-    final bool isMinimalist = prefs.minimalistModeEnabled;
+    final bool isMinimalist = effectivePrefs.minimalistModeEnabled;
     final BorderRadius effectiveCardRadius =
         skin.enabled && skin.cardRadius != null
             ? BorderRadius.circular(skin.cardRadius!)
@@ -634,9 +659,9 @@ class OledTheme {
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: SmoothSharedAxisTransitionsBuilder(),
-          TargetPlatform.iOS: SmoothSharedAxisTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
           TargetPlatform.linux: SmoothSharedAxisTransitionsBuilder(),
-          TargetPlatform.macOS: SmoothSharedAxisTransitionsBuilder(),
+          TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
           TargetPlatform.windows: SmoothSharedAxisTransitionsBuilder(),
         },
       ),

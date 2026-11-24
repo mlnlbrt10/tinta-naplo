@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/kreta_auth_config.dart';
 import '../theme/custom_skin_config.dart';
+import '../utils/platform_support.dart';
 import '../utils/uwu_helper.dart';
 
 /// Supported visual theme styles in Tinta Napló.
@@ -345,17 +346,18 @@ class UserProfilePrefs {
   static CustomSkinConfig activeCustomSkin = const CustomSkinConfig();
 
   static void syncActiveGlobals(UserProfilePrefs prefs) {
-    activeModalCloseMode = prefs.modalCloseMode;
-    activeLiquidGlassEnabled = prefs.liquidGlassEnabled;
-    activeLiquidGlassMode = prefs.liquidGlassMode;
-    activeSoftBlurSigma = prefs.cardBlurSigma;
-    activeMinimalistModeEnabled = prefs.minimalistModeEnabled;
-    activeDemoModeEnabled = prefs.demoModeEnabled;
-    activeFitymaModeEnabled = prefs.fitymaModeEnabled;
-    globalAppIconAsset = prefs.activeAppIconAsset;
-    activeCustomSkin = prefs.customSkinConfig;
-    UwuHelper.isEnabled = prefs.uwuModeEnabled;
-    UwuHelper.isFitymaEnabled = prefs.fitymaModeEnabled;
+    final effective = prefs.effectiveForPlatform();
+    activeModalCloseMode = effective.modalCloseMode;
+    activeLiquidGlassEnabled = effective.liquidGlassEnabled;
+    activeLiquidGlassMode = effective.liquidGlassMode;
+    activeSoftBlurSigma = effective.cardBlurSigma;
+    activeMinimalistModeEnabled = effective.minimalistModeEnabled;
+    activeDemoModeEnabled = effective.demoModeEnabled;
+    activeFitymaModeEnabled = effective.fitymaModeEnabled;
+    globalAppIconAsset = effective.activeAppIconAsset;
+    activeCustomSkin = effective.customSkinConfig;
+    UwuHelper.isEnabled = effective.uwuModeEnabled;
+    UwuHelper.isFitymaEnabled = effective.fitymaModeEnabled;
   }
 
   static bool _parseBool(dynamic value) => value == true || value == 'true';
@@ -522,6 +524,37 @@ class UserProfilePrefs {
 
   UserProfilePrefs withFitymaMode(bool enabled) =>
       withExtra('fitymaModeEnabled', enabled);
+
+  /// Appearance: On iOS, defaults to following system Light/Dark mode unless the
+  /// user explicitly chooses Dark or Light.
+  bool get followSystemTheme =>
+      (extras['followSystemTheme'] as bool?) ?? isIOSPlatform;
+
+  UserProfilePrefs withFollowSystemTheme(bool enabled) =>
+      withExtra('followSystemTheme', enabled);
+
+  /// Enforces platform-native UI constraints (strict Liquid Glass lock on iOS)
+  /// without mutating Android preferences.
+  UserProfilePrefs effectiveForPlatform() {
+    if (!isIOSPlatform) return this;
+    final sanitizedExtras = Map<String, dynamic>.from(extras);
+    sanitizedExtras['minimalistModeEnabled'] = false;
+    sanitizedExtras['customSkinEnabled'] = false;
+    sanitizedExtras['fitymaModeEnabled'] = false;
+    sanitizedExtras['liveActivityEnabled'] = false;
+    return copyWith(
+      useDynamicColor: false,
+      liquidGlassEnabled: true,
+      liquidGlassMode: LiquidGlassMode.classicFrost,
+      animatedBackdropPreset: AnimatedBackdropPreset.off,
+      backgroundPreset: 'pure_oled',
+      clearCustomBackdropPath: true,
+      cardOpacity: 0.9,
+      cardBlurSigma: 4.0,
+      appIconPreset: 'default',
+      extras: sanitizedExtras,
+    );
+  }
 
   /// Appearance: "Fun üdvözlő üzenetek" playful greeting pool toggle.
   bool get funGreetingsEnabled => extras['funGreetingsEnabled'] == true;
@@ -1633,6 +1666,9 @@ class TokenStorageService {
       : _storage = storage ??
             const FlutterSecureStorage(
               aOptions: AndroidOptions(encryptedSharedPreferences: true),
+              iOptions: IOSOptions(
+                accessibility: KeychainAccessibility.first_unlock_this_device,
+              ),
             );
 
   Future<void> _saveSessionBackupToSharedPrefs(StoredSession session) async {

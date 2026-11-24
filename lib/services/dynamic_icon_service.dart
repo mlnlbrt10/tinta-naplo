@@ -1,6 +1,6 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../utils/platform_support.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 import 'token_storage_service.dart';
 
@@ -26,7 +26,7 @@ class DynamicIconService {
   /// (`default` / `icon_normal`, `classic`, `icon_oled`, `icon_christmas`,
   /// `icon_christmas_oled`, or `icon_fityma`).
   static Future<String?> setAppIcon(String iconId) async {
-    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+    if (!isAndroidPlatform) {
       _lastSyncedIconId = iconId;
       return null;
     }
@@ -71,7 +71,7 @@ class DynamicIconService {
 
   /// Queries the currently enabled `<activity-alias>` from the Android PackageManager.
   static Future<String?> getActiveAlias() async {
-    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+    if (!isAndroidPlatform) {
       return null;
     }
     try {

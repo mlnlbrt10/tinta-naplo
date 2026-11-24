@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
+import '../utils/platform_support.dart';
 import '../utils/uwu_helper.dart';
 import '../widgets/animation_helpers.dart';
 import '../widgets/frosted_inspection_modal.dart';
@@ -190,9 +191,11 @@ class GitHubUpdaterService {
       final response = await client
           .get(
             Uri.parse(latestReleaseApiUrl),
-            headers: const {
+            headers: {
               'Accept': 'application/vnd.github+json',
-              'User-Agent': 'TintaNaplo-Android-Updater',
+              'User-Agent': isIOSPlatform
+                  ? 'TintaNaplo-iOS-Updater'
+                  : 'TintaNaplo-Android-Updater',
             },
           )
           .timeout(const Duration(seconds: 8));
@@ -357,9 +360,11 @@ class GitHubUpdaterService {
       final response = await client
           .get(
             Uri.parse(latestReleaseApiUrl),
-            headers: const {
+            headers: {
               'Accept': 'application/vnd.github+json',
-              'User-Agent': 'TintaNaplo-Android-Updater',
+              'User-Agent': isIOSPlatform
+                  ? 'TintaNaplo-iOS-Updater'
+                  : 'TintaNaplo-Android-Updater',
             },
           )
           .timeout(const Duration(seconds: 12));
@@ -564,6 +569,10 @@ class _FrostedUpdateDialogContentState
   }
 
   Future<void> _startOtaUpdate() async {
+    if (isIOSPlatform) {
+      await _openFallbackUrl(widget.release.htmlUrl);
+      return;
+    }
     final apkUrl = widget.release.apkDownloadUrl;
     if (apkUrl == null || apkUrl.isEmpty) {
       await _openFallbackUrl(widget.release.htmlUrl);
@@ -690,6 +699,10 @@ class _FrostedUpdateDialogContentState
   }
 
   Future<void> _invokeAndroidInstaller(String apkPath, String apkUrl) async {
+    if (!isAndroidPlatform) {
+      await _openFallbackUrl(widget.release.htmlUrl);
+      return;
+    }
     if (!mounted) return;
     setState(() {
       _isDownloading = true;
@@ -1002,8 +1015,10 @@ class _FrostedUpdateDialogContentState
                               onTap: _startOtaUpdate,
                               child: Container(
                                 alignment: Alignment.center,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 14,
+                                ),
                                 decoration: BoxDecoration(
                                   color: scheme.primary,
                                   borderRadius: BorderRadius.circular(22),
@@ -1012,22 +1027,32 @@ class _FrostedUpdateDialogContentState
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
                                     Icon(
-                                      _downloadFailed
-                                          ? Icons.refresh_rounded
-                                          : Icons.download_rounded,
+                                      isIOSPlatform
+                                          ? Icons.open_in_new_rounded
+                                          : (_downloadFailed
+                                              ? Icons.refresh_rounded
+                                              : Icons.download_rounded),
                                       size: 18,
                                       color: scheme.onPrimary,
                                     ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      uwu(
-                                        _downloadFailed
-                                            ? 'Újrapróbálás'
-                                            : 'Frissítés most',
-                                      ),
-                                      style: TextStyle(
-                                        color: scheme.onPrimary,
-                                        fontWeight: FontWeight.w900,
+                                    const SizedBox(width: 6),
+                                    Flexible(
+                                      child: FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        child: Text(
+                                          uwu(
+                                            isIOSPlatform
+                                                ? 'Kiadás megnyitása'
+                                                : (_downloadFailed
+                                                    ? 'Újrapróbálás'
+                                                    : 'Frissítés most'),
+                                          ),
+                                          maxLines: 1,
+                                          style: TextStyle(
+                                            color: scheme.onPrimary,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ],

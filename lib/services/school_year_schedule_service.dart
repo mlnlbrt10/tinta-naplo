@@ -378,7 +378,7 @@ class SchoolYearSchedule {
 
   factory SchoolYearSchedule.fromJson(Map<String, dynamic> json) {
     final rawEvents = json['events'];
-    final list = <SchoolYearEvent>[];
+    var list = <SchoolYearEvent>[];
     if (rawEvents is List) {
       for (final item in rawEvents) {
         if (item is Map) {
@@ -386,6 +386,7 @@ class SchoolYearSchedule {
         }
       }
     }
+    list = SchoolYearScheduleService.mergeConsecutiveScheduleEvents(list);
     list.sort((a, b) => a.startDate.compareTo(b.startDate));
     return SchoolYearSchedule(
       schoolYearLabel: (json['schoolYearLabel'] ?? '').toString(),
@@ -979,16 +980,27 @@ class SchoolYearScheduleService {
     SchoolYearSchedule base,
     List<SchoolYearEvent> customEvents,
   ) {
-    final cleanedBase = base.events
-        .where(
-          (e) =>
-              e.effectiveSource == SchoolYearEventSource.national ||
-              e.isCustom ||
-              !isNoiseOrBoilerplateTitle(e.title),
-        )
-        .toList();
+    final cleanedBase = mergeConsecutiveScheduleEvents(
+      base.events
+          .where(
+            (e) =>
+                e.effectiveSource == SchoolYearEventSource.national ||
+                e.isCustom ||
+                !isNoiseOrBoilerplateTitle(e.title),
+          )
+          .toList(),
+    );
     if (customEvents.isEmpty && cleanedBase.length == base.events.length) {
-      return base;
+      var changed = false;
+      for (int i = 0; i < cleanedBase.length; i++) {
+        if (cleanedBase[i].startDate != base.events[i].startDate ||
+            cleanedBase[i].endDate != base.events[i].endDate ||
+            cleanedBase[i].id != base.events[i].id) {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) return base;
     }
     final byId = <String, SchoolYearEvent>{
       for (final e in cleanedBase) e.id: e,
@@ -1741,7 +1753,8 @@ class SchoolYearScheduleService {
         combined.add(nat);
       }
     }
-    combined.sort((a, b) => a.startDate.compareTo(b.startDate));
+    final mergedCombined = mergeConsecutiveScheduleEvents(combined);
+    mergedCombined.sort((a, b) => a.startDate.compareTo(b.startDate));
     return SchoolYearSchedule(
       schoolYearLabel: '$startYear/${startYear + 1}',
       schoolName: schoolName,
@@ -1750,7 +1763,7 @@ class SchoolYearScheduleService {
       icsUrl: icsUrl,
       sourceLabel: sourceLabel,
       fetchedAt: fetchedAt,
-      events: combined,
+      events: mergedCombined,
     );
   }
 
@@ -1908,8 +1921,104 @@ class SchoolYearScheduleService {
       }
     }
 
-    events.sort((a, b) => a.startDate.compareTo(b.startDate));
-    return events;
+    final merged = mergeConsecutiveScheduleEvents(events);
+    merged.sort((a, b) => a.startDate.compareTo(b.startDate));
+    return merged;
+  }
+
+  /// Merges consecutive or overlapping non-custom schedule events that share the
+  /// same break/holiday/event name (within 1 calendar day of each other) into a
+  /// single event spanning `min(startDate) – max(endDate)`.
+  static List<SchoolYearEvent> mergeConsecutiveScheduleEvents(
+    List<SchoolYearEvent> events,
+  ) {
+    if (events.length <= 1) return List<SchoolYearEvent>.from(events);
+    final sorted = List<SchoolYearEvent>.from(events)
+      ..sort((a, b) {
+        final sCmp = DateUtils.dateOnly(a.startDate)
+            .compareTo(DateUtils.dateOnly(b.startDate));
+        if (sCmp != 0) return sCmp;
+        return DateUtils.dateOnly(a.endDate)
+            .compareTo(DateUtils.dateOnly(b.endDate));
+      });
+
+    final merged = <SchoolYearEvent>[];
+    final lastIdxByKey = <String, int>{};
+
+    for (final next in sorted) {
+      final normTitle =
+          _normalizeHu(next.title).replaceAll(RegExp(r'\s+'), ' ').trim();
+      final nextStart = DateUtils.dateOnly(next.startDate.toLocal());
+      final nextEnd = DateUtils.dateOnly(next.endDate.toLocal());
+      final effectiveNextEnd = nextEnd.isBefore(nextStart) ? nextStart : nextEnd;
+
+      if (next.isCustom || normTitle.isEmpty) {
+        merged.add(next);
+        continue;
+      }
+
+      final key = '$normTitle|${next.category.name}';
+      final prevIdx = lastIdxByKey[key];
+      if (prevIdx == null) {
+        lastIdxByKey[key] = merged.length;
+        merged.add(next);
+        continue;
+      }
+
+      final prev = merged[prevIdx];
+      final prevStart = DateUtils.dateOnly(prev.startDate.toLocal());
+      final prevEnd = DateUtils.dateOnly(prev.endDate.toLocal());
+      final prevEndUtc = DateTime.utc(prevEnd.year, prevEnd.month, prevEnd.day);
+      final nextStartUtc =
+          DateTime.utc(nextStart.year, nextStart.month, nextStart.day);
+      final gapDays = nextStartUtc.difference(prevEndUtc).inDays;
+
+      if (gapDays <= 1) {
+        final mergedStart = prevStart.isBefore(nextStart) ? prevStart : nextStart;
+        final mergedEnd =
+            prevEnd.isAfter(effectiveNextEnd) ? prevEnd : effectiveNextEnd;
+        final prevDesc = prev.description?.trim();
+        final nextDesc = next.description?.trim();
+        // Drop redundant raw scraped line descriptions if they only echoed the
+        // single-day date alongside the title (e.g. "2027.01.03. • Téli szünet").
+        String? resolvedDesc;
+        if (prevDesc != null &&
+            prevDesc.isNotEmpty &&
+            !RegExp(r'\d{4}[.\-]\s*\d{1,2}[.\-]\s*\d{1,2}')
+                .hasMatch(prevDesc) &&
+            !RegExp(r'^\d{1,2}\.\s*\d{1,2}\.').hasMatch(prevDesc)) {
+          resolvedDesc = prevDesc;
+        } else if (nextDesc != null &&
+            nextDesc.isNotEmpty &&
+            !RegExp(r'\d{4}[.\-]\s*\d{1,2}[.\-]\s*\d{1,2}')
+                .hasMatch(nextDesc) &&
+            !RegExp(r'^\d{1,2}\.\s*\d{1,2}\.').hasMatch(nextDesc)) {
+          resolvedDesc = nextDesc;
+        }
+        final resolvedSource =
+            prev.source == SchoolYearEventSource.national ||
+                    next.source == SchoolYearEventSource.national
+                ? SchoolYearEventSource.national
+                : prev.source;
+
+        merged[prevIdx] = SchoolYearEvent(
+          id: prev.id,
+          title: prev.title,
+          startDate: mergedStart,
+          endDate: mergedEnd,
+          type: prev.type,
+          description: resolvedDesc,
+          isCustom: false,
+          source: resolvedSource,
+          categoryOverride: prev.categoryOverride ?? next.categoryOverride,
+        );
+      } else {
+        lastIdxByKey[key] = merged.length;
+        merged.add(next);
+      }
+    }
+
+    return merged;
   }
 
   static DateTime? _parseIcsDate(String raw) {
@@ -2045,13 +2154,22 @@ class SchoolYearScheduleService {
           : null;
       final combined = nextLine != null ? '$line $nextLine' : line;
 
-      final lineRange = _extractDateRangeWithSpan(line, startYear);
+      final lineRange = _extractDateRangeWithSpan(line, startYear) ??
+          (_classifyLine(line, startYear: startYear) != null
+              ? _extractShortNumericDateRangeWithSpan(line, startYear)
+              : null);
       final nextLineSelfHasDateAndLabel = nextLine != null &&
-          _extractDateRangeWithSpan(nextLine, startYear) != null &&
+          (_extractDateRangeWithSpan(nextLine, startYear) != null ||
+              (_classifyLine(nextLine, startYear: startYear) != null &&
+                  _extractShortNumericDateRangeWithSpan(nextLine, startYear) !=
+                      null)) &&
           (_classifyLine(nextLine, startYear: startYear) != null ||
               nextLine.startsWith('•'));
       final combinedRange = (lineRange == null && !nextLineSelfHasDateAndLabel)
-          ? _extractDateRangeWithSpan(combined, startYear)
+          ? (_extractDateRangeWithSpan(combined, startYear) ??
+              (_classifyLine(combined, startYear: startYear) != null
+                  ? _extractShortNumericDateRangeWithSpan(combined, startYear)
+                  : null))
           : null;
       final range = lineRange ??
           (combinedRange == null
@@ -2105,8 +2223,60 @@ class SchoolYearScheduleService {
       );
     }
 
-    events.sort((a, b) => a.startDate.compareTo(b.startDate));
-    return events;
+    final merged = mergeConsecutiveScheduleEvents(events);
+    merged.sort((a, b) => a.startDate.compareTo(b.startDate));
+    return merged;
+  }
+
+  static ({
+    DateTime start,
+    DateTime end,
+    int matchStart,
+    int matchEnd,
+    bool fromCombined,
+  })? _extractShortNumericDateRangeWithSpan(String text, int startYear) {
+    final norm = _normalizeHu(text);
+    final shortRange = RegExp(
+      r'\b(0?[1-9]|1[0-2])\.\s*(0?[1-9]|[12]\d|3[01])\.?\s*[-–—]\s*(?:(0?[1-9]|1[0-2])\.\s*)?(0?[1-9]|[12]\d|3[01])\.?',
+    ).firstMatch(norm);
+    if (shortRange != null) {
+      final m1 = int.parse(shortRange.group(1)!);
+      final d1 = int.parse(shortRange.group(2)!);
+      final y1 = m1 >= 9 ? startYear : startYear + 1;
+      final m2 = int.tryParse(shortRange.group(3) ?? '') ?? m1;
+      final d2 = int.parse(shortRange.group(4)!);
+      final y2 = m2 < m1 ? y1 + 1 : (m2 >= 9 ? startYear : startYear + 1);
+      final start = _safeDate(y1, m1, d1);
+      final end = _safeDate(y2, m2, d2);
+      if (start != null && end != null) {
+        return (
+          start: start,
+          end: end,
+          matchStart: shortRange.start,
+          matchEnd: shortRange.end,
+          fromCombined: false,
+        );
+      }
+    }
+    final shortSingle = RegExp(
+      r'\b(0?[1-9]|1[0-2])\.\s*(0?[1-9]|[12]\d|3[01])\.',
+    ).firstMatch(norm);
+    if (shortSingle != null) {
+      final m = int.parse(shortSingle.group(1)!);
+      final d = int.parse(shortSingle.group(2)!);
+      final y = m >= 9 ? startYear : startYear + 1;
+      final dt = _safeDate(y, m, d);
+      if (dt != null) {
+        return (
+          start: dt,
+          end: dt,
+          matchStart: shortSingle.start,
+          matchEnd: shortSingle.end,
+          fromCombined: false,
+        );
+      }
+    }
+    return null;
   }
 
   static ({String title, SchoolYearEventType type, bool isNational})?

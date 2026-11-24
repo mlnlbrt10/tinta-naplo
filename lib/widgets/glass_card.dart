@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import '../providers/app_providers.dart';
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
+import '../utils/platform_support.dart';
 
 /// Resolves whether Settings "Liquid Glass" is active and enables glassmorphic
 /// `BackdropFilter` surfaces and fluid droplet slider physics.
 bool resolveLiquidGlassEnabled([UserProfilePrefs? prefs]) {
+  if (isIOSPlatform) return true;
   return prefs?.liquidGlassEnabled ?? UserProfilePrefs.activeLiquidGlassEnabled;
 }
 
@@ -17,6 +19,7 @@ bool resolveSoftBlurEnabled([UserProfilePrefs? prefs]) =>
     resolveLiquidGlassEnabled(prefs);
 
 double resolveSoftBlurBackdropSigma([UserProfilePrefs? prefs]) {
+  if (isIOSPlatform) return 10.0;
   final skin = prefs?.customSkinConfig ?? UserProfilePrefs.activeCustomSkin;
   if (skin.enabled && skin.glassBlur != null) {
     return skin.glassBlur!;

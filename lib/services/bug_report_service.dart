@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../theme/oled_theme.dart';
+import '../utils/platform_support.dart';
 import '../utils/uwu_helper.dart';
 import 'token_storage_service.dart';
 
@@ -128,21 +130,30 @@ class BugReportService {
     UserProfilePrefs prefs, {
     Brightness? platformBrightness,
   }) {
-    final styleLabel = switch (prefs.themeStyle) {
+    final effective = prefs.effectiveForPlatform();
+    if (isIOSPlatform) {
+      final modeLabel = effective.followSystemTheme
+          ? 'Rendszer'
+          : (effective.themeStyle == AppThemeStyle.light
+              ? 'Világos'
+              : 'Sötét');
+      return '$modeLabel • Liquid Glass';
+    }
+    final styleLabel = switch (effective.themeStyle) {
       AppThemeStyle.oledPureBlack => 'OLED Fekete',
       AppThemeStyle.standardDark => 'Sötét',
       AppThemeStyle.light => 'Világos',
     };
-    final glassPart = prefs.liquidGlassEnabled
-        ? 'Liquid Glass (${prefs.liquidGlassMode.label})'
+    final glassPart = effective.liquidGlassEnabled
+        ? 'Liquid Glass (${effective.liquidGlassMode.label})'
         : 'Material mód';
-    if (prefs.hasAnimatedBackdrop) {
-      return '$styleLabel • $glassPart • ${prefs.animatedBackdropPreset.label}';
+    if (effective.hasAnimatedBackdrop) {
+      return '$styleLabel • $glassPart • ${effective.animatedBackdropPreset.label}';
     }
-    if (prefs.hasCustomBackdrop) {
+    if (effective.hasCustomBackdrop) {
       return '$styleLabel • $glassPart • Saját háttér';
     }
-    final preset = BackgroundPresetInfo.resolve(prefs);
+    final preset = BackgroundPresetInfo.resolve(effective);
     if (preset.id != 'pure_oled') {
       return '$styleLabel • $glassPart • ${preset.label}';
     }
@@ -151,12 +162,13 @@ class BugReportService {
 
   /// Human-readable OS version label without collecting device serials or IDs.
   static String resolveOsVersionLabel() {
+    if (kIsWeb) return 'Web';
     final osVer = Platform.operatingSystemVersion.trim();
+    if (Platform.isIOS || isIOSPlatform) {
+      return osVer.isNotEmpty ? 'iOS ($osVer)' : 'iOS';
+    }
     if (Platform.isAndroid) {
       return osVer.isNotEmpty ? 'Android ($osVer)' : 'Android';
-    }
-    if (Platform.isIOS) {
-      return osVer.isNotEmpty ? 'iOS ($osVer)' : 'iOS';
     }
     final osName = Platform.operatingSystem;
     return osVer.isNotEmpty ? '$osName ($osVer)' : osName;
