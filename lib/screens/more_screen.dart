@@ -33,6 +33,7 @@ import '../widgets/frosted_inspection_modal.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/period_countdown_badge.dart'
     show isInactivePlaceholderLesson, isLessonCancelled;
+import '../widgets/real_liquid_glass_surface.dart';
 import '../widgets/tinta_toast.dart';
 import 'about_app_screen.dart';
 import 'developer_options_screen.dart';
@@ -4759,7 +4760,7 @@ class _MoreScreenState extends State<MoreScreen>
     DateFormat expFormat,
   ) {
     final entries = <_SettingsSearchEntry>[
-      if (!isIOSPlatform)
+      if (!isIOSPlatform) ...[
         _SettingsSearchEntry(
           icon: Icons.blur_on_rounded,
           title: 'Liquid Glass effekt és módok',
@@ -4785,6 +4786,30 @@ class _MoreScreenState extends State<MoreScreen>
             _buildAppearanceSettingsChildren,
           ),
         ),
+        _SettingsSearchEntry(
+          icon: Icons.lens_blur_rounded,
+          title: 'Valódi Liquid Glass (Shader)',
+          category: 'Megjelenés és témák',
+          description: 'Fizikai fénytörés, kromatikus színszóródás és dinamikus élfény',
+          keywords: const [
+            'shader',
+            'gpu',
+            'optika',
+            'fenytores',
+            'fénytörés',
+            'kromatikus',
+            'valodi',
+            'valódi',
+            'liquid',
+            'glass',
+            'beta',
+          ],
+          onTap: () => _pushSettingsSubScreen(
+            'Megjelenés és témák',
+            _buildAppearanceSettingsChildren,
+          ),
+        ),
+      ],
       _SettingsSearchEntry(
         icon: Icons.palette_rounded,
         title: isIOSPlatform
@@ -6201,6 +6226,102 @@ class _MoreScreenState extends State<MoreScreen>
             onChanged: (v) =>
                 _updatePrefs(activePrefs.copyWith(liquidGlassEnabled: v)),
           ),
+          if (isAndroidPlatform && !activePrefs.minimalistModeEnabled) ...[
+            Divider(
+              height: 1,
+              color: theme.dividerColor.withValues(alpha: 0.45),
+            ),
+            SwitchListTile.adaptive(
+              key: const ValueKey<String>(
+                'appearance-real-liquid-glass-switch',
+              ),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  Text(
+                    uwuLabel(
+                      'Valódi Liquid Glass (Shader)',
+                      enabled: activePrefs.uwuModeEnabled,
+                    ),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: scheme.primary.withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: scheme.primary.withValues(alpha: 0.36),
+                        width: 0.8,
+                      ),
+                    ),
+                    child: Text(
+                      'BETA',
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.4,
+                        color: scheme.primary,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: scheme.secondary.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: scheme.secondary.withValues(alpha: 0.32),
+                        width: 0.8,
+                      ),
+                    ),
+                    child: Text(
+                      'GPU',
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.4,
+                        color: scheme.secondary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              subtitle: Text(
+                uwuLabel(
+                  'Fizikai fénytörés, kromatikus színszóródás és dinamikus élfény az üvegkártyákon (erősebb GPU ajánlott).',
+                  enabled: activePrefs.uwuModeEnabled,
+                ),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: scheme.onSurface.withValues(alpha: 0.68),
+                ),
+              ),
+              value: activePrefs.realLiquidGlassEnabled,
+              onChanged: (v) {
+                HapticFeedback.selectionClick();
+                _updatePrefs(
+                  _livePrefs(subCtx).withRealLiquidGlass(v),
+                );
+              },
+            ),
+            const SizedBox(height: 8),
+            _RealLiquidGlassMiniPreview(prefs: activePrefs),
+            const SizedBox(height: 8),
+          ],
           _FullBleedChild(
             child: AnimatedSize(
               duration: const Duration(milliseconds: 220),
@@ -9085,6 +9206,7 @@ class _AllOmissionsScreenState extends State<AllOmissionsScreen> {
             final isDark = theme.brightness == Brightness.dark;
             final effectivePrefs = activePrefs;
           final liquidGlass = resolveLiquidGlassEnabled(effectivePrefs);
+          final realLiquidGlass = resolveRealLiquidGlassEnabled(effectivePrefs);
           final blurSigma = resolveSoftBlurBackdropSigma(effectivePrefs);
           final topPad = adaptiveAppBarTopPadding(bodyContext, extra: 4);
           final borderColor = scheme.outlineVariant.withValues(
@@ -9092,7 +9214,25 @@ class _AllOmissionsScreenState extends State<AllOmissionsScreen> {
           );
 
           final Widget headerBackdrop;
-          if (liquidGlass) {
+          if (realLiquidGlass) {
+            final tintColor = (isDark
+                    ? scheme.surfaceContainerHigh
+                    : theme.scaffoldBackgroundColor)
+                .withValues(alpha: isDark ? 0.62 : 0.72);
+            headerBackdrop = Positioned.fill(
+              child: RealLiquidGlassSurface(
+                prefs: effectivePrefs,
+                isHeaderStyle: true,
+                borderRadius: BorderRadius.zero,
+                tintColor: tintColor,
+                blurRadiusOverride: blurSigma,
+                border: Border(
+                  bottom: BorderSide(color: borderColor, width: 0.7),
+                ),
+                child: const SizedBox.expand(),
+              ),
+            );
+          } else if (liquidGlass) {
             final tintColor = (isDark
                     ? scheme.surfaceContainerHigh
                     : theme.scaffoldBackgroundColor)
@@ -11516,4 +11656,196 @@ int _scoreSettingsSearch(String rawQuery, _SettingsSearchEntry entry) {
     totalScore += tokenBest;
   }
   return totalScore;
+}
+
+/// Compact live preview showcasing optical edge refraction, chromatic RGB
+/// dispersion, and specular rim contrast behind a sample glass pill right
+/// inside the Android "Megjelenés és témák" settings card.
+class _RealLiquidGlassMiniPreview extends StatelessWidget {
+  final UserProfilePrefs prefs;
+
+  const _RealLiquidGlassMiniPreview({required this.prefs});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final realEnabled = resolveRealLiquidGlassEnabled(prefs);
+    final standardEnabled = resolveLiquidGlassEnabled(prefs);
+
+    final bgColor = isDark ? const Color(0xFF090C12) : const Color(0xFFE9EFF7);
+    final fgTextColor = isDark ? Colors.white : const Color(0xFF0F172A);
+    final pillStatusText = realEnabled
+        ? 'Valódi Optikai Üveg'
+        : (standardEnabled ? 'Standard Liquid Glass' : 'Material 3 Felület');
+    final pillIcon = realEnabled
+        ? Icons.auto_awesome_rounded
+        : (standardEnabled ? Icons.blur_on_rounded : Icons.layers_rounded);
+
+    final Widget pillInner = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          pillIcon,
+          size: 16,
+          color: realEnabled ? scheme.primary : fgTextColor,
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            uwuLabel(pillStatusText, enabled: prefs.uwuModeEnabled),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w800,
+              color: fgTextColor,
+            ),
+          ),
+        ),
+      ],
+    );
+
+    final Widget samplePill;
+    if (realEnabled) {
+      samplePill = RealLiquidGlassSurface(
+        key: const ValueKey<String>('real-liquid-glass-preview-pill'),
+        prefs: prefs,
+        borderRadius: BorderRadius.circular(20),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+        bezelWidthOverride: 16.0,
+        refractionStrengthOverride: 16.5,
+        chromaticAberrationOverride: 0.28,
+        blurRadiusOverride: 8.5,
+        child: pillInner,
+      );
+    } else if (standardEnabled) {
+      samplePill = LiquidGlassSurface(
+        key: const ValueKey<String>('real-liquid-glass-preview-pill'),
+        prefs: prefs,
+        borderRadius: BorderRadius.circular(20),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+        child: pillInner,
+      );
+    } else {
+      samplePill = Container(
+        key: const ValueKey<String>('real-liquid-glass-preview-pill'),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: pillInner,
+      );
+    }
+
+    return Container(
+      key: const ValueKey<String>('real-liquid-glass-preview'),
+      height: 112,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: theme.dividerColor.withValues(alpha: 0.55),
+          width: 1.0,
+        ),
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Positioned(
+            left: -18,
+            top: -20,
+            child: Container(
+              width: 92,
+              height: 92,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: [
+                    const Color(0xFF4DA3FF).withValues(alpha: 0.90),
+                    const Color(0xFF00BFA5).withValues(alpha: 0.35),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            right: -12,
+            bottom: -24,
+            child: Container(
+              width: 110,
+              height: 110,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: [
+                    const Color(0xFFFF7043).withValues(alpha: 0.88),
+                    const Color(0xFFEC407A).withValues(alpha: 0.40),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 24,
+            right: 24,
+            top: 10,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '5.00',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.5,
+                    color: const Color(0xFF38BDF8).withValues(alpha: 0.88),
+                  ),
+                ),
+                Text(
+                  '14:15',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.5,
+                    color: const Color(0xFFFBBF24).withValues(alpha: 0.90),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Positioned(
+            left: 18,
+            right: 18,
+            bottom: 10,
+            child: Text(
+              'TINTA NAPLÓ • OPTIKA • A+',
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.clip,
+              style: TextStyle(
+                fontSize: 13.5,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 2.2,
+                color: (isDark ? Colors.white : const Color(0xFF1E293B))
+                    .withValues(alpha: 0.72),
+              ),
+            ),
+          ),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              child: samplePill,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

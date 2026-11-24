@@ -337,6 +337,7 @@ class UserProfilePrefs {
   static ModalCloseButtonMode activeModalCloseMode = ModalCloseButtonMode.onlyX;
   static bool activeLiquidGlassEnabled = false;
   static bool get activeSoftBlurEnabled => activeLiquidGlassEnabled;
+  static bool activeRealLiquidGlassEnabled = false;
   static LiquidGlassMode activeLiquidGlassMode = LiquidGlassMode.classicFrost;
   static double activeSoftBlurSigma = 4.0;
   static bool activeMinimalistModeEnabled = false;
@@ -349,6 +350,7 @@ class UserProfilePrefs {
     final effective = prefs.effectiveForPlatform();
     activeModalCloseMode = effective.modalCloseMode;
     activeLiquidGlassEnabled = effective.liquidGlassEnabled;
+    activeRealLiquidGlassEnabled = effective.realLiquidGlassEnabled;
     activeLiquidGlassMode = effective.liquidGlassMode;
     activeSoftBlurSigma = effective.cardBlurSigma;
     activeMinimalistModeEnabled = effective.minimalistModeEnabled;
@@ -396,6 +398,7 @@ class UserProfilePrefs {
   final bool calcAllow200Weight;
   final bool liquidGlassEnabled;
   bool get cardBlurEnabled => liquidGlassEnabled;
+  final bool realLiquidGlassEnabled;
   final LiquidGlassMode liquidGlassMode;
   final String? customBackdropPath;
   final double customBackdropDim;
@@ -463,6 +466,7 @@ class UserProfilePrefs {
     this.calcAllow200Weight = false,
     bool? liquidGlassEnabled,
     @Deprecated('Use liquidGlassEnabled instead') bool? cardBlurEnabled,
+    this.realLiquidGlassEnabled = false,
     this.liquidGlassMode = LiquidGlassMode.classicFrost,
     this.customBackdropPath,
     this.customBackdropDim = 0.35,
@@ -504,8 +508,21 @@ class UserProfilePrefs {
   /// Developer Options: "Minimalista mód" (stripped-down expanded cards/modals).
   bool get minimalistModeEnabled => extras['minimalistModeEnabled'] == true;
 
-  UserProfilePrefs withMinimalistMode(bool enabled) =>
-      withExtra('minimalistModeEnabled', enabled);
+  UserProfilePrefs withMinimalistMode(bool enabled) => enabled
+      ? withExtra('minimalistModeEnabled', true)
+          .copyWith(realLiquidGlassEnabled: false)
+      : withExtra('minimalistModeEnabled', false);
+
+  /// Android-only experimental optical GLSL shader Liquid Glass mode.
+  UserProfilePrefs withRealLiquidGlass(bool enabled) {
+    if (!enabled) {
+      return copyWith(realLiquidGlassEnabled: false);
+    }
+    return copyWith(
+      realLiquidGlassEnabled: true,
+      liquidGlassEnabled: true,
+    ).withMinimalistMode(false);
+  }
 
   /// Developer Options: Isolated "Demó mód" (Kovács Bence showcase dataset).
   bool get demoModeEnabled => extras['demoModeEnabled'] == true;
@@ -536,7 +553,19 @@ class UserProfilePrefs {
   /// Enforces platform-native UI constraints (strict Liquid Glass lock on iOS)
   /// without mutating Android preferences.
   UserProfilePrefs effectiveForPlatform() {
-    if (!isIOSPlatform) return this;
+    if (!isIOSPlatform) {
+      if (realLiquidGlassEnabled &&
+          (!liquidGlassEnabled || minimalistModeEnabled)) {
+        final normalizedExtras = Map<String, dynamic>.from(extras);
+        normalizedExtras['minimalistModeEnabled'] = false;
+        return copyWith(
+          liquidGlassEnabled: true,
+          realLiquidGlassEnabled: true,
+          extras: normalizedExtras,
+        );
+      }
+      return this;
+    }
     final sanitizedExtras = Map<String, dynamic>.from(extras);
     sanitizedExtras['minimalistModeEnabled'] = false;
     sanitizedExtras['customSkinEnabled'] = false;
@@ -545,6 +574,7 @@ class UserProfilePrefs {
     return copyWith(
       useDynamicColor: false,
       liquidGlassEnabled: true,
+      realLiquidGlassEnabled: false,
       liquidGlassMode: LiquidGlassMode.classicFrost,
       animatedBackdropPreset: AnimatedBackdropPreset.off,
       backgroundPreset: 'pure_oled',
@@ -813,6 +843,7 @@ class UserProfilePrefs {
     bool? calcAllow200Weight,
     bool? liquidGlassEnabled,
     @Deprecated('Use liquidGlassEnabled instead') bool? cardBlurEnabled,
+    bool? realLiquidGlassEnabled,
     LiquidGlassMode? liquidGlassMode,
     String? customBackdropPath,
     bool clearCustomBackdropPath = false,
@@ -831,14 +862,24 @@ class UserProfilePrefs {
     bool? funGreetingsEnabled,
     GreetingSubtitleMode? greetingSubtitleMode,
   }) {
+    final bool resolvedRealLiquidGlass = realLiquidGlassEnabled ??
+        (liquidGlassEnabled == false ? false : this.realLiquidGlassEnabled);
+    final bool resolvedLiquidGlass = resolvedRealLiquidGlass
+        ? true
+        : (liquidGlassEnabled ?? cardBlurEnabled ?? this.liquidGlassEnabled);
     final Map<String, dynamic> resolvedExtras;
-    if (funGreetingsEnabled != null || greetingSubtitleMode != null) {
+    if (funGreetingsEnabled != null ||
+        greetingSubtitleMode != null ||
+        realLiquidGlassEnabled == true) {
       resolvedExtras = Map<String, dynamic>.from(extras ?? this.extras);
       if (funGreetingsEnabled != null) {
         resolvedExtras['funGreetingsEnabled'] = funGreetingsEnabled;
       }
       if (greetingSubtitleMode != null) {
         resolvedExtras['greetingSubtitleMode'] = greetingSubtitleMode.id;
+      }
+      if (realLiquidGlassEnabled == true) {
+        resolvedExtras['minimalistModeEnabled'] = false;
       }
     } else {
       resolvedExtras = extras ?? this.extras;
@@ -881,8 +922,8 @@ class UserProfilePrefs {
       walkSchoolToBusMinutes: walkSchoolToBusMinutes ?? this.walkSchoolToBusMinutes,
       walkSchoolToTrainMinutes: walkSchoolToTrainMinutes ?? this.walkSchoolToTrainMinutes,
       calcAllow200Weight: calcAllow200Weight ?? this.calcAllow200Weight,
-      liquidGlassEnabled:
-          liquidGlassEnabled ?? cardBlurEnabled ?? this.liquidGlassEnabled,
+      liquidGlassEnabled: resolvedLiquidGlass,
+      realLiquidGlassEnabled: resolvedRealLiquidGlass,
       liquidGlassMode: liquidGlassMode ?? this.liquidGlassMode,
       customBackdropPath: clearCustomBackdropPath
           ? null
@@ -946,6 +987,7 @@ class UserProfilePrefs {
       'walkSchoolToTrainMinutes': walkSchoolToTrainMinutes,
       'calcAllow200Weight': calcAllow200Weight,
       'liquidGlassEnabled': liquidGlassEnabled,
+      'realLiquidGlassEnabled': realLiquidGlassEnabled,
       'liquidGlassMode': liquidGlassMode.name,
       'customBackdropPath': customBackdropPath,
       'customBackdropDim': customBackdropDim,
@@ -1091,6 +1133,7 @@ class UserProfilePrefs {
             json['cardBlurEnabled'] ??
             json['softBlur'],
       ),
+      realLiquidGlassEnabled: _parseBool(json['realLiquidGlassEnabled']),
       liquidGlassMode: LiquidGlassMode.fromName(json['liquidGlassMode'] as String?),
       customBackdropPath:
           (json['customBackdropPath'] as String?)?.trim().isNotEmpty == true
@@ -1388,6 +1431,7 @@ class TokenStorageService {
   static const _keyCalcAllow200Weight = 'kreta_calc_allow_200';
   static const _keyLiquidGlassEnabled = 'kreta_liquid_glass_enabled';
   static const _keyCardBlurEnabled = 'kreta_card_blur_enabled';
+  static const _keyRealLiquidGlassEnabled = 'kreta_real_liquid_glass_enabled';
   static const _keyLiquidGlassMode = 'kreta_liquid_glass_mode';
   static const _keyCustomBackdropPath = 'kreta_custom_backdrop_path';
   static const _keyCustomBackdropDim = 'kreta_custom_backdrop_dim';
@@ -2576,6 +2620,7 @@ class TokenStorageService {
       liquidGlassEnabled:
           (values[_keyLiquidGlassEnabled] ?? values[_keyCardBlurEnabled]) ==
               'true',
+      realLiquidGlassEnabled: values[_keyRealLiquidGlassEnabled] == 'true',
       liquidGlassMode:
           LiquidGlassMode.fromName(values[_keyLiquidGlassMode]),
       customBackdropPath:
@@ -2703,6 +2748,10 @@ class TokenStorageService {
         MapEntry(_keyCalcAllow200Weight, prefs.calcAllow200Weight.toString()),
         MapEntry(_keyTransitCardEnabled, prefs.transitCardEnabled.toString()),
         MapEntry(_keyLiquidGlassEnabled, prefs.liquidGlassEnabled.toString()),
+        MapEntry(
+          _keyRealLiquidGlassEnabled,
+          prefs.realLiquidGlassEnabled.toString(),
+        ),
         MapEntry(_keyLiquidGlassMode, prefs.liquidGlassMode.name),
         MapEntry(
           _keyCustomBackdropPath,

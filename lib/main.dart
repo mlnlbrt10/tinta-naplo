@@ -19,11 +19,15 @@ import 'services/wear_sync_service.dart';
 import 'theme/oled_theme.dart';
 import 'utils/platform_support.dart';
 import 'utils/uwu_helper.dart';
+import 'widgets/real_liquid_glass_surface.dart';
 import 'widgets/tinta_splash_overlay.dart';
 import 'widgets/tinta_toast.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  if (isAndroidPlatform) {
+    unawaited(RealLiquidGlassSurface.prewarmShader());
+  }
   runApp(const TintaNaploApp());
 }
 

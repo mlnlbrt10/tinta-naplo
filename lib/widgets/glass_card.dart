@@ -6,12 +6,32 @@ import '../providers/app_providers.dart';
 import '../services/token_storage_service.dart';
 import '../theme/oled_theme.dart';
 import '../utils/platform_support.dart';
+import 'real_liquid_glass_surface.dart';
+
+/// Backwards-compatible alias for [SoftGlassCard].
+typedef GlassCard = SoftGlassCard;
 
 /// Resolves whether Settings "Liquid Glass" is active and enables glassmorphic
 /// `BackdropFilter` surfaces and fluid droplet slider physics.
 bool resolveLiquidGlassEnabled([UserProfilePrefs? prefs]) {
   if (isIOSPlatform) return true;
-  return prefs?.liquidGlassEnabled ?? UserProfilePrefs.activeLiquidGlassEnabled;
+  if (prefs != null) {
+    final effective = prefs.effectiveForPlatform();
+    return effective.liquidGlassEnabled || effective.realLiquidGlassEnabled;
+  }
+  return UserProfilePrefs.activeLiquidGlassEnabled ||
+      UserProfilePrefs.activeRealLiquidGlassEnabled;
+}
+
+/// Resolves whether the experimental Android GLSL optical shader "Real Liquid
+/// Glass" rendering mode is active. Strictly `false` on iOS so iOS retains its
+/// locked native Liquid Glass setup.
+bool resolveRealLiquidGlassEnabled([UserProfilePrefs? prefs]) {
+  if (isIOSPlatform) return false;
+  if (prefs != null) {
+    return prefs.effectiveForPlatform().realLiquidGlassEnabled;
+  }
+  return UserProfilePrefs.activeRealLiquidGlassEnabled;
 }
 
 /// Backwards-compatible alias for [resolveLiquidGlassEnabled].
@@ -97,6 +117,7 @@ class LiquidGlassSurface extends StatelessWidget {
         prefs ?? AppProvidersScope.maybeOf(context)?.settings.prefs;
     final skin = effectivePrefs?.customSkinConfig ?? UserProfilePrefs.activeCustomSkin;
     final liquidGlassEnabled = resolveLiquidGlassEnabled(effectivePrefs);
+    final realLiquidGlassEnabled = resolveRealLiquidGlassEnabled(effectivePrefs);
     final effectiveRadius = (skin.enabled &&
             skin.cardRadius != null &&
             borderRadius.topLeft.x >= 16.0)
@@ -126,6 +147,24 @@ class LiquidGlassSurface extends StatelessWidget {
             child: rawContent,
           )
         : rawContent;
+
+    if (realLiquidGlassEnabled) {
+      return RealLiquidGlassSurface(
+        prefs: effectivePrefs,
+        borderRadius: effectiveRadius,
+        padding: padding,
+        tintColor: glassTintColor ??
+            (highContrastExpanded ? effectiveSolidColor : null) ??
+            (skin.enabled && skin.surface != null ? skin.surface : null),
+        border: border,
+        boxShadow: boxShadow,
+        isDockStyle: isDockStyle,
+        compactOptics: isDockStyle,
+        highContrast: highContrastExpanded && !isDockStyle,
+        contentOpacityAnimation: contentOpacityAnimation,
+        child: rawContent,
+      );
+    }
 
     if (!liquidGlassEnabled || (highContrastExpanded && !isDockStyle)) {
       final resolvedBorder = border ??
@@ -529,6 +568,40 @@ class SoftGlassCard extends StatelessWidget {
       type: MaterialType.transparency,
       child: themedChild,
     );
+
+    if (resolveRealLiquidGlassEnabled(activePrefs) && !isExpanded) {
+      final opacityScale = (skin.enabled && skin.cardOpacity != null)
+          ? skin.cardOpacity!.clamp(0.0, 1.0)
+          : activePrefs.cardOpacity.clamp(0.0, 1.0);
+      final Color? resolvedTint = color ??
+          (skin.enabled && skin.surface != null
+              ? skin.surface!
+              : (hasStudioOrCustomBackdrop ? contrast.cardFill : null));
+      return RealLiquidGlassSurface(
+        prefs: activePrefs,
+        borderRadius: effectiveRadius,
+        padding: padding,
+        tintColor: resolvedTint,
+        border: border ??
+            (skin.enabled && skin.borderColor != null
+                ? Border.all(
+                    color: skin.borderColor!,
+                    width: effectiveBorderWidth,
+                  )
+                : null),
+        opacityScale: opacityScale,
+        boxShadow: !isDark
+            ? [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 14,
+                  offset: const Offset(0, 4),
+                ),
+              ]
+            : null,
+        child: contentChild,
+      );
+    }
 
     if (!activePrefs.liquidGlassEnabled) {
       final baseSolid = (skin.enabled && skin.surface != null)

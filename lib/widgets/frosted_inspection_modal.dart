@@ -15,6 +15,7 @@ import '../theme/oled_theme.dart';
 import '../utils/uwu_helper.dart';
 import 'animation_helpers.dart';
 import 'glass_card.dart';
+import 'real_liquid_glass_surface.dart';
 
 /// Linear bounding-rect interpolation for Hero badge and avatar transitions,
 /// avoiding Material's upward parabolic [MaterialRectArcTween] swing.
@@ -764,6 +765,7 @@ class FrostedBottomSheetSurface extends StatelessWidget {
     final effectivePrefs =
         prefs ?? AppProvidersScope.maybeOf(context)?.settings.prefs;
     final liquidGlass = resolveLiquidGlassEnabled(effectivePrefs);
+    final realLiquidGlass = resolveRealLiquidGlassEnabled(effectivePrefs);
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
@@ -831,6 +833,30 @@ class FrostedBottomSheetSurface extends StatelessWidget {
               child: solidMaterial,
             )
           : solidMaterial;
+    } else if (realLiquidGlass) {
+      final translucentFill = isDark
+          ? (scheme.surface == Colors.black
+              ? const Color(0xFF141820).withValues(alpha: 0.78)
+              : scheme.surface.withValues(alpha: 0.78))
+          : Colors.white.withValues(alpha: 0.86);
+      card = RealLiquidGlassSurface(
+        prefs: effectivePrefs,
+        borderRadius: radius,
+        padding: padding ?? EdgeInsets.zero,
+        tintColor: translucentFill,
+        highContrast: true,
+        blurRadiusOverride: blurSigma,
+        boxShadow: !isDark
+            ? [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.08),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ]
+            : null,
+        child: inner,
+      );
     } else {
       final translucentFill = isDark
           ? (scheme.surface == Colors.black

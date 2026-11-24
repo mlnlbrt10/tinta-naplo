@@ -315,6 +315,37 @@ class OledTheme {
     return color;
   }
 
+  /// Resolves an adaptive translucent tint color for real optical shader glass
+  /// surfaces on OLED dark (`#0D0D0F`) and Light mode while preserving
+  /// WCAG-compliant foreground contrast.
+  static Color realLiquidGlassTintForTheme(
+    ThemeData theme, {
+    Color? overrideTint,
+    double opacityScale = 0.9,
+    bool highContrast = false,
+  }) {
+    final isDark = theme.brightness == Brightness.dark;
+    final clampedOpacity = opacityScale.clamp(0.0, 1.0);
+    if (overrideTint != null) {
+      final baseAlpha = highContrast
+          ? overrideTint.a.clamp(0.68, 0.92)
+          : (isDark
+              ? (0.18 + clampedOpacity * 0.44).clamp(0.18, 0.68)
+              : (0.28 + clampedOpacity * 0.48).clamp(0.28, 0.80));
+      return overrideTint.withValues(alpha: baseAlpha);
+    }
+    if (isDark) {
+      final alpha = highContrast
+          ? 0.82
+          : (0.22 + clampedOpacity * 0.42).clamp(0.22, 0.68);
+      return const Color(0xFF0D0D0F).withValues(alpha: alpha);
+    }
+    final alpha = highContrast
+        ? 0.88
+        : (0.52 + clampedOpacity * 0.28).clamp(0.52, 0.84);
+    return Colors.white.withValues(alpha: alpha);
+  }
+
   /// Returns a deeper, richer saturation variant of [base] when rendered on
   /// Light Mode white cards so status/grade/exam badges stay crisp and legible.
   static Color semanticForeground(Color base, Brightness brightness) {

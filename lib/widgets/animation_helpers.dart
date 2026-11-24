@@ -13,6 +13,7 @@ import '../providers/app_providers.dart';
 import '../services/token_storage_service.dart';
 import '../utils/platform_support.dart';
 import 'animated_backdrops.dart';
+import 'real_liquid_glass_surface.dart';
 
 /// Solid Material 3 tonal indicator pill rendered inside segmented bars and
 /// the bottom navigation dock when Liquid Glass mode is disabled.
@@ -282,6 +283,7 @@ class LiquidGlassPillSurface extends StatelessWidget {
   final bool solidBase;
   final Offset highlightBias;
   final LiquidGlassMode? mode;
+  final bool? realLiquidGlassEnabled;
 
   const LiquidGlassPillSurface({
     super.key,
@@ -291,6 +293,7 @@ class LiquidGlassPillSurface extends StatelessWidget {
     this.solidBase = false,
     this.highlightBias = Offset.zero,
     this.mode,
+    this.realLiquidGlassEnabled,
   });
 
   @override
@@ -299,6 +302,7 @@ class LiquidGlassPillSurface extends StatelessWidget {
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
     final motionScope = _LiquidPillMotionScope.maybeOf(context);
+    final settingsPrefs = AppProvidersScope.maybeOf(context)?.settings.prefs;
     final effectiveMode = mode ?? _LiquidPillMotionScope.modeOf(context);
     final baseColor = accentColor ?? scheme.primary;
     final t = pressProgress.clamp(0.0, 1.0);
@@ -306,6 +310,11 @@ class LiquidGlassPillSurface extends StatelessWidget {
         highlightBias != Offset.zero ? highlightBias : (motionScope?.highlightBias ?? Offset.zero);
     final bx = resolvedBias.dx.clamp(-1.0, 1.0);
     final by = resolvedBias.dy.clamp(-1.0, 1.0);
+    final useRealShaderPill = !isIOSPlatform &&
+        !solidBase &&
+        (realLiquidGlassEnabled ??
+            settingsPrefs?.realLiquidGlassEnabled ??
+            UserProfilePrefs.activeRealLiquidGlassEnabled);
 
     final Color uniformTint;
     final double rimStrokeWidth;
@@ -360,6 +369,53 @@ class LiquidGlassPillSurface extends StatelessWidget {
           rimStrokeWidth = lerpDouble(1.05, 1.20, t)!;
           break;
       }
+    }
+
+    if (useRealShaderPill) {
+      final rimPainter = LiquidGlassRimPainter(
+        borderRadius: borderRadius,
+        strokeWidth: rimStrokeWidth,
+        pressProgress: t,
+        highlightBias: Offset(bx, by),
+        isDark: isDark,
+        mode: effectiveMode,
+        rippleProgress: motionScope?.rippleProgress ?? 0.0,
+        rippleOrigin: motionScope?.rippleOrigin ?? const Offset(0.5, 0.5),
+        lightBiasListenable: BackdropMotionCoordinator.lightBiasNotifier,
+      );
+      return RealLiquidGlassSurface(
+        prefs: settingsPrefs,
+        borderRadius: borderRadius,
+        tintColor: uniformTint,
+        opacityScale: (0.28 + 0.24 * t).clamp(0.28, 0.54),
+        compactOptics: true,
+        bezelWidthOverride: 10.0,
+        refractionStrengthOverride: 11.0 + 4.5 * t,
+        blurRadiusOverride: 3.5,
+        modeOverride: effectiveMode,
+        interactiveHighlight: false,
+        boxShadow: [
+          BoxShadow(
+            color: (effectiveMode == LiquidGlassMode.smokedObsidian
+                    ? Colors.black
+                    : baseColor)
+                .withValues(
+              alpha: lerpDouble(
+                isDark ? 0.16 : 0.10,
+                isDark ? 0.36 : 0.24,
+                t,
+              )!,
+            ),
+            blurRadius: lerpDouble(8.0, 18.0, t)!,
+            spreadRadius: lerpDouble(0.0, 1.0, t)!,
+            offset: Offset(bx * 2.0, lerpDouble(2.0, 3.0, t)! + by * 2.0),
+          ),
+        ],
+        child: CustomPaint(
+          painter: rimPainter,
+          child: const SizedBox.expand(),
+        ),
+      );
     }
 
     return DecoratedBox(

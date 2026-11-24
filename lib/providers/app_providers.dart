@@ -43,6 +43,7 @@ class SettingsProvider extends ChangeNotifier {
   UserProfilePrefs get prefs => _prefs.effectiveForPlatform();
   bool get demoModeEnabled => prefs.demoModeEnabled;
   bool get minimalistModeEnabled => prefs.minimalistModeEnabled;
+  bool get realLiquidGlassEnabled => prefs.realLiquidGlassEnabled;
   bool get funGreetingsEnabled => prefs.funGreetingsEnabled;
   String get activeAppIconAsset => prefs.activeAppIconAsset;
   Set<String> get completedHomeworkIds =>
@@ -371,6 +372,7 @@ class ThemeProvider extends ChangeNotifier {
       _snapshot.backgroundPreset == 'pure_oled';
   bool get liquidGlassEnabled => _snapshot.liquidGlassEnabled;
   bool get hasSoftBlur => liquidGlassEnabled;
+  bool get realLiquidGlassEnabled => _snapshot.realLiquidGlassEnabled;
   LiquidGlassMode get liquidGlassMode => _snapshot.liquidGlassMode;
   AnimatedBackdropPreset get animatedBackdropPreset =>
       _snapshot.animatedBackdropPreset;
@@ -419,6 +421,7 @@ class _ThemeSnapshot {
   final String appIconPreset;
   final String backgroundPreset;
   final bool liquidGlassEnabled;
+  final bool realLiquidGlassEnabled;
   final LiquidGlassMode liquidGlassMode;
   final bool hasCustomBackdrop;
   final String? customBackdropPath;
@@ -445,6 +448,7 @@ class _ThemeSnapshot {
     required this.appIconPreset,
     required this.backgroundPreset,
     required this.liquidGlassEnabled,
+    required this.realLiquidGlassEnabled,
     required this.liquidGlassMode,
     required this.hasCustomBackdrop,
     required this.customBackdropPath,
@@ -469,6 +473,7 @@ class _ThemeSnapshot {
         appIconPreset: p.appIconPreset,
         backgroundPreset: p.backgroundPreset,
         liquidGlassEnabled: p.liquidGlassEnabled,
+        realLiquidGlassEnabled: p.realLiquidGlassEnabled,
         liquidGlassMode: p.liquidGlassMode,
         hasCustomBackdrop: p.hasCustomBackdrop,
         customBackdropPath: p.customBackdropPath,
@@ -496,6 +501,7 @@ class _ThemeSnapshot {
         other.appIconPreset == appIconPreset &&
         other.backgroundPreset == backgroundPreset &&
         other.liquidGlassEnabled == liquidGlassEnabled &&
+        other.realLiquidGlassEnabled == realLiquidGlassEnabled &&
         other.liquidGlassMode == liquidGlassMode &&
         other.hasCustomBackdrop == hasCustomBackdrop &&
         other.customBackdropPath == customBackdropPath &&
@@ -521,6 +527,7 @@ class _ThemeSnapshot {
         appIconPreset,
         backgroundPreset,
         liquidGlassEnabled,
+        realLiquidGlassEnabled,
         liquidGlassMode,
         hasCustomBackdrop,
         customBackdropPath,

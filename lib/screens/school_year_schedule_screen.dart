@@ -16,6 +16,7 @@ import '../widgets/animation_helpers.dart';
 import '../widgets/christmas_snowfall_overlay.dart';
 import '../widgets/frosted_inspection_modal.dart';
 import '../widgets/glass_card.dart';
+import '../widgets/real_liquid_glass_surface.dart';
 import '../widgets/tinta_toast.dart';
 
 enum _ScheduleFilter {
@@ -599,6 +600,7 @@ class _SchoolYearScheduleScreenState extends State<SchoolYearScheduleScreen> {
       activePrefs,
     );
     final liquidGlass = resolveLiquidGlassEnabled(activePrefs);
+    final realLiquidGlass = resolveRealLiquidGlassEnabled(activePrefs);
     final isDark = theme.brightness == Brightness.dark;
     final blurSigma = resolveSoftBlurBackdropSigma(activePrefs);
     final appBarBorderColor = scheme.outlineVariant.withValues(
@@ -606,7 +608,23 @@ class _SchoolYearScheduleScreenState extends State<SchoolYearScheduleScreen> {
     );
 
     final Widget appBarFlexibleSpace;
-    if (liquidGlass) {
+    if (realLiquidGlass) {
+      final tintColor = (isDark
+              ? scheme.surfaceContainerHigh
+              : theme.scaffoldBackgroundColor)
+          .withValues(alpha: isDark ? 0.68 : 0.78);
+      appBarFlexibleSpace = RealLiquidGlassSurface(
+        prefs: activePrefs,
+        isHeaderStyle: true,
+        borderRadius: BorderRadius.zero,
+        tintColor: tintColor,
+        blurRadiusOverride: blurSigma,
+        border: Border(
+          bottom: BorderSide(color: appBarBorderColor, width: 0.7),
+        ),
+        child: const SizedBox.expand(),
+      );
+    } else if (liquidGlass) {
       final tintColor = (isDark
               ? scheme.surfaceContainerHigh
               : theme.scaffoldBackgroundColor)

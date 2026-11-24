@@ -4,7 +4,9 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import '../services/token_storage_service.dart';
+import '../utils/platform_support.dart';
 import '../utils/uwu_helper.dart';
+import 'real_liquid_glass_surface.dart';
 
 enum TintaToastType {
   info,
@@ -226,6 +228,8 @@ class _TintaToastOverlayState extends State<_TintaToastOverlay>
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
     final liquidGlass = UserProfilePrefs.activeLiquidGlassEnabled;
+    final realLiquidGlass =
+        !isIOSPlatform && UserProfilePrefs.activeRealLiquidGlassEnabled;
 
     final Color accent;
     final IconData badgeIcon;
@@ -249,6 +253,78 @@ class _TintaToastOverlayState extends State<_TintaToastOverlay>
     final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
     final topMargin = MediaQuery.paddingOf(context).top + 12.0;
 
+    final Widget pillContentRow = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: 0.16),
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: accent.withValues(alpha: 0.38),
+              width: 0.9,
+            ),
+          ),
+          child: Icon(
+            badgeIcon,
+            size: 16,
+            color: accent,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Text(
+            uwu(widget.message),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
+              height: 1.25,
+              decoration: TextDecoration.none,
+            ),
+          ),
+        ),
+        if (widget.actionLabel != null && widget.onAction != null) ...[
+          const SizedBox(width: 10),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              final cb = widget.onAction;
+              _dismissWithAnimation();
+              cb?.call();
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 5,
+              ),
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: accent.withValues(alpha: 0.42),
+                  width: 0.8,
+                ),
+              ),
+              child: Text(
+                uwuLabel(widget.actionLabel!),
+                style: TextStyle(
+                  color: accent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+
     final Widget pillContent = Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
@@ -259,77 +335,7 @@ class _TintaToastOverlayState extends State<_TintaToastOverlay>
           width: 1.0,
         ),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: accent.withValues(alpha: 0.16),
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: accent.withValues(alpha: 0.38),
-                width: 0.9,
-              ),
-            ),
-            child: Icon(
-              badgeIcon,
-              size: 16,
-              color: accent,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Flexible(
-            child: Text(
-              uwu(widget.message),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: textColor,
-                fontSize: 13.5,
-                fontWeight: FontWeight.w700,
-                height: 1.25,
-                decoration: TextDecoration.none,
-              ),
-            ),
-          ),
-          if (widget.actionLabel != null && widget.onAction != null) ...[
-            const SizedBox(width: 10),
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () {
-                final cb = widget.onAction;
-                _dismissWithAnimation();
-                cb?.call();
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 5,
-                ),
-                decoration: BoxDecoration(
-                  color: accent.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: accent.withValues(alpha: 0.42),
-                    width: 0.8,
-                  ),
-                ),
-                child: Text(
-                  uwuLabel(widget.actionLabel!),
-                  style: TextStyle(
-                    color: accent,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    decoration: TextDecoration.none,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
+      child: pillContentRow,
     );
 
     final Widget decoratedPill = Container(
@@ -343,17 +349,33 @@ class _TintaToastOverlayState extends State<_TintaToastOverlay>
           ),
         ],
       ),
-      child: liquidGlass
-          ? RepaintBoundary(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(22),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
-                  child: pillContent,
-                ),
+      child: realLiquidGlass
+          ? RealLiquidGlassSurface(
+              borderRadius: BorderRadius.circular(22),
+              tintColor: surfaceFill,
+              compactOptics: true,
+              highContrast: true,
+              border: Border.all(
+                color: accent.withValues(alpha: isDark ? 0.44 : 0.38),
+                width: 1.0,
+              ),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: pillContentRow,
               ),
             )
-          : pillContent,
+          : (liquidGlass
+              ? RepaintBoundary(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(22),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
+                      child: pillContent,
+                    ),
+                  ),
+                )
+              : pillContent),
     );
 
     return Positioned(
